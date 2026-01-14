@@ -1,5 +1,7 @@
 pub mod opcodes;
 pub mod value;
+
+use crate::stdlib::{native_log, native_read_file, native_require, native_set_timeout};
 use crate::vm::opcodes::OpCode;
 use crate::vm::value::HeapData;
 use crate::vm::value::HeapObject;
@@ -7,6 +9,7 @@ use crate::vm::value::JsValue;
 use crate::vm::value::NativeFn;
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
+
 pub struct Frame {
     pub return_address: usize,
     pub locals: HashMap<String, JsValue>,
@@ -17,7 +20,7 @@ pub struct Task {
     pub args: Vec<JsValue>,
 }
 
-struct TimerTask {
+pub struct TimerTask {
     due: Instant,
     task: Task,
 }
@@ -30,6 +33,7 @@ pub struct VM {
     pub task_queue: VecDeque<Task>,
     timers: Vec<TimerTask>,
     pub program: Vec<OpCode>,
+    pub modules: HashMap<String, JsValue>,
     ip: usize, // Instruction Pointer
 }
 
@@ -46,25 +50,36 @@ impl VM {
             task_queue: VecDeque::new(),
             timers: Vec::new(),
             program: Vec::new(),
+            modules: HashMap::new(),
             ip: 0,
         };
-        vm.init_builtins();
+        vm.setup_stdlib();
         vm
     }
 
-    fn init_builtins(&mut self) {
-        // Native function table:
-        // 0: console.log
-        // 1: setTimeout
-        self.native_functions.push(VM::native_log);
-        self.native_functions.push(VM::native_set_timeout);
-
-        // console = { log: <native 0> }
+    pub fn setup_stdlib(&mut self) {
+        // Register native functions
+        let log_idx = self.register_native(native_log);
+        let timeout_idx = self.register_native(native_set_timeout);
+        let read_idx = self.register_native(native_read_file);
+        let require_idx = self.register_native(native_require);
+        // console = { log: <native fn> }
         let console_ptr = self.heap.len();
         let mut console_props = HashMap::new();
-        console_props.insert("log".to_string(), JsValue::NativeFunction(0));
+        console_props.insert("log".to_string(), JsValue::NativeFunction(log_idx));
         self.heap.push(HeapObject {
             data: HeapData::Object(console_props),
+        });
+
+        // fs = { readFileSync: <native fn> }
+        let fs_ptr = self.heap.len();
+        let mut fs_props = HashMap::new();
+        fs_props.insert(
+            "readFileSync".to_string(),
+            JsValue::NativeFunction(read_idx),
+        );
+        self.heap.push(HeapObject {
+            data: HeapData::Object(fs_props),
         });
 
         // Global bindings
@@ -74,7 +89,29 @@ impl VM {
             .insert("console".into(), JsValue::Object(console_ptr));
         globals
             .locals
-            .insert("setTimeout".into(), JsValue::NativeFunction(1));
+            .insert("setTimeout".into(), JsValue::NativeFunction(timeout_idx));
+        globals
+            .locals
+            .insert("require".into(), JsValue::NativeFunction(require_idx));
+        // Module registry
+        self.modules
+            .insert("fs".to_string(), JsValue::Object(fs_ptr));
+    }
+
+    pub fn register_native(&mut self, func: NativeFn) -> usize {
+        let idx = self.native_functions.len();
+        self.native_functions.push(func);
+        idx
+    }
+
+    pub fn schedule_timer(&mut self, callback: JsValue, delay_ms: u64) {
+        self.timers.push(TimerTask {
+            due: Instant::now() + Duration::from_millis(delay_ms),
+            task: Task {
+                function_ptr: callback,
+                args: vec![],
+            },
+        });
     }
 
     pub fn load_program(&mut self, bytecode: Vec<OpCode>) {
@@ -106,6 +143,9 @@ impl VM {
                 if next_due > now {
                     std::thread::sleep(next_due - now);
                 }
+            } else {
+                // This shouldn't happen if timers is not empty, but handle it anyway
+                break;
             }
         }
     }
@@ -198,6 +238,9 @@ impl VM {
     }
 
     fn exec_one(&mut self) -> ExecResult {
+        if self.ip >= self.program.len() {
+            return ExecResult::Stop;
+        }
         let op = self.program[self.ip].clone();
         match op {
             OpCode::NewObject => {
@@ -220,22 +263,40 @@ impl VM {
             }
 
             OpCode::GetProp(name) => {
-                if let Some(JsValue::Object(ptr)) = self.stack.pop()
-                    && let Some(heap_item) = self.heap.get(ptr)
-                {
-                    match &heap_item.data {
-                        HeapData::Object(props) => {
-                            let val = props.get(&name).cloned().unwrap_or(JsValue::Undefined);
-                            self.stack.push(val);
-                        }
-                        HeapData::Array(_) => {
-                            if name == "length" {
-                                // TODO: array.length
-                                self.stack.push(JsValue::Undefined);
-                            } else {
-                                self.stack.push(JsValue::Undefined);
+                let target = self.stack.pop();
+
+                match target {
+                    Some(JsValue::Object(ptr)) => {
+                        if let Some(heap_item) = self.heap.get(ptr) {
+                            match &heap_item.data {
+                                HeapData::Object(props) => {
+                                    let val =
+                                        props.get(&name).cloned().unwrap_or(JsValue::Undefined);
+                                    self.stack.push(val);
+                                }
+                                HeapData::Array(_) => {
+                                    if name == "length" {
+                                        // TODO: array.length
+                                        self.stack.push(JsValue::Undefined);
+                                    } else {
+                                        self.stack.push(JsValue::Undefined);
+                                    }
+                                }
                             }
+                        } else {
+                            self.stack.push(JsValue::Undefined);
                         }
+                    }
+                    Some(JsValue::String(s)) => {
+                        if name == "length" {
+                            self.stack.push(JsValue::Number(s.len() as f64));
+                        } else {
+                            self.stack.push(JsValue::Undefined);
+                        }
+                    }
+                    _ => {
+                        // For any other type, push undefined
+                        self.stack.push(JsValue::Undefined);
                     }
                 }
             }
@@ -243,7 +304,7 @@ impl VM {
             OpCode::Push(v) => self.stack.push(v),
 
             OpCode::Store(name) => {
-                let val = self.stack.pop().unwrap();
+                let val = self.stack.pop().unwrap_or(JsValue::Undefined);
                 // Assign to an existing binding if found, otherwise create in current frame.
                 let mut stored = false;
                 for frame in self.call_stack.iter_mut().rev() {
@@ -346,11 +407,65 @@ impl VM {
                 }
             }
 
+            OpCode::And => {
+                let b = self.stack.pop().unwrap();
+                let a = self.stack.pop().unwrap();
+                // Logical AND: both must be truthy
+                let a_truthy = match a {
+                    JsValue::Boolean(false) | JsValue::Null | JsValue::Undefined => false,
+                    JsValue::Number(n) => n != 0.0,
+                    _ => true, // Strings, objects, functions are truthy
+                };
+                let b_truthy = match b {
+                    JsValue::Boolean(false) | JsValue::Null | JsValue::Undefined => false,
+                    JsValue::Number(n) => n != 0.0,
+                    _ => true,
+                };
+                self.stack.push(JsValue::Boolean(a_truthy && b_truthy));
+            }
+
+            OpCode::Or => {
+                let b = self.stack.pop().expect("Missing right operand for ||");
+                let a = self.stack.pop().expect("Missing left operand for ||");
+                // Logical OR: at least one must be truthy
+                let a_truthy = match a {
+                    JsValue::Boolean(false) | JsValue::Null | JsValue::Undefined => false,
+                    JsValue::Number(n) => n != 0.0,
+                    _ => true, // Strings, objects, functions are truthy
+                };
+                let b_truthy = match b {
+                    JsValue::Boolean(false) | JsValue::Null | JsValue::Undefined => false,
+                    JsValue::Number(n) => n != 0.0,
+                    _ => true,
+                };
+                self.stack.push(JsValue::Boolean(a_truthy || b_truthy));
+            }
+
             OpCode::Sub => {
                 if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
                     (self.stack.pop(), self.stack.pop())
                 {
                     self.stack.push(JsValue::Number(a - b));
+                } else {
+                    self.stack.push(JsValue::Undefined);
+                }
+            }
+
+            OpCode::Mul => {
+                if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
+                    (self.stack.pop(), self.stack.pop())
+                {
+                    self.stack.push(JsValue::Number(a * b));
+                } else {
+                    self.stack.push(JsValue::Undefined);
+                }
+            }
+
+            OpCode::Div => {
+                if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
+                    (self.stack.pop(), self.stack.pop())
+                {
+                    self.stack.push(JsValue::Number(a / b));
                 } else {
                     self.stack.push(JsValue::Undefined);
                 }
@@ -371,7 +486,7 @@ impl VM {
             }
 
             OpCode::JumpIfFalse(target) => {
-                let condition = self.stack.pop().expect("Stack underflow in JumpIfFalse");
+                let condition = self.stack.pop().unwrap_or(JsValue::Undefined);
                 let is_falsy = match condition {
                     JsValue::Boolean(b) => !b,
                     JsValue::Number(n) => n == 0.0,
@@ -382,6 +497,7 @@ impl VM {
                     self.ip = target;
                     return ExecResult::ContinueNoIpInc;
                 }
+                // If condition is truthy, continue to next instruction (don't jump)
             }
 
             OpCode::Dup => {
@@ -395,11 +511,105 @@ impl VM {
                 self.stack.push(JsValue::Boolean(a == b));
             }
 
+            OpCode::EqEq => {
+                // Loose equality (==): performs type coercion
+                let b = self.stack.pop().unwrap();
+                let a = self.stack.pop().unwrap();
+
+                // If strictly equal, return true
+                if a == b {
+                    self.stack.push(JsValue::Boolean(true));
+                    return ExecResult::Continue;
+                }
+
+                // Otherwise, try type coercion
+                let result = match (&a, &b) {
+                    // Number and String: convert string to number
+                    (JsValue::Number(n), JsValue::String(s))
+                    | (JsValue::String(s), JsValue::Number(n)) => s
+                        .parse::<f64>()
+                        .map(|parsed| (*n - parsed).abs() < f64::EPSILON)
+                        .unwrap_or(false),
+                    // Boolean and Number coercion
+                    (JsValue::Boolean(true), JsValue::Number(n))
+                    | (JsValue::Number(n), JsValue::Boolean(true)) => {
+                        (*n - 1.0).abs() < f64::EPSILON
+                    }
+                    (JsValue::Boolean(false), JsValue::Number(n))
+                    | (JsValue::Number(n), JsValue::Boolean(false)) => {
+                        (*n - 0.0).abs() < f64::EPSILON
+                    }
+                    // Null and Undefined are equal to each other
+                    (JsValue::Null, JsValue::Undefined) | (JsValue::Undefined, JsValue::Null) => {
+                        true
+                    }
+                    // Everything else: not equal
+                    _ => false,
+                };
+                self.stack.push(JsValue::Boolean(result));
+            }
+
+            OpCode::Ne => {
+                let b = self.stack.pop().unwrap();
+                let a = self.stack.pop().unwrap();
+                self.stack.push(JsValue::Boolean(a != b));
+            }
+
+            OpCode::NeEq => {
+                // Loose inequality (!=): opposite of loose equality
+                let b = self.stack.pop().unwrap();
+                let a = self.stack.pop().unwrap();
+
+                // If strictly equal, return false
+                if a == b {
+                    self.stack.push(JsValue::Boolean(false));
+                    return ExecResult::Continue;
+                }
+
+                // Otherwise, try type coercion
+                let result = match (&a, &b) {
+                    // Number and String: convert string to number
+                    (JsValue::Number(n), JsValue::String(s))
+                    | (JsValue::String(s), JsValue::Number(n)) => s
+                        .parse::<f64>()
+                        .map(|parsed| (*n - parsed).abs() >= f64::EPSILON)
+                        .unwrap_or(true),
+                    // Boolean and Number coercion
+                    (JsValue::Boolean(true), JsValue::Number(n))
+                    | (JsValue::Number(n), JsValue::Boolean(true)) => {
+                        (*n - 1.0).abs() >= f64::EPSILON
+                    }
+                    (JsValue::Boolean(false), JsValue::Number(n))
+                    | (JsValue::Number(n), JsValue::Boolean(false)) => {
+                        (*n - 0.0).abs() >= f64::EPSILON
+                    }
+                    // Null and Undefined are equal to each other
+                    (JsValue::Null, JsValue::Undefined) | (JsValue::Undefined, JsValue::Null) => {
+                        false
+                    }
+                    // Everything else: not equal
+                    _ => true,
+                };
+                self.stack.push(JsValue::Boolean(result));
+            }
+
             OpCode::Lt => {
                 if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
                     (self.stack.pop(), self.stack.pop())
                 {
                     self.stack.push(JsValue::Boolean(a < b));
+                } else {
+                    self.stack.push(JsValue::Boolean(false));
+                }
+            }
+
+            OpCode::LtEq => {
+                if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
+                    (self.stack.pop(), self.stack.pop())
+                {
+                    self.stack.push(JsValue::Boolean(a <= b));
+                } else {
+                    self.stack.push(JsValue::Boolean(false));
                 }
             }
 
@@ -408,6 +618,32 @@ impl VM {
                     (self.stack.pop(), self.stack.pop())
                 {
                     self.stack.push(JsValue::Boolean(a > b));
+                } else {
+                    self.stack.push(JsValue::Boolean(false));
+                }
+            }
+
+            OpCode::GtEq => {
+                if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
+                    (self.stack.pop(), self.stack.pop())
+                {
+                    self.stack.push(JsValue::Boolean(a >= b));
+                } else {
+                    self.stack.push(JsValue::Boolean(false));
+                }
+            }
+
+            OpCode::Mod => {
+                if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
+                    (self.stack.pop(), self.stack.pop())
+                {
+                    if b == 0.0 {
+                        self.stack.push(JsValue::Number(f64::NAN));
+                    } else {
+                        self.stack.push(JsValue::Number(a % b));
+                    }
+                } else {
+                    self.stack.push(JsValue::Number(f64::NAN));
                 }
             }
 
@@ -439,15 +675,27 @@ impl VM {
 
             OpCode::LoadElement => {
                 let index_val = self.stack.pop().expect("Missing index");
-                let array_ptr = self.stack.pop().expect("Missing array pointer");
-                if let (JsValue::Object(ptr), JsValue::Number(idx)) = (array_ptr, index_val) {
-                    if let Some(heap_obj) = self.heap.get(ptr)
-                        && let HeapData::Array(arr) = &heap_obj.data
-                    {
+                let target = self.stack.pop().expect("Missing target (array or String)");
+                match (target, index_val) {
+                    (JsValue::Object(ptr), JsValue::Number(idx)) => {
+                        if let Some(heap_obj) = self.heap.get(ptr) {
+                            if let HeapData::Array(arr) = &heap_obj.data {
+                                let i = idx as usize;
+                                let val = arr.get(i).cloned().unwrap_or(JsValue::Undefined);
+                                self.stack.push(val);
+                            }
+                        }
+                    }
+                    (JsValue::String(s), JsValue::Number(idx)) => {
                         let i = idx as usize;
-                        let val = arr.get(i).cloned().unwrap_or(JsValue::Undefined);
-                        self.stack.push(val);
-                    } else {
+                        let char_val = s
+                            .chars()
+                            .nth(i)
+                            .map(|c| JsValue::String(c.to_string()))
+                            .unwrap_or(JsValue::Undefined);
+                        self.stack.push(char_val);
+                    }
+                    _ => {
                         self.stack.push(JsValue::Undefined);
                     }
                 }
@@ -473,38 +721,124 @@ impl VM {
                     panic!("MakeClosure expects an Object pointer on stack");
                 }
             }
+
+            OpCode::Require => {
+                let module_name = self.stack.pop().unwrap_or(JsValue::Undefined);
+                let module = match module_name {
+                    JsValue::String(module_name) => self
+                        .modules
+                        .get(&module_name)
+                        .cloned()
+                        .unwrap_or(JsValue::Undefined),
+                    _ => JsValue::Undefined,
+                };
+                self.stack.push(module);
+            }
+
+            OpCode::CallMethod(name, arg_count) => {
+                let reciever = self.stack.pop().expect("Missing reciever");
+
+                match reciever {
+                    JsValue::String(s) => match name.as_str() {
+                        "charCodeAt" => {
+                            let idx_val = self.stack.pop().unwrap_or(JsValue::Number(0.0));
+                            if let JsValue::Number(idx) = idx_val {
+                                let code =
+                                    s.chars().nth(idx as usize).map(|c| c as u32).unwrap_or(0);
+                                self.stack.push(JsValue::Number(code as f64));
+                            }
+                            self.ip += 1;
+                            return ExecResult::Continue;
+                        }
+                        "charAt" => {
+                            let idx_val = self.stack.pop().unwrap_or(JsValue::Number(0.0));
+                            if let JsValue::Number(idx) = idx_val {
+                                let char = s
+                                    .chars()
+                                    .nth(idx as usize)
+                                    .map(|c| c.to_string())
+                                    .unwrap_or("".to_string());
+                                self.stack.push(JsValue::String(char));
+                            }
+                            self.ip += 1;
+                            return ExecResult::Continue;
+                        }
+                        _ => {
+                            self.stack.push(JsValue::Undefined);
+                            self.ip += 1;
+                            return ExecResult::Continue;
+                        }
+                    },
+                    JsValue::Object(ptr) => {
+                        // Lookup the method in the object
+                        let method = if let Some(HeapObject {
+                            data: HeapData::Object(props),
+                        }) = self.heap.get(ptr)
+                        {
+                            props.get(&name).cloned().unwrap_or(JsValue::Undefined)
+                        } else {
+                            JsValue::Undefined
+                        };
+
+                        if let JsValue::NativeFunction(idx) = method {
+                            // For native functions, call directly
+                            let mut args = Vec::with_capacity(arg_count);
+                            for _ in 0..arg_count {
+                                args.push(self.stack.pop().expect("Missing argument"));
+                            }
+                            args.reverse();
+                            let func = self.native_functions[idx];
+                            let result = func(self, args);
+                            self.stack.push(result);
+                            // Increment IP before returning since we return early
+                            self.ip += 1;
+                            return ExecResult::Continue;
+                        } else if let JsValue::Function { address, env } = method {
+                            // Collect arguments
+                            let mut args = Vec::with_capacity(arg_count);
+                            for _ in 0..arg_count {
+                                args.push(self.stack.pop().expect("Missing argument"));
+                            }
+                            args.reverse();
+
+                            // Push arguments in call order
+                            for arg in &args {
+                                self.stack.push(arg.clone());
+                            }
+
+                            // Create new frame
+                            let mut frame = Frame {
+                                return_address: self.ip + 1,
+                                locals: HashMap::new(),
+                            };
+
+                            // Load captured variables from environment
+                            if let Some(HeapObject {
+                                data: HeapData::Object(props),
+                            }) = env.and_then(|ptr| self.heap.get(ptr))
+                            {
+                                for (name, value) in props {
+                                    frame.locals.insert(name.clone(), value.clone());
+                                }
+                            }
+
+                            self.call_stack.push(frame);
+                            self.ip = address;
+                            return ExecResult::ContinueNoIpInc;
+                        }
+                        panic!("Method {} not found on object", name);
+                    }
+                    _ => {
+                        self.stack.push(JsValue::Undefined);
+                        self.ip += 1;
+                        return ExecResult::Continue;
+                    }
+                }
+            }
         }
 
         self.ip += 1;
         ExecResult::Continue
-    }
-    // Example Native Function
-    pub fn native_log(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-        let output: Vec<String> = args.iter().map(|arg| format!("{:?}", arg)).collect();
-        println!("LOG: {}", output.join(" "));
-        JsValue::Undefined
-    }
-    pub fn native_set_timeout(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-        // Usage: setTimeout(callback, ms)
-        if !args.is_empty() {
-            let callback = args[0].clone();
-            let delay_ms = args
-                .get(1)
-                .and_then(|v| match v {
-                    JsValue::Number(n) => Some(*n as u64),
-                    _ => None,
-                })
-                .unwrap_or(0);
-
-            vm.timers.push(TimerTask {
-                due: Instant::now() + Duration::from_millis(delay_ms),
-                task: Task {
-                    function_ptr: callback,
-                    args: vec![],
-                },
-            });
-        }
-        JsValue::Undefined
     }
 }
 

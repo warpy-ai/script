@@ -2,7 +2,67 @@ use crate::vm::opcodes::OpCode;
 use std::collections::HashSet;
 use swc_ecma_ast::*;
 pub mod borrow_ck;
+use crate::compiler::borrow_ck::BorrowChecker;
 use crate::vm::value::JsValue;
+use swc_common::{FileName, SourceMap, sync::Lrc};
+use swc_ecma_parser::{Parser, StringInput, Syntax, lexer::Lexer};
+
+pub struct Compiler {
+    pub borrow_checker: BorrowChecker,
+}
+
+impl Compiler {
+    pub fn new() -> Self {
+        Self {
+            borrow_checker: BorrowChecker::new(),
+        }
+    }
+
+    pub fn compile(&mut self, source: &str) -> Result<Vec<OpCode>, String> {
+        let cm: Lrc<SourceMap> = Default::default();
+        let fm = cm.new_source_file(
+            FileName::Custom("main.tscl".into()).into(),
+            source.to_string(),
+        );
+        let lexer = Lexer::new(
+            Syntax::Es(Default::default()),
+            Default::default(),
+            StringInput::from(&*fm),
+            None,
+        );
+        let mut parser = Parser::new_from(lexer);
+        let program = parser
+            .parse_program()
+            .map_err(|e| format!("Parsing error: {:?}", e))?;
+
+        match &program {
+            Program::Module(module) => {
+                for item in &module.body {
+                    if let ModuleItem::Stmt(stmt) = item {
+                        self.borrow_checker.analyze_stmt(stmt)?;
+                    }
+                }
+            }
+            Program::Script(script) => {
+                for stm in &script.body {
+                    self.borrow_checker.analyze_stmt(stm)?;
+                }
+            }
+        }
+
+        let mut codegen = Codegen::new();
+        match &program {
+            Program::Module(module) => {
+                codegen.generate(module);
+            }
+            Program::Script(script) => {
+                codegen.generate_script(script);
+            }
+        }
+
+        Ok(codegen.instructions)
+    }
+}
 
 pub struct Codegen {
     pub instructions: Vec<OpCode>,
@@ -102,10 +162,10 @@ impl Codegen {
             }
             Expr::Object(obj) => {
                 for prop in &obj.props {
-                    if let PropOrSpread::Prop(p) = prop {
-                        if let Prop::KeyValue(kv) = p.as_ref() {
-                            self.collect_free_vars_in_expr(&kv.value, local_vars, free_vars);
-                        }
+                    if let PropOrSpread::Prop(p) = prop
+                        && let Prop::KeyValue(kv) = p.as_ref()
+                    {
+                        self.collect_free_vars_in_expr(&kv.value, local_vars, free_vars);
                     }
                 }
             }
@@ -148,6 +208,14 @@ impl Codegen {
             if let Some(stmt) = item.as_stmt() {
                 self.gen_stmt(stmt);
             }
+        }
+        self.instructions.push(OpCode::Halt);
+        self.instructions.clone()
+    }
+
+    pub fn generate_script(&mut self, script: &Script) -> Vec<OpCode> {
+        for stmt in &script.body {
+            self.gen_stmt(stmt);
         }
         self.instructions.push(OpCode::Halt);
         self.instructions.clone()
@@ -272,6 +340,16 @@ impl Codegen {
                 let loop_end = self.instructions.len();
                 if let OpCode::JumpIfFalse(ref mut addr) = self.instructions[exit_jump_idx] {
                     *addr = loop_end;
+                }
+            }
+            Stmt::If(if_stmt) => {
+                self.gen_expr(&if_stmt.test);
+                let exit_jump_idx = self.instructions.len();
+                self.instructions.push(OpCode::JumpIfFalse(0)); // Placeholder
+                self.gen_stmt(&if_stmt.cons);
+                let if_end = self.instructions.len();
+                if let OpCode::JumpIfFalse(ref mut addr) = self.instructions[exit_jump_idx] {
+                    *addr = if_end;
                 }
             }
             _ => {}
@@ -465,6 +543,10 @@ impl Codegen {
                     s.value.to_string_lossy().to_string(),
                 )));
             }
+            Expr::Lit(Lit::Bool(b)) => {
+                self.instructions
+                    .push(OpCode::Push(JsValue::Boolean(b.value)));
+            }
             Expr::Ident(id) => {
                 self.instructions.push(OpCode::Load(id.sym.to_string()));
             }
@@ -473,10 +555,20 @@ impl Codegen {
                 self.gen_expr(&bin.right);
                 match bin.op {
                     BinaryOp::Add => self.instructions.push(OpCode::Add),
-                    BinaryOp::EqEqEq => self.instructions.push(OpCode::Eq),
-                    BinaryOp::Lt => self.instructions.push(OpCode::Lt),
-                    BinaryOp::Gt => self.instructions.push(OpCode::Gt),
                     BinaryOp::Sub => self.instructions.push(OpCode::Sub),
+                    BinaryOp::Mul => self.instructions.push(OpCode::Mul),
+                    BinaryOp::Div => self.instructions.push(OpCode::Div),
+                    BinaryOp::Mod => self.instructions.push(OpCode::Mod),
+                    BinaryOp::EqEq => self.instructions.push(OpCode::EqEq), // == (loose equality)
+                    BinaryOp::EqEqEq => self.instructions.push(OpCode::Eq), // === (strict equality)
+                    BinaryOp::NotEq => self.instructions.push(OpCode::NeEq), // != (loose inequality)
+                    BinaryOp::NotEqEq => self.instructions.push(OpCode::Ne), // !== (strict inequality)
+                    BinaryOp::Lt => self.instructions.push(OpCode::Lt),
+                    BinaryOp::LtEq => self.instructions.push(OpCode::LtEq),
+                    BinaryOp::Gt => self.instructions.push(OpCode::Gt),
+                    BinaryOp::GtEq => self.instructions.push(OpCode::GtEq),
+                    BinaryOp::LogicalAnd => self.instructions.push(OpCode::And),
+                    BinaryOp::LogicalOr => self.instructions.push(OpCode::Or),
                     _ => println!("Warning: Operator {:?} not supported", bin.op),
                 }
             }
@@ -499,6 +591,36 @@ impl Codegen {
                 }
             }
             Expr::Call(call_expr) => {
+                if let Callee::Expr(callee_expr) = &call_expr.callee {
+                    if let Expr::Member(member) = callee_expr.as_ref() {
+                        for arg in &call_expr.args {
+                            self.gen_expr(&arg.expr);
+                        }
+
+                        self.gen_expr(&member.obj);
+
+                        if let MemberProp::Ident(id) = &member.prop {
+                            self.instructions.push(OpCode::CallMethod(
+                                id.sym.to_string(),
+                                call_expr.args.len() as usize,
+                            ));
+                            return;
+                        }
+                    }
+                }
+                // detect if this is a 'require' call
+                if let Callee::Expr(expr) = &call_expr.callee {
+                    if let Expr::Ident(id) = expr.as_ref() {
+                        if id.sym.to_string() == "require" {
+                            if let Some(arg) = call_expr.args.first() {
+                                self.gen_expr(&arg.expr);
+                                self.instructions.push(OpCode::Require);
+                                return;
+                            }
+                        }
+                    }
+                }
+
                 let arg_count = call_expr.args.len();
                 for arg in &call_expr.args {
                     self.gen_expr(&arg.expr);

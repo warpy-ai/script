@@ -1,0 +1,28 @@
+// file_reader.tscl
+const fs = require("fs");
+let content = fs.readFileSync("./examples/file_reader.tscl");
+
+let i = 0;
+let charCount = 0;
+
+while (i < content.length) {
+    let char = content[i];
+    if(char !== " " && char !== "\n"){
+        charCount = charCount + 1;
+    }
+    i = i + 1;
+}
+
+console.log("Non-whitespace characters:", charCount);
+
+let char = "5";
+
+let code = char.charCodeAt(0);
+
+// ASCII for '0' is 48, '9' is 57
+
+if(code >= 48 && code <= 57) {
+    console.log("Is a digit");
+} else {
+    console.log("It is not a digit");
+}

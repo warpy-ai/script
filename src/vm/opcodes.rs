@@ -18,14 +18,26 @@ pub enum OpCode {
     SetProp(String),
     GetProp(String),
     Dup,
-    Eq,
+    Eq,   // === (strict equality)
+    EqEq, // == (loose equality)
+    Ne,   // !== (strict inequality)
+    NeEq, // != (loose inequality)
     Lt,
+    LtEq, // <=
     Gt,
+    GtEq, // >=
+    Mod,  // %
+    And,
+    Or,              // ||
     NewArray(usize), // Creates array of size N
     StoreElement,    // Pops index, value, and array_ptr -> arr[idx] = val
     LoadElement,     // Pops index and array_ptr -> pushes arr[idx]
     JumpIfFalse(usize),
     Halt,
+    CallMethod(String, usize),
+    Mul,
+    Div,
+    Require,
     /// Create a closure: pops environment object pointer from stack,
     /// combines it with the function address to create a Function value.
     /// This is the key to "lifting" captured variables from stack to heap.
