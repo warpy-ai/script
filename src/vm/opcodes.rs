@@ -11,7 +11,7 @@ pub enum OpCode {
     Store(String),
     Load(String),
     Drop(String),
-    Call,
+    Call(usize),
     Return,
     Jump(usize),
     NewObject,

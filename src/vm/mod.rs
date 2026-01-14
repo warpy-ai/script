@@ -101,35 +101,47 @@ impl VM {
                     self.stack.push(val);
                 }
 
-                OpCode::Call => {
-                    let callee = self.stack.pop().unwrap();
+                OpCode::Call(arg_count) => {
+                    let callee = self.stack.pop().expect("Missing callee");
+                    let mut args = Vec::with_capacity(*arg_count);
+                    for _ in 0..*arg_count {
+                        args.push(self.stack.pop().expect("Missing argument"));
+                    }
+
                     match callee {
                         JsValue::Function(address) => {
+                            // Restore the original calling convention for user functions:
+                            // args must be on the stack when we jump into the callee, because
+                            // the function prologue uses `Store(...)` to pop them into locals.
+                            // Stack before call (compiler): [..., arg1, arg2, ..., argN, callee]
+                            // We popped args into `args` in reverse order, so reverse and push back.
+                            args.reverse();
+                            for arg in &args {
+                                self.stack.push(arg.clone());
+                            }
+
                             let frame = Frame {
                                 return_address: self.ip + 1,
                                 locals: HashMap::new(),
                             };
                             self.call_stack.push(frame);
                             self.ip = address;
-                            continue; // don't auto-increment ip after jumping into the function
+                            continue;
                         }
                         JsValue::NativeFunction(idx) => {
-                            // 1. For simplicity, assume console.log takes 1 arg for now
-                            let arg = self.stack.pop().unwrap();
+                            args.reverse();
                             let func = self.native_functions[idx];
-                            let result = func(vec![arg]);
+                            let result = func(args);
                             self.stack.push(result);
                         }
                         _ => panic!("Target is not callable"),
                     }
                 }
-
                 OpCode::Return => {
-                    let frame = self.call_stack.pop().unwrap();
+                    let frame = self.call_stack.pop().expect("Missing frame");
                     self.ip = frame.return_address;
                     continue;
                 }
-
                 // And ensure Drop handles the String correctly:
                 OpCode::Drop(name) => {
                     if let Some(JsValue::Object(ptr)) =
@@ -272,8 +284,7 @@ impl VM {
 
 // Example Native Function
 pub fn native_log(args: Vec<JsValue>) -> JsValue {
-    for arg in args {
-        println!("LOG: {:?}", arg);
-    }
+    let output: Vec<String> = args.iter().map(|arg| format!("{:?}", arg)).collect();
+    println!("LOG: {}", output.join(" "));
     JsValue::Undefined
 }

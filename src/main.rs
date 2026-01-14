@@ -16,11 +16,11 @@ fn main() {
     let cm: Lrc<SourceMap> = Default::default();
 
     // TEST CASE: Using 'a' twice should fail the Borrow Checker
-    let code = "let count = 3;
-while (count > 0) {
-    console.log(count);
-    count = count - 1;
-}";
+    let code = "function addThree(a,b,c) {
+        return a + b + c;
+    }
+    let result = addThree(1,2,3);
+    console.log('the result is:', result);";
 
     let fm = cm.new_source_file(FileName::Custom("input.js".into()).into(), code);
     let lexer = Lexer::new(

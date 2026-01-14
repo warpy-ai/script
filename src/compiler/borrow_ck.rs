@@ -88,7 +88,9 @@ impl BorrowChecker {
     fn determine_kind(&self, expr: &Expr) -> VarKind {
         match expr {
             Expr::Object(_) | Expr::Array(_) | Expr::Fn(_) | Expr::Arrow(_) => VarKind::Heap,
-            Expr::Lit(Lit::Num(_)) | Expr::Lit(Lit::Bool(_)) => VarKind::Primitive,
+            Expr::Lit(Lit::Num(_)) | Expr::Lit(Lit::Bool(_)) | Expr::Lit(Lit::Str(_)) => {
+                VarKind::Primitive
+            }
             Expr::Ident(id) => {
                 // Inherit kind from source variable
                 self.symbols

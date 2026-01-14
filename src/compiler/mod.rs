@@ -147,6 +147,11 @@ impl Codegen {
                 self.instructions
                     .push(OpCode::Push(JsValue::Number(num.value)));
             }
+            Expr::Lit(Lit::Str(s)) => {
+                self.instructions.push(OpCode::Push(JsValue::String(
+                    s.value.to_string_lossy().to_string(),
+                )));
+            }
             Expr::Ident(id) => {
                 self.instructions.push(OpCode::Load(id.sym.to_string()));
             }
@@ -181,6 +186,7 @@ impl Codegen {
                 }
             }
             Expr::Call(call_expr) => {
+                let arg_count = call_expr.args.len();
                 for arg in &call_expr.args {
                     self.gen_expr(&arg.expr);
                 }
@@ -191,7 +197,7 @@ impl Codegen {
                     Callee::Import(_) => {} // Handle import calls if needed
                 }
                 // Call it
-                self.instructions.push(OpCode::Call);
+                self.instructions.push(OpCode::Call(arg_count));
             }
             // Inside gen_expr in compiler/mod.rs
             Expr::Assign(assign_expr) => {
