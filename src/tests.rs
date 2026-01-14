@@ -318,3 +318,82 @@ fn test_set_timeout_with_arrow_function_callback() {
         .unwrap_or(JsValue::Undefined);
     assert_eq!(global_x, JsValue::Number(9.0));
 }
+
+// ==================== CLOSURE CAPTURING TESTS ====================
+
+/// Test that closure captures work correctly with setTimeout.
+/// This is the "Stack Frame Paradox" scenario: the outer function's
+/// stack frame would normally be destroyed, but the captured variable
+/// is lifted to the heap.
+#[test]
+fn test_closure_captures_variable_for_async() {
+    let mut vm = VM::new();
+    // This code creates a closure that captures `data` from outer scope.
+    // When setTimeout fires, `data` should still be accessible because
+    // it was lifted to the heap environment.
+    let code = r#"
+        let data = { value: 42 };
+        setTimeout(() => {
+            console.log(data.value);
+        }, 0);
+    "#;
+
+    let ast = parse_js(code);
+
+    let mut cg = Codegen::new();
+    let bytecode = cg.generate(&ast);
+
+    // Debug: print bytecode to verify MakeClosure is generated
+    for (i, op) in bytecode.iter().enumerate() {
+        println!("{}: {:?}", i, op);
+    }
+
+    vm.load_program(bytecode);
+    vm.run_event_loop();
+    // Test passes if no panic occurs - the closure accessed captured data
+}
+
+/// Test that the borrow checker prevents use of a captured variable
+/// after it has been moved into a closure.
+#[test]
+fn test_borrow_checker_prevents_use_after_capture() {
+    let mut bc = BorrowChecker::new();
+
+    // This code captures `data` in a closure, then tries to use it again.
+    // The borrow checker should reject the second use.
+    let code = r#"
+        let data = { message: "Hello" };
+        setTimeout(() => { console.log(data.message); }, 0);
+        data.message;
+    "#;
+
+    let ast = parse_js(code);
+
+    let mut results = Vec::new();
+    for item in &ast.body {
+        if let Some(stmt) = item.as_stmt() {
+            results.push(bc.analyze_stmt(stmt));
+        }
+    }
+
+    // Declaration should pass
+    assert!(results[0].is_ok(), "let data = ... should pass");
+
+    // setTimeout with closure that captures `data` should pass
+    // (but it marks `data` as CapturedByAsync)
+    assert!(results[1].is_ok(), "setTimeout(...) should pass");
+
+    // Trying to access `data` after it was captured should FAIL!
+    assert!(
+        results[2].is_err(),
+        "Access after capture should fail: {:?}",
+        results[2]
+    );
+
+    let err = results[2].clone().unwrap_err();
+    assert!(
+        err.contains("captured") || err.contains("moved"),
+        "Error should mention capture/move: {}",
+        err
+    );
+}

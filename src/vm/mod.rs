@@ -130,16 +130,33 @@ impl VM {
 
     fn execute_task(&mut self, task: Task) {
         match task.function_ptr {
-            JsValue::Function(address) => {
+            JsValue::Function { address, env } => {
                 // Push args in call order so the function prologue `Store(...)` consumes correctly.
                 for arg in task.args {
                     self.stack.push(arg);
                 }
 
-                let frame = Frame {
+                let mut frame = Frame {
                     return_address: usize::MAX, // sentinel: stop when returning
                     locals: HashMap::new(),
                 };
+
+                // CLOSURE MAGIC: If this function has captured variables (env),
+                // load them into the new frame's locals. This is the key to
+                // surviving the Stack Frame Paradox!
+                if let Some(HeapObject {
+                    data: HeapData::Object(props),
+                }) = env.and_then(|ptr| self.heap.get(ptr))
+                {
+                    for (name, value) in props {
+                        frame.locals.insert(name.clone(), value.clone());
+                        println!(
+                            "DEBUG: Loaded captured var '{}' from env into closure frame",
+                            name
+                        );
+                    }
+                }
+
                 self.call_stack.push(frame);
                 self.ip = address;
                 self.run_until_return_sentinel();
@@ -261,16 +278,29 @@ impl VM {
                 }
 
                 match callee {
-                    JsValue::Function(address) => {
+                    JsValue::Function { address, env } => {
                         args.reverse();
                         for arg in &args {
                             self.stack.push(arg.clone());
                         }
 
-                        let frame = Frame {
+                        let mut frame = Frame {
                             return_address: self.ip + 1,
                             locals: HashMap::new(),
                         };
+
+                        // CLOSURE CONTEXT SWITCH: Load captured variables from
+                        // the environment heap object into the new frame's locals.
+                        // This makes them available to the function body.
+                        if let Some(HeapObject {
+                            data: HeapData::Object(props),
+                        }) = env.and_then(|ptr| self.heap.get(ptr))
+                        {
+                            for (name, value) in props {
+                                frame.locals.insert(name.clone(), value.clone());
+                            }
+                        }
+
                         self.call_stack.push(frame);
                         self.ip = address;
                         return ExecResult::ContinueNoIpInc;
@@ -424,6 +454,25 @@ impl VM {
             }
 
             OpCode::Halt => return ExecResult::Stop,
+
+            OpCode::MakeClosure(address) => {
+                // Pop the environment object pointer from the stack and create
+                // a Function value with the captured environment attached.
+                // This is the "lifting" operation that moves stack variables to the heap.
+                let env_ptr = self.stack.pop().expect("Missing environment object");
+                if let JsValue::Object(ptr) = env_ptr {
+                    self.stack.push(JsValue::Function {
+                        address,
+                        env: Some(ptr),
+                    });
+                    println!(
+                        "DEBUG: Created closure with env at heap[{}], jumps to {}",
+                        ptr, address
+                    );
+                } else {
+                    panic!("MakeClosure expects an Object pointer on stack");
+                }
+            }
         }
 
         self.ip += 1;
@@ -437,7 +486,7 @@ impl VM {
     }
     pub fn native_set_timeout(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
         // Usage: setTimeout(callback, ms)
-        if args.len() >= 1 {
+        if !args.is_empty() {
             let callback = args[0].clone();
             let delay_ms = args
                 .get(1)

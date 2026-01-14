@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use swc_ecma_ast::*;
 
 #[derive(PartialEq, Clone, Copy, Debug)]
@@ -9,8 +9,9 @@ pub enum VarKind {
 
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum VarState {
-    Owned, // Currently valid and owned by this variable
-    Moved, // Data has been transferred; variable is now a "tombstone"
+    Owned,          // Currently valid and owned by this variable
+    Moved,          // Data has been transferred; variable is now a "tombstone"
+    CapturedByAsync, // Moved into an async closure (setTimeout callback, etc.)
 }
 
 #[derive(Clone, Debug)]
@@ -30,6 +31,124 @@ impl BorrowChecker {
         Self {
             symbols: HashMap::new(),
         }
+    }
+
+    /// Collects identifiers used in an expression that might be captured from outer scope.
+    #[allow(dead_code)]
+    fn collect_captured_vars_expr(&self, expr: &Expr, params: &HashSet<String>) -> HashSet<String> {
+        let mut captured = HashSet::new();
+        self.scan_expr_for_captures(expr, params, &mut captured);
+        captured
+    }
+
+    fn scan_expr_for_captures(
+        &self,
+        expr: &Expr,
+        local_vars: &HashSet<String>,
+        captured: &mut HashSet<String>,
+    ) {
+        match expr {
+            Expr::Ident(id) => {
+                let name = id.sym.to_string();
+                // If this identifier is NOT a parameter/local AND IS in our symbol table,
+                // it's being captured from outer scope
+                if !local_vars.contains(&name) && self.symbols.contains_key(&name) {
+                    captured.insert(name);
+                }
+            }
+            Expr::Bin(bin) => {
+                self.scan_expr_for_captures(&bin.left, local_vars, captured);
+                self.scan_expr_for_captures(&bin.right, local_vars, captured);
+            }
+            Expr::Call(call) => {
+                for arg in &call.args {
+                    self.scan_expr_for_captures(&arg.expr, local_vars, captured);
+                }
+                if let Callee::Expr(callee) = &call.callee {
+                    self.scan_expr_for_captures(callee, local_vars, captured);
+                }
+            }
+            Expr::Member(member) => {
+                self.scan_expr_for_captures(&member.obj, local_vars, captured);
+                if let MemberProp::Computed(c) = &member.prop {
+                    self.scan_expr_for_captures(&c.expr, local_vars, captured);
+                }
+            }
+            Expr::Object(obj) => {
+                for prop in &obj.props {
+                    if let PropOrSpread::Prop(p) = prop {
+                        if let Prop::KeyValue(kv) = p.as_ref() {
+                            self.scan_expr_for_captures(&kv.value, local_vars, captured);
+                        }
+                    }
+                }
+            }
+            Expr::Assign(assign) => {
+                self.scan_expr_for_captures(&assign.right, local_vars, captured);
+            }
+            _ => {}
+        }
+    }
+
+    fn scan_stmt_for_captures(
+        &self,
+        stmt: &Stmt,
+        local_vars: &HashSet<String>,
+        captured: &mut HashSet<String>,
+    ) {
+        match stmt {
+            Stmt::Expr(expr_stmt) => {
+                self.scan_expr_for_captures(&expr_stmt.expr, local_vars, captured);
+            }
+            Stmt::Return(ret) => {
+                if let Some(arg) = &ret.arg {
+                    self.scan_expr_for_captures(arg, local_vars, captured);
+                }
+            }
+            Stmt::Block(block) => {
+                for s in &block.stmts {
+                    self.scan_stmt_for_captures(s, local_vars, captured);
+                }
+            }
+            Stmt::Decl(Decl::Var(var_decl)) => {
+                for decl in var_decl.decls.iter().filter_map(|d| d.init.as_ref()) {
+                    self.scan_expr_for_captures(decl, local_vars, captured);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Process a closure capture: mark the outer variable as MOVED.
+    /// This prevents use-after-capture bugs in async contexts.
+    fn process_closure_capture(&mut self, name: &str) -> Result<(), String> {
+        if let Some(info) = self.symbols.get_mut(name) {
+            // Check if already moved
+            if info.state == VarState::Moved || info.state == VarState::CapturedByAsync {
+                return Err(format!(
+                    "BORROW ERROR: Variable '{}' was already moved or captured",
+                    name
+                ));
+            }
+
+            // Check for active borrows
+            if info.active_borrows > 0 {
+                return Err(format!(
+                    "LIFETIME ERROR: Cannot capture '{}' while it has {} active borrow(s)",
+                    name, info.active_borrows
+                ));
+            }
+
+            // Mark as captured (moved into closure heap)
+            if info.kind == VarKind::Heap {
+                info.state = VarState::CapturedByAsync;
+                println!(
+                    "DEBUG: Variable '{}' CAPTURED and MOVED to closure heap. Original is now invalid.",
+                    name
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Entry point for statement analysis
@@ -161,6 +280,71 @@ impl BorrowChecker {
                     }
                 }
             }
+
+            // Context: Arrow Function (Closure)
+            // This is THE critical case for async safety!
+            Expr::Arrow(arrow) => {
+                // 1. Collect parameter names (these are local to the closure)
+                let params: HashSet<String> = arrow
+                    .params
+                    .iter()
+                    .filter_map(|p| {
+                        if let Pat::Ident(id) = p {
+                            Some((*id.id.sym).to_owned())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                // 2. Scan the body for captured variables
+                let mut captured = HashSet::new();
+                match &*arrow.body {
+                    BlockStmtOrExpr::Expr(e) => {
+                        self.scan_expr_for_captures(e, &params, &mut captured);
+                    }
+                    BlockStmtOrExpr::BlockStmt(block) => {
+                        for stmt in &block.stmts {
+                            self.scan_stmt_for_captures(stmt, &params, &mut captured);
+                        }
+                    }
+                }
+
+                // 3. Mark all captured variables as MOVED
+                // This enforces Rust-like move semantics for closures!
+                for var_name in &captured {
+                    self.process_closure_capture(var_name)?;
+                }
+            }
+
+            // Context: Function Expression (also a closure)
+            Expr::Fn(fn_expr) => {
+                // Same logic as arrow functions
+                let params: HashSet<String> = fn_expr
+                    .function
+                    .params
+                    .iter()
+                    .filter_map(|p| {
+                        if let Pat::Ident(id) = &p.pat {
+                            Some((*id.id.sym).to_owned())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                let mut captured = HashSet::new();
+                if let Some(body) = &fn_expr.function.body {
+                    for stmt in &body.stmts {
+                        self.scan_stmt_for_captures(stmt, &params, &mut captured);
+                    }
+                }
+
+                for var_name in &captured {
+                    self.process_closure_capture(var_name)?;
+                }
+            }
+
             _ => {}
         }
         Ok(())
@@ -170,9 +354,16 @@ impl BorrowChecker {
 
     fn process_move(&mut self, name: &str) -> Result<(), String> {
         if let Some(info) = self.symbols.get_mut(name) {
-            // 1. Check for Use-After-Move
+            // 1. Check for Use-After-Move or Use-After-Capture
             if info.state == VarState::Moved {
                 return Err(format!("BORROW ERROR: Use of moved variable '{}'", name));
+            }
+            if info.state == VarState::CapturedByAsync {
+                return Err(format!(
+                    "BORROW ERROR: '{}' was moved into an async closure! \
+                    Cannot use after capture - the callback might run later.",
+                    name
+                ));
             }
 
             // 2. Check for Lifetime Violation (Cannot move if borrowed)
@@ -205,6 +396,13 @@ impl BorrowChecker {
                     name
                 ));
             }
+            if info.state == VarState::CapturedByAsync {
+                return Err(format!(
+                    "BORROW ERROR: Cannot access '{}' - it was captured by an async closure! \
+                    The original variable is now invalid.",
+                    name
+                ));
+            }
             // For now, implicit borrows (like obj.prop) increment borrow count
             // but we'll assume they are returned after the statement ends.
             println!("DEBUG: '{}' implicitly borrowed", name);
@@ -217,6 +415,12 @@ impl BorrowChecker {
             if info.state == VarState::Moved {
                 return Err(format!(
                     "BORROW ERROR: Cannot borrow moved variable '{}'",
+                    name
+                ));
+            }
+            if info.state == VarState::CapturedByAsync {
+                return Err(format!(
+                    "BORROW ERROR: Cannot borrow '{}' - it was captured by an async closure!",
                     name
                 ));
             }

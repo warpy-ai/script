@@ -41,6 +41,15 @@ Comparisons: Full support for >, <, and ===.
 
 Explicit Borrowing: Implementation of the void operator hijacked for explicit reference creation.
 
+4. Closure Capturing (Stack Frame Paradox Solution)
+   Environment Objects: Closures that capture outer-scope variables create a hidden "Environment" object on the Heap.
+
+   Variable Lifting: Captured variables are "lifted" from the stack to the heap, allowing them to survive after the defining scope is destroyed.
+
+   Move Semantics for Captures: Once a variable is captured by a closure (especially async callbacks like setTimeout), the borrow checker marks it as MOVED, preventing use-after-capture bugs.
+
+   Safe Async: This enables safe asynchronous programming where callbacks can access captured data without dangling pointer risks.
+
 📜 Bytecode Instruction Set
 OpCode Description
 Push(Value) Pushes a constant onto the stack.
@@ -51,6 +60,7 @@ SetProp(Key) Sets a property on a heap object.
 Call Executes a Bytecode or Native function.
 JumpIfFalse(N) Branches the execution if the condition is falsy.
 Drop(Name) Manually frees a variable and its heap data.
+MakeClosure(Addr) Pops environment object, creates Function with captured variables.
 🛠️ Example Trace
 Source Code:
 

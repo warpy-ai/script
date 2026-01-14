@@ -26,4 +26,8 @@ pub enum OpCode {
     LoadElement,     // Pops index and array_ptr -> pushes arr[idx]
     JumpIfFalse(usize),
     Halt,
+    /// Create a closure: pops environment object pointer from stack,
+    /// combines it with the function address to create a Function value.
+    /// This is the key to "lifting" captured variables from stack to heap.
+    MakeClosure(usize), // address of the function body
 }

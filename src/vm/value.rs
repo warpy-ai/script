@@ -11,7 +11,14 @@ pub enum JsValue {
     Boolean(bool),
     // In a real low-level VM, this would be a pointer to a Heap
     Object(usize),
-    Function(usize),
+    /// A function value with its code address and optional captured environment.
+    /// The `env` field points to a HeapObject containing variables "lifted" from
+    /// the enclosing scope. This enables closures to survive after their
+    /// defining scope's stack frame is destroyed.
+    Function {
+        address: usize,
+        env: Option<usize>, // Points to HeapObject with captured variables
+    },
     NativeFunction(usize),
     Null,
     Undefined,

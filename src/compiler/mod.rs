@@ -1,11 +1,16 @@
 use crate::vm::opcodes::OpCode;
+use std::collections::HashSet;
 use swc_ecma_ast::*;
 pub mod borrow_ck;
 use crate::vm::value::JsValue;
+
 pub struct Codegen {
     pub instructions: Vec<OpCode>,
     scope_stack: Vec<Vec<String>>,
     in_function: bool,
+    /// Tracks which variables are available in the current scope chain.
+    /// Used to detect "upvars" (variables captured from outer scopes).
+    outer_scope_vars: HashSet<String>,
 }
 
 impl Codegen {
@@ -14,7 +19,128 @@ impl Codegen {
             instructions: Vec::new(),
             scope_stack: vec![Vec::new()],
             in_function: false,
+            outer_scope_vars: HashSet::new(),
         }
+    }
+
+    /// Collects all free variables (identifiers used but not defined) in a function body.
+    /// These are candidates for "capture" from the enclosing scope.
+    fn collect_free_vars_in_body(&self, body: &BlockStmt, params: &[String]) -> HashSet<String> {
+        let mut free_vars = HashSet::new();
+        let param_set: HashSet<_> = params.iter().cloned().collect();
+
+        for stmt in &body.stmts {
+            self.collect_free_vars_in_stmt(stmt, &param_set, &mut free_vars);
+        }
+        free_vars
+    }
+
+    fn collect_free_vars_in_stmt(
+        &self,
+        stmt: &Stmt,
+        local_vars: &HashSet<String>,
+        free_vars: &mut HashSet<String>,
+    ) {
+        match stmt {
+            Stmt::Expr(expr_stmt) => {
+                self.collect_free_vars_in_expr(&expr_stmt.expr, local_vars, free_vars);
+            }
+            Stmt::Return(ret) => {
+                if let Some(arg) = &ret.arg {
+                    self.collect_free_vars_in_expr(arg, local_vars, free_vars);
+                }
+            }
+            Stmt::Block(block) => {
+                for s in &block.stmts {
+                    self.collect_free_vars_in_stmt(s, local_vars, free_vars);
+                }
+            }
+            Stmt::Decl(Decl::Var(var_decl)) => {
+                for init in var_decl.decls.iter().filter_map(|d| d.init.as_ref()) {
+                    self.collect_free_vars_in_expr(init, local_vars, free_vars);
+                }
+            }
+            Stmt::While(while_stmt) => {
+                self.collect_free_vars_in_expr(&while_stmt.test, local_vars, free_vars);
+                self.collect_free_vars_in_stmt(&while_stmt.body, local_vars, free_vars);
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_free_vars_in_expr(
+        &self,
+        expr: &Expr,
+        local_vars: &HashSet<String>,
+        free_vars: &mut HashSet<String>,
+    ) {
+        match expr {
+            Expr::Ident(id) => {
+                let name = id.sym.to_string();
+                // If not a local/param AND exists in outer scope, it's a captured var
+                if !local_vars.contains(&name) && self.outer_scope_vars.contains(&name) {
+                    free_vars.insert(name);
+                }
+            }
+            Expr::Bin(bin) => {
+                self.collect_free_vars_in_expr(&bin.left, local_vars, free_vars);
+                self.collect_free_vars_in_expr(&bin.right, local_vars, free_vars);
+            }
+            Expr::Call(call) => {
+                for arg in &call.args {
+                    self.collect_free_vars_in_expr(&arg.expr, local_vars, free_vars);
+                }
+                if let Callee::Expr(callee) = &call.callee {
+                    self.collect_free_vars_in_expr(callee, local_vars, free_vars);
+                }
+            }
+            Expr::Member(member) => {
+                self.collect_free_vars_in_expr(&member.obj, local_vars, free_vars);
+                if let MemberProp::Computed(computed) = &member.prop {
+                    self.collect_free_vars_in_expr(&computed.expr, local_vars, free_vars);
+                }
+            }
+            Expr::Object(obj) => {
+                for prop in &obj.props {
+                    if let PropOrSpread::Prop(p) = prop {
+                        if let Prop::KeyValue(kv) = p.as_ref() {
+                            self.collect_free_vars_in_expr(&kv.value, local_vars, free_vars);
+                        }
+                    }
+                }
+            }
+            Expr::Array(arr) => {
+                for e in arr.elems.iter().flatten() {
+                    self.collect_free_vars_in_expr(&e.expr, local_vars, free_vars);
+                }
+            }
+            Expr::Assign(assign) => {
+                self.collect_free_vars_in_expr(&assign.right, local_vars, free_vars);
+            }
+            _ => {}
+        }
+    }
+
+    /// Collects free vars from an arrow function expression body
+    fn collect_free_vars_in_arrow_body(
+        &self,
+        body: &BlockStmtOrExpr,
+        params: &[String],
+    ) -> HashSet<String> {
+        let mut free_vars = HashSet::new();
+        let param_set: HashSet<_> = params.iter().cloned().collect();
+
+        match body {
+            BlockStmtOrExpr::Expr(e) => {
+                self.collect_free_vars_in_expr(e, &param_set, &mut free_vars);
+            }
+            BlockStmtOrExpr::BlockStmt(block) => {
+                for stmt in &block.stmts {
+                    self.collect_free_vars_in_stmt(stmt, &param_set, &mut free_vars);
+                }
+            }
+        }
+        free_vars
     }
 
     pub fn generate(&mut self, module: &Module) -> Vec<OpCode> {
@@ -55,18 +181,29 @@ impl Codegen {
                     if let Some(init) = &decl.init {
                         let name = decl.name.as_ident().unwrap().sym.to_string();
                         self.gen_expr(init);
-                        self.instructions.push(OpCode::Store(name));
+                        self.instructions.push(OpCode::Store(name.clone()));
+                        // Track this variable so inner functions can capture it
+                        self.outer_scope_vars.insert(name);
                     }
                 }
             }
             Stmt::Decl(Decl::Fn(fn_decl)) => {
                 let name = fn_decl.ident.sym.to_string();
 
+                // Function declarations are hoisted and don't typically capture outer scope vars
+                // (they're defined at the top level or function level). We'll support captures
+                // for consistency but top-level functions usually won't have any.
+
                 // 1. Push function address and store it
                 let start_ip = self.instructions.len() + 3; // +3 to skip Push, Store, and Jump
-                self.instructions
-                    .push(OpCode::Push(JsValue::Function(start_ip)));
-                self.instructions.push(OpCode::Store(name));
+                self.instructions.push(OpCode::Push(JsValue::Function {
+                    address: start_ip,
+                    env: None, // Named function declarations typically don't capture
+                }));
+                self.instructions.push(OpCode::Store(name.clone()));
+
+                // Track this function name in outer scope
+                self.outer_scope_vars.insert(name);
 
                 // 2. Add jump to skip over function body
                 let jump_target = self.instructions.len() + 1; // Will be updated after compiling body
@@ -146,22 +283,55 @@ impl Codegen {
             Expr::Fn(fn_expr) => {
                 // Function expression: `function(a, b) { ... }`
                 //
-                // We compile it similarly to a function declaration, but instead of storing it
-                // in a variable, we leave the function pointer on the stack as the expression value.
-                //
-                // Layout:
-                //   Push(Function(start_ip))
-                //   Jump(after_body)
-                // start_ip:
-                //   Store params...
-                //   ...body...
-                //   Return
-                // after_body:
-                //   (execution continues, function value remains on stack)
+                // CLOSURE CAPTURING: Like arrow functions, we detect and lift captured variables.
 
-                let start_ip = self.instructions.len() + 2; // Push + Jump
-                self.instructions
-                    .push(OpCode::Push(JsValue::Function(start_ip)));
+                // 1. Collect parameter names
+                let params: Vec<String> = fn_expr
+                    .function
+                    .params
+                    .iter()
+                    .filter_map(|p| {
+                        if let Pat::Ident(id) = &p.pat {
+                            Some(id.id.sym.to_string())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                // 2. Detect captured variables from outer scopes
+                let captured_vars = if let Some(body) = &fn_expr.function.body {
+                    self.collect_free_vars_in_body(body, &params)
+                } else {
+                    HashSet::new()
+                };
+                let has_captures = !captured_vars.is_empty();
+
+                if has_captures {
+                    println!(
+                        "DEBUG: Function expression captures variables: {:?}",
+                        captured_vars.iter().collect::<Vec<_>>()
+                    );
+
+                    // Create Environment Object
+                    self.instructions.push(OpCode::NewObject);
+
+                    // Move captured variables into the Environment Object
+                    for var_name in &captured_vars {
+                        self.instructions.push(OpCode::Dup);
+                        self.instructions.push(OpCode::Load(var_name.clone()));
+                        self.instructions.push(OpCode::SetProp(var_name.clone()));
+                    }
+
+                    let start_ip = self.instructions.len() + 2;
+                    self.instructions.push(OpCode::MakeClosure(start_ip));
+                } else {
+                    let start_ip = self.instructions.len() + 2;
+                    self.instructions.push(OpCode::Push(JsValue::Function {
+                        address: start_ip,
+                        env: None,
+                    }));
+                }
 
                 let jump_idx = self.instructions.len();
                 self.instructions.push(OpCode::Jump(0)); // patched after body
@@ -195,13 +365,56 @@ impl Codegen {
             }
             Expr::Arrow(arrow) => {
                 // Arrow function: `(a, b) => expr` or `(a, b) => { ... }`
-                // Compiled as a normal function value (like Expr::Fn), leaving the function
-                // pointer on the stack.
+                //
+                // CLOSURE CAPTURING: If this arrow references variables from an outer scope,
+                // we "lift" those variables to the heap by creating an Environment Object.
+                // This solves the Stack Frame Paradox for async callbacks like setTimeout.
 
-                // (We ignore async/captures for now.)
-                let start_ip = self.instructions.len() + 2; // Push + Jump
-                self.instructions
-                    .push(OpCode::Push(JsValue::Function(start_ip)));
+                // 1. Collect parameter names
+                let params: Vec<String> = arrow
+                    .params
+                    .iter()
+                    .filter_map(|p| {
+                        if let Pat::Ident(id) = p {
+                            Some(id.id.sym.to_string())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                // 2. Detect captured variables (upvars) from outer scopes
+                let captured_vars = self.collect_free_vars_in_arrow_body(&arrow.body, &params);
+                let has_captures = !captured_vars.is_empty();
+
+                if has_captures {
+                    println!(
+                        "DEBUG: Arrow captures variables: {:?}",
+                        captured_vars.iter().collect::<Vec<_>>()
+                    );
+
+                    // 3. Create Environment Object on the Heap
+                    self.instructions.push(OpCode::NewObject);
+
+                    // 4. Move captured variables into the Environment Object
+                    for var_name in &captured_vars {
+                        self.instructions.push(OpCode::Dup); // Keep env ptr
+                        self.instructions.push(OpCode::Load(var_name.clone())); // Load value
+                        self.instructions.push(OpCode::SetProp(var_name.clone())); // Store in env
+                    }
+
+                    // 5. Calculate function body start address
+                    // Layout: ... MakeClosure Jump [body...] ...
+                    let start_ip = self.instructions.len() + 2; // MakeClosure + Jump
+                    self.instructions.push(OpCode::MakeClosure(start_ip));
+                } else {
+                    // No captures: simple function (no environment needed)
+                    let start_ip = self.instructions.len() + 2; // Push + Jump
+                    self.instructions.push(OpCode::Push(JsValue::Function {
+                        address: start_ip,
+                        env: None,
+                    }));
+                }
 
                 let jump_idx = self.instructions.len();
                 self.instructions.push(OpCode::Jump(0)); // patched after body

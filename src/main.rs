@@ -13,14 +13,23 @@ mod tests;
 fn main() {
     let cm: Lrc<SourceMap> = Default::default();
 
-    // TEST CASE: Using 'a' twice should fail the Borrow Checker
-    let code = "console.log('First');
+    // DEMO: Closure Capturing - Solving the Stack Frame Paradox
+    //
+    // The arrow function captures `data` from the outer scope.
+    // When setTimeout fires (after 100ms), the outer scope is long gone,
+    // but the closure still has access to `data` because it was "lifted"
+    // from the stack to the heap.
+    let code = "
+let data = { message: 'Hello from the past!' };
+
+console.log('Setting up async callback...');
 
 setTimeout(() => {
-    console.log('Third (Async)');
-}, 0);
+    console.log(data.message);
+}, 100);
 
-console.log('Second');";
+console.log('Main script done. Callback will fire soon...');
+";
 
     let fm = cm.new_source_file(FileName::Custom("input.js".into()).into(), code);
     let lexer = Lexer::new(
