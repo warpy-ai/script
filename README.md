@@ -1,4 +1,4 @@
-# 🚀 Scoped-JS VM
+# 🚀 Script
 
 A custom-built JavaScript interpreter and Virtual Machine implemented in **Rust**. Unlike standard engines that rely entirely on Garbage Collection, this engine utilizes a **Borrow Checker** and **Explicit Ownership** model to manage memory safety at compile-time.
 

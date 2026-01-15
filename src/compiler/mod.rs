@@ -64,6 +64,14 @@ impl Compiler {
     }
 }
 
+/// Tracks loop context for break/continue statements
+struct LoopContext {
+    /// Address of the loop condition (for continue)
+    start_addr: usize,
+    /// Addresses of break jumps that need to be backpatched
+    break_jumps: Vec<usize>,
+}
+
 pub struct Codegen {
     pub instructions: Vec<OpCode>,
     scope_stack: Vec<Vec<String>>,
@@ -71,6 +79,8 @@ pub struct Codegen {
     /// Tracks which variables are available in the current scope chain.
     /// Used to detect "upvars" (variables captured from outer scopes).
     outer_scope_vars: HashSet<String>,
+    /// Stack of loop contexts for nested loops (break/continue support)
+    loop_stack: Vec<LoopContext>,
 }
 
 impl Codegen {
@@ -80,6 +90,7 @@ impl Codegen {
             scope_stack: vec![Vec::new()],
             in_function: false,
             outer_scope_vars: HashSet::new(),
+            loop_stack: Vec::new(),
         }
     }
 
@@ -323,24 +334,55 @@ impl Codegen {
                 // 1. Record the start position (where we check the condition)
                 let loop_start = self.instructions.len();
 
-                // 2. Compile the condition
+                // 2. Push loop context for break/continue support
+                self.loop_stack.push(LoopContext {
+                    start_addr: loop_start,
+                    break_jumps: Vec::new(),
+                });
+
+                // 3. Compile the condition
                 self.gen_expr(&while_stmt.test);
 
-                // 3. Jump to the end if the condition is false
+                // 4. Jump to the end if the condition is false
                 let exit_jump_idx = self.instructions.len();
                 self.instructions.push(OpCode::JumpIfFalse(0)); // Placeholder
 
-                // 4. Compile the loop body
+                // 5. Compile the loop body
                 self.gen_stmt(&while_stmt.body);
 
-                // 5. Jump back to the start to re-check the condition
+                // 6. Jump back to the start to re-check the condition
                 self.instructions.push(OpCode::Jump(loop_start));
 
-                // 6. Backpatch the exit jump
+                // 7. Backpatch the exit jump and all break jumps
                 let loop_end = self.instructions.len();
                 if let OpCode::JumpIfFalse(ref mut addr) = self.instructions[exit_jump_idx] {
                     *addr = loop_end;
                 }
+
+                // 8. Pop loop context and backpatch break jumps
+                if let Some(loop_ctx) = self.loop_stack.pop() {
+                    for break_idx in loop_ctx.break_jumps {
+                        if let OpCode::Jump(ref mut addr) = self.instructions[break_idx] {
+                            *addr = loop_end;
+                        }
+                    }
+                }
+            }
+            Stmt::Break(_) => {
+                // Break: jump to end of current loop (address will be backpatched)
+                if let Some(loop_ctx) = self.loop_stack.last_mut() {
+                    let jump_idx = self.instructions.len();
+                    self.instructions.push(OpCode::Jump(0)); // Placeholder, will be backpatched
+                    loop_ctx.break_jumps.push(jump_idx);
+                }
+                // If not in a loop, silently ignore (could add error handling)
+            }
+            Stmt::Continue(_) => {
+                // Continue: jump back to loop condition
+                if let Some(loop_ctx) = self.loop_stack.last() {
+                    self.instructions.push(OpCode::Jump(loop_ctx.start_addr));
+                }
+                // If not in a loop, silently ignore (could add error handling)
             }
             Stmt::If(if_stmt) => {
                 // Compile the condition

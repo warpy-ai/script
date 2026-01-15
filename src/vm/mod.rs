@@ -406,15 +406,44 @@ impl VM {
             }
 
             OpCode::Add => {
-                if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
-                    (self.stack.pop(), self.stack.pop())
-                {
-                    self.stack.push(JsValue::Number(a + b));
-                } else {
-                    self.stack.push(JsValue::Undefined);
+                let b = self.stack.pop().unwrap();
+                let a = self.stack.pop().unwrap();
+
+                match (a, b) {
+                    (JsValue::Number(a_num), JsValue::Number(b_num)) => {
+                        self.stack.push(JsValue::Number(a_num + b_num));
+                    }
+                    (JsValue::String(mut a_str), JsValue::String(b_str)) => {
+                        a_str.push_str(&b_str);
+                        self.stack.push(JsValue::String(a_str));
+                    }
+                    (JsValue::String(a_str), b) => {
+                        let b_str = match b {
+                            JsValue::Number(n) => n.to_string(),
+                            JsValue::Boolean(b) => b.to_string(),
+                            JsValue::Null => "null".to_string(),
+                            JsValue::Undefined => "undefined".to_string(),
+                            JsValue::String(s) => s,
+                            _ => "".to_string(),
+                        };
+                        self.stack.push(JsValue::String(a_str + &b_str[..]));
+                    }
+                    (a, JsValue::String(b_str)) => {
+                        let a_str = match a {
+                            JsValue::Number(n) => n.to_string(),
+                            JsValue::Boolean(b) => b.to_string(),
+                            JsValue::Null => "null".to_string(),
+                            JsValue::Undefined => "undefined".to_string(),
+                            JsValue::String(s) => s,
+                            _ => "".to_string(),
+                        };
+                        self.stack.push(JsValue::String(a_str + &b_str[..]));
+                    }
+                    _ => {
+                        self.stack.push(JsValue::Undefined);
+                    }
                 }
             }
-
             OpCode::And => {
                 let b = self.stack.pop().unwrap();
                 let a = self.stack.pop().unwrap();

@@ -81,6 +81,7 @@ function peekNext(lexer) {
     if (lexer.pos + 1 >= lexer.source.length) {
         return -1;
     }
+    // Use charCodeAt directly on the source string, just like peek does
     return lexer.source.charCodeAt(lexer.pos + 1);
 }
 
@@ -114,25 +115,45 @@ function skipWhitespace(lexer) {
     while (lexer.pos < lexer.source.length) {
         let code = peek(lexer);
         
-        let isWS = isWhitespace(code);
-        let isComment = code == 47 && peekNext(lexer) == 47;
-        
-        if (isWS) {
-            let oldPos = lexer.pos;
+        if (isWhitespace(code)) {
             advance(lexer);
-        } else if (isComment) {
-            // Single-line comment: //
-            advance(lexer); // consume first /
-            advance(lexer); // consume second /
-            while (lexer.pos < lexer.source.length) {
-                if (peek(lexer) == 10) {
-                    break; // Found newline, exit inner loop
-                }
-                advance(lexer);
-            }
-        } else {
-            return;
+            continue;
         }
+        
+        // Check for comment: // (must check before single / operator)
+        if (code == 47) {  // 47 is '/'
+            // Check if next character is also / using peekNext
+            let nextCode = peekNext(lexer);
+            // Debug: show actual characters around this position
+            let charAtPos = lexer.source.slice(lexer.pos, lexer.pos + 1);
+            let charAtNext = lexer.source.slice(lexer.pos + 1, lexer.pos + 2);
+            let charAtNextDirect = lexer.source.charCodeAt(lexer.pos + 1);
+            let context = lexer.source.slice(lexer.pos - 2, lexer.pos + 4);
+            console.log("DEBUG skipWhitespace: at pos", lexer.pos, "code=", code, "nextCode=", nextCode);
+            console.log("DEBUG: charAtPos='", charAtPos, "' charAtNext='", charAtNext, "' charAtNextDirect=", charAtNextDirect);
+            console.log("DEBUG: context='", context, "'");
+            if (nextCode == 47) {  // Next char is also '/'
+                console.log("DEBUG: Found comment, skipping");
+                // Single-line comment: //
+                advance(lexer); // consume first /
+                advance(lexer); // consume second /
+                // Skip until newline or end of source
+                while (lexer.pos < lexer.source.length) {
+                    if (peek(lexer) == 10) {
+                        // Found newline, consume it and break
+                        advance(lexer);
+                        break;
+                    }
+                    advance(lexer);
+                }
+                continue;
+            } else {
+                console.log("DEBUG: Not a comment, nextCode is", nextCode, "not 47");
+            }
+        }
+        
+        // Not whitespace and not comment - we're done
+        return;
     }
 }
 
@@ -224,14 +245,17 @@ function scanString(lexer) {
                 // \\
                 value = value + "\\";
             } else {
-                value = value + lexer.source.charAt(lexer.pos);
+              // Unown escape
+              if(nextCode != -1){
+                value = value + lexer.source.slice(lexer.pos, lexer.pos +1);
+              }  
             }
             advance(lexer);
         } else if (code == 10) {
             // newline - unterminated string
             return makeToken("error", "Unterminated string", startLine, startCol);
         } else {
-            value = value + lexer.source.charAt(lexer.pos);
+            value = value + lexer.source.slice(lexer.pos, lexer.pos + 1);
             advance(lexer);
         }
     }
@@ -253,7 +277,12 @@ function arrayIncludes(arr, item) {
 function scanOperatorOrDelimiter(lexer) {
     let startLine = lexer.line;
     let startCol = lexer.col;
-    let char = lexer.source.charAt(lexer.pos);
+    
+    if (lexer.pos >= lexer.source.length) {
+        return makeToken("error", "Unexpected end of file", startLine, startCol);
+    }
+    
+    let char = lexer.source.slice(lexer.pos, lexer.pos + 1);
 
     // Check for two-character operators first
     if (lexer.pos + 1 < lexer.source.length) {
@@ -291,7 +320,6 @@ function tokenize(source) {
     let lexer = createLexer(source);
     console.log("DEBUG: lexer created, initial pos:", lexer.pos);
 
-
     while (lexer.pos < lexer.source.length) {
         console.log("DEBUG: entering while loop, pos:", lexer.pos, "source.length:", lexer.source.length);
 
@@ -303,6 +331,11 @@ function tokenize(source) {
         }
 
         let code = peek(lexer);
+        if (code == -1) {
+            // End of file
+            break;
+        }
+        
         let token = null;
 
         if (isAlpha(code)) {
