@@ -1,0 +1,23 @@
+// Test all the methods
+console.log("Testing methods...");
+
+// String.prototype.trim()
+let str1 = "  hello world  ";
+console.log("trim():", str1.trim());
+
+// String.prototype.includes()
+let str2 = "hello world";
+console.log("includes('world'):", str2.includes("world"));
+console.log("includes('xyz'):", str2.includes("xyz"));
+
+// Array.prototype.pop()
+let arr1 = [1, 2, 3];
+let popped = arr1.pop();
+console.log("pop() returned:", popped);
+console.log("array length after pop:", arr1.length);
+
+// Array.prototype.join()
+let arr2 = [1, 2, 3];
+console.log("join():", arr2.join());
+console.log("join('-'):", arr2.join("-"));
+console.log("join(''):", arr2.join(""));

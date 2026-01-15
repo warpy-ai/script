@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 pub struct Frame {
     pub return_address: usize,
     pub locals: HashMap<String, JsValue>,
+    pub this_context: JsValue,
 }
 
 pub struct Task {
@@ -44,6 +45,7 @@ impl VM {
             call_stack: vec![Frame {
                 return_address: 0,
                 locals: HashMap::new(),
+                this_context: JsValue::Undefined,
             }],
             heap: Vec::new(),
             native_functions: Vec::new(),
@@ -179,6 +181,7 @@ impl VM {
                 let mut frame = Frame {
                     return_address: usize::MAX, // sentinel: stop when returning
                     locals: HashMap::new(),
+                    this_context: JsValue::Undefined,
                 };
 
                 // CLOSURE MAGIC: If this function has captured variables (env),
@@ -330,6 +333,11 @@ impl VM {
                 self.stack.push(found.unwrap_or(JsValue::Undefined));
             }
 
+            OpCode::LoadThis => {
+                let context = self.call_stack.last().unwrap().this_context.clone();
+                self.stack.push(context);
+            }
+
             OpCode::Call(arg_count) => {
                 let callee = self.stack.pop().expect("Missing callee");
                 let mut args = Vec::with_capacity(arg_count);
@@ -347,6 +355,7 @@ impl VM {
                         let mut frame = Frame {
                             return_address: self.ip + 1,
                             locals: HashMap::new(),
+                            this_context: JsValue::Undefined,
                         };
 
                         // CLOSURE CONTEXT SWITCH: Load captured variables from
@@ -740,6 +749,28 @@ impl VM {
                 match reciever {
                     // -- String methods --
                     JsValue::String(s) => match name.as_str() {
+                        "trim" => {
+                            let result = s.trim().to_string();
+                            self.stack.push(JsValue::String(result));
+                            self.ip += 1;
+                            return ExecResult::Continue;
+                        }
+                        "includes" => {
+                            // includes(searchString) - checks if string contains the search string
+                            let search_value = self.stack.pop().unwrap_or(JsValue::Undefined);
+                            let search_str = match search_value {
+                                JsValue::String(ss) => ss,
+                                JsValue::Number(n) => n.to_string(),
+                                JsValue::Boolean(b) => b.to_string(),
+                                JsValue::Null => "null".to_string(),
+                                JsValue::Undefined => "undefined".to_string(),
+                                _ => "".to_string(),
+                            };
+                            let found = s.contains(&search_str);
+                            self.stack.push(JsValue::Boolean(found));
+                            self.ip += 1;
+                            return ExecResult::Continue;
+                        }
                         "charCodeAt" => {
                             let idx_val = self.stack.pop().unwrap_or(JsValue::Number(0.0));
                             if let JsValue::Number(idx) = idx_val {
@@ -1057,6 +1088,7 @@ impl VM {
                             let mut frame = Frame {
                                 return_address: self.ip + 1,
                                 locals: HashMap::new(),
+                                this_context: JsValue::Undefined,
                             };
 
                             // Load captured variables from environment

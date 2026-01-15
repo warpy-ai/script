@@ -2,6 +2,7 @@ use crate::vm::value::JsValue;
 
 #[derive(Debug, Clone)]
 pub enum OpCode {
+    LoadThis,
     Push(JsValue),
     Add,
     Sub,
