@@ -1,89 +1,131 @@
-🚀 Scoped-JS VM: Low-Level Bytecode Engine
-A custom-built JavaScript interpreter and Virtual Machine (VM) implemented in Rust. Unlike standard engines that rely entirely on Garbage Collection, this engine utilizes a Borrow Checker and Explicit Ownership model to manage memory safety at compile-time.
+# tscl VM: Development Progress
 
-🏗️ Core Architecture
-The engine is divided into three primary stages:
+A custom JavaScript-like scripting language with a stack-based VM in Rust, featuring a self-hosting bootstrap compiler.
 
-Parsing: Powered by swc_ecma_parser to transform JS/TS code into an Abstract Syntax Tree (AST).
+## Core Architecture
 
-Borrow Checker (Middle-end): A custom static analysis pass that enforces ownership rules, distinguishing between "Move" semantics for Heap objects and "Copy" semantics for Primitives.
+```
+┌─────────────┐    ┌─────────────────┐    ┌────────────────┐
+│   Parsing   │───▶│  Borrow Checker │───▶│  Stack-based   │
+│  (SWC AST)  │    │   (Middle-end)  │    │   VM (Back-end)│
+└─────────────┘    └─────────────────┘    └────────────────┘
+                            │
+        ┌───────────────────┴───────────────────┐
+        │         Bootstrap Compiler            │
+        │    ┌─────────────────────────┐       │
+        └───▶│  Lexer → Parser → Emitter │◀─────┘
+             │     (Written in tscl)     │
+             └─────────────────────────┘
+```
 
-VM (Back-end): A stack-based Virtual Machine that executes custom bytecode instructions with a managed Heap and Call Stack.
+## Completed Features
 
-✅ Features Developed
+### 1. Self-Hosting Bootstrap Compiler
+- **Lexer** (`bootstrap/lexer.tscl`) - Tokenizes source into tokens (identifiers, keywords, numbers, strings, operators, delimiters)
+- **Parser** (`bootstrap/parser.tscl`) - Recursive descent parser producing AST nodes
+- **Emitter** (`bootstrap/emitter.tscl`) - Generates bytecode from AST using ByteStream
+- **Two-Stage Loading** - Prelude loads first, then bootstrap modules, then main script
+- **Bytecode Rebasing** - Appended bytecode has all addresses automatically adjusted
 
-1. Memory Management (The "Rust" Secret)
-   Ownership Model: Variables "own" their data. Assigning an object to a new variable moves ownership, invalidating the original variable.
+### 2. Memory Management
+- **Ownership Model** - Variables own their data; assigning objects moves ownership
+- **Let vs Store Opcodes** - `Let` creates new bindings (proper shadowing), `Store` updates existing
+- **Scoped Lifetimes** - Variables automatically freed when scope ends
+- **Stack vs Heap** - Primitives on stack (copy), Objects/Arrays on heap (move)
+- **Variable Lifting** - Captured variables lifted from stack to heap for closures
 
-Lifetime Tracking: Prevents moving an object if active borrows (references) are still pointing to it.
+### 3. Virtual Machine
+- **Stack-based Architecture** - LIFO stack for expressions and operations
+- **Call Stack & Frames** - Nested function calls with isolated local scopes
+- **Heap Allocation** - Dynamic storage for Objects, Arrays, ByteStreams
+- **Native Bridge** - Rust functions injected into JS environment
+- **Event Loop** - Task queue with timer support (`setTimeout`)
+- **Stack Overflow Protection** - Maximum call depth of 1000
 
-Scoped Lifetimes: Variables are automatically dropped (freed) when their containing Frame or Block ends.
+### 4. Closures & Functions
+- **Function Declarations** - Named functions with parameters
+- **Function Expressions** - Anonymous functions
+- **Arrow Functions** - `(x) => x * 2` and `x => x * 2` syntax
+- **Closures** - Capture outer scope variables via environment objects
+- **Constructors** - `new` expressions with `this` binding
 
-Stack vs. Heap: Primitives (Numbers, Booleans) live on the Stack (Copy); Objects and Arrays live on the Heap (Move).
+### 5. Language Support
+- **Variables** - `let` and `const` declarations
+- **Objects** - Literals `{a: 1}`, property access `obj.a`, computed access `obj[key]`
+- **Arrays** - Literals `[1, 2]`, indexed access `arr[0]`, methods (push, pop, etc.)
+- **Control Flow** - `if`/`else`, `while`, `break`, `continue`
+- **Operators** - Arithmetic (`+`, `-`, `*`, `/`, `%`), comparison, logical, unary (`!`, `-`)
+- **String Methods** - `slice`, `charCodeAt`, `charAt`, `includes`, `trim`
+- **Array Methods** - `push`, `pop`, `shift`, `unshift`, `splice`, `indexOf`, `includes`, `join`
 
-2. Virtual Machine (Execution)
-   Stack-based Architecture: Uses a LIFO stack for expressions and operations.
+### 6. Standard Library
+- **console.log** - Print values to stdout
+- **setTimeout** - Schedule delayed execution
+- **require** - Module loading (supports "fs")
+- **fs.readFileSync** - Read file as string
+- **fs.writeFileSync** - Write string to file
+- **fs.writeBinaryFile** - Write binary data
+- **ByteStream** - Binary data manipulation (create, writeU8, writeU32, writeF64, writeString, writeVarint, patchU32, length, toArray)
+- **String.fromCharCode** - Create string from char code
 
-Call Stack & Frames: Supports nested function calls with isolated local scopes.
+## Bytecode Instruction Set
 
-Heap Allocation: A dedicated storage area for dynamic data like Objects and Arrays.
+| OpCode              | Description                                      |
+| ------------------- | ------------------------------------------------ |
+| `Push(Value)`       | Push constant onto stack                         |
+| `Let(Name)`         | Create new variable binding in current scope     |
+| `Store(Name)`       | Update existing variable (searches all scopes)   |
+| `Load(Name)`        | Push variable's value onto stack                 |
+| `LoadThis`          | Push current `this` context                      |
+| `NewObject`         | Allocate empty object on heap                    |
+| `NewArray(Size)`    | Allocate array of given size                     |
+| `SetProp(Key)`      | Set property on heap object                      |
+| `GetProp(Key)`      | Get property from heap object                    |
+| `StoreElement`      | Store value at array index                       |
+| `LoadElement`       | Load value from array index                      |
+| `Call(ArgCount)`    | Execute function with N arguments                |
+| `CallMethod(N,A)`   | Call method on object                            |
+| `Return`            | Return from function                             |
+| `Jump(Addr)`        | Unconditional jump                               |
+| `JumpIfFalse(Addr)` | Conditional branch                               |
+| `MakeClosure(Addr)` | Create closure with captured environment         |
+| `Construct(Args)`   | Construct new object instance                    |
+| `Drop(Name)`        | Free variable and its heap data                  |
+| `Dup`               | Duplicate top of stack                           |
+| `Pop`               | Discard top of stack                             |
+| `Add/Sub/Mul/Div`   | Arithmetic operations                            |
+| `Mod`               | Modulo operation                                 |
+| `Eq/EqEq/Ne/NeEq`   | Equality comparisons (strict and loose)          |
+| `Lt/LtEq/Gt/GtEq`   | Comparison operations                            |
+| `And/Or/Not`        | Logical operations                               |
+| `Neg`               | Unary negation                                   |
+| `Require`           | Load module                                      |
+| `Halt`              | Stop execution                                   |
 
-Native Bridge: Ability to inject Rust functions (e.g., console.log) directly into the JavaScript environment.
+## Recent Fixes
 
-3. Language Support
-   Functions: Arguments passing, return values, and local variable scoping.
+### Variable Scoping Bug (Let vs Store)
+- **Problem**: `let x = ...` in nested functions was updating outer scope's `x` instead of creating new binding
+- **Cause**: VM's `Store` opcode searched all frames and updated first match
+- **Solution**: Added `OpCode::Let` that always creates binding in current frame; compiler uses `Let` for declarations
 
-Objects & Arrays: Support for object literals {a: 1}, array literals [1, 2], property access obj.a, and indexed access arr[0].
+### Bytecode Address Rebasing
+- **Problem**: When appending bytecode, function addresses pointed to wrong locations
+- **Cause**: Each compiled module starts addresses from 0
+- **Solution**: `append_program` rebases Jump, JumpIfFalse, MakeClosure, and Function addresses
 
-Control Flow: if/else branching and while loops using backpatched jumps.
+### Object Property Corruption
+- **Problem**: AST node properties corrupted during recursive emit calls
+- **Cause**: Reading `node.left` after `emit(node.left)` could return corrupted value
+- **Solution**: Save node properties to local variables before any recursive calls
 
-Comparisons: Full support for >, <, and ===.
+## Next Steps
 
-Explicit Borrowing: Implementation of the void operator hijacked for explicit reference creation.
-
-4. Closure Capturing (Stack Frame Paradox Solution)
-   Environment Objects: Closures that capture outer-scope variables create a hidden "Environment" object on the Heap.
-
-   Variable Lifting: Captured variables are "lifted" from the stack to the heap, allowing them to survive after the defining scope is destroyed.
-
-   Move Semantics for Captures: Once a variable is captured by a closure (especially async callbacks like setTimeout), the borrow checker marks it as MOVED, preventing use-after-capture bugs.
-
-   Safe Async: This enables safe asynchronous programming where callbacks can access captured data without dangling pointer risks.
-
-📜 Bytecode Instruction Set
-OpCode Description
-Push(Value) Pushes a constant onto the stack.
-Store(Name) Moves a value from the stack to a local variable.
-Load(Name) Pushes a variable's value onto the stack.
-NewObject Allocates a new empty object on the Heap.
-SetProp(Key) Sets a property on a heap object.
-Call Executes a Bytecode or Native function.
-JumpIfFalse(N) Branches the execution if the condition is falsy.
-Drop(Name) Manually frees a variable and its heap data.
-MakeClosure(Addr) Pops environment object, creates Function with captured variables.
-🛠️ Example Trace
-Source Code:
-
-JavaScript
-
-let count = 3;
-while (count > 0) {
-console.log(count);
-count = count - 1;
-}
-Compiler Logic:
-
-Borrow Check: Ensures count is a primitive and can be used in the comparison and the subtraction without moving.
-
-Loop Label: Marks the start of the condition.
-
-Jump Logic: If count > 0 is false, it jumps to the Halt instruction at the end.
-
-Native Call: Loads the console object and calls the native Rust log function.
-
-🚀 Next Steps
-Event Loop: Implementing a Task Queue to support setTimeout and asynchronous I/O.
-
-Standard Library: Adding fs (File System) and net (Networking) native bindings for Node.js compatibility.
-
-Garbage-Free Refinement: Implementing Reference Counting (RC) for shared ownership of heap objects.
+- [ ] **For loops** - Implement `for` statement parsing and emission
+- [ ] **Try/Catch** - Exception handling
+- [ ] **Classes** - ES6 class syntax
+- [ ] **Modules** - Import/export support
+- [ ] **Async/Await** - Promise-based async syntax
+- [ ] **Garbage Collection** - Reference counting for shared ownership
+- [ ] **Source Maps** - Debug information in bytecode
+- [ ] **REPL** - Interactive shell
