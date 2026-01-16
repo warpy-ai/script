@@ -1,7 +1,16 @@
 pub mod opcodes;
 pub mod value;
 
-use crate::stdlib::{native_log, native_read_file, native_require, native_set_timeout};
+/// Maximum call stack depth to prevent stack overflow in deeply recursive code
+const MAX_CALL_STACK_DEPTH: usize = 1000;
+
+use crate::stdlib::{
+    native_byte_stream_length, native_byte_stream_patch_u32, native_byte_stream_to_array,
+    native_byte_stream_write_f64, native_byte_stream_write_string, native_byte_stream_write_u8,
+    native_byte_stream_write_u32, native_byte_stream_write_varint, native_create_byte_stream,
+    native_log, native_read_file, native_require, native_set_timeout, native_write_binary_file,
+    native_write_file,
+};
 use crate::vm::opcodes::OpCode;
 use crate::vm::value::HeapData;
 use crate::vm::value::HeapObject;
@@ -64,7 +73,21 @@ impl VM {
         let log_idx = self.register_native(native_log);
         let timeout_idx = self.register_native(native_set_timeout);
         let read_idx = self.register_native(native_read_file);
+        let write_idx = self.register_native(native_write_file);
         let require_idx = self.register_native(native_require);
+
+        // ByteStream native functions
+        let create_byte_stream_idx = self.register_native(native_create_byte_stream);
+        let write_u8_idx = self.register_native(native_byte_stream_write_u8);
+        let write_varint_idx = self.register_native(native_byte_stream_write_varint);
+        let write_string_idx = self.register_native(native_byte_stream_write_string);
+        let write_u32_idx = self.register_native(native_byte_stream_write_u32);
+        let write_f64_idx = self.register_native(native_byte_stream_write_f64);
+        let patch_u32_idx = self.register_native(native_byte_stream_patch_u32);
+        let stream_length_idx = self.register_native(native_byte_stream_length);
+        let to_array_idx = self.register_native(native_byte_stream_to_array);
+        let write_binary_file_idx = self.register_native(native_write_binary_file);
+
         // console = { log: <native fn> }
         let console_ptr = self.heap.len();
         let mut console_props = HashMap::new();
@@ -73,15 +96,60 @@ impl VM {
             data: HeapData::Object(console_props),
         });
 
-        // fs = { readFileSync: <native fn> }
+        // fs = { readFileSync, writeFileSync, writeBinaryFile }
         let fs_ptr = self.heap.len();
         let mut fs_props = HashMap::new();
         fs_props.insert(
             "readFileSync".to_string(),
             JsValue::NativeFunction(read_idx),
         );
+        fs_props.insert(
+            "writeFileSync".to_string(),
+            JsValue::NativeFunction(write_idx),
+        );
+        fs_props.insert(
+            "writeBinaryFile".to_string(),
+            JsValue::NativeFunction(write_binary_file_idx),
+        );
         self.heap.push(HeapObject {
             data: HeapData::Object(fs_props),
+        });
+
+        // ByteStream = { create, writeU8, writeVarint, writeString, writeU32, writeF64, patchU32, length, toArray }
+        let byte_stream_ptr = self.heap.len();
+        let mut byte_stream_props = HashMap::new();
+        byte_stream_props.insert(
+            "create".to_string(),
+            JsValue::NativeFunction(create_byte_stream_idx),
+        );
+        byte_stream_props.insert("writeU8".to_string(), JsValue::NativeFunction(write_u8_idx));
+        byte_stream_props.insert(
+            "writeVarint".to_string(),
+            JsValue::NativeFunction(write_varint_idx),
+        );
+        byte_stream_props.insert(
+            "writeString".to_string(),
+            JsValue::NativeFunction(write_string_idx),
+        );
+        byte_stream_props.insert(
+            "writeU32".to_string(),
+            JsValue::NativeFunction(write_u32_idx),
+        );
+        byte_stream_props.insert(
+            "writeF64".to_string(),
+            JsValue::NativeFunction(write_f64_idx),
+        );
+        byte_stream_props.insert(
+            "patchU32".to_string(),
+            JsValue::NativeFunction(patch_u32_idx),
+        );
+        byte_stream_props.insert(
+            "length".to_string(),
+            JsValue::NativeFunction(stream_length_idx),
+        );
+        byte_stream_props.insert("toArray".to_string(), JsValue::NativeFunction(to_array_idx));
+        self.heap.push(HeapObject {
+            data: HeapData::Object(byte_stream_props),
         });
 
         // Global bindings
@@ -95,6 +163,10 @@ impl VM {
         globals
             .locals
             .insert("require".into(), JsValue::NativeFunction(require_idx));
+        globals
+            .locals
+            .insert("ByteStream".into(), JsValue::Object(byte_stream_ptr));
+
         // Module registry
         self.modules
             .insert("fs".to_string(), JsValue::Object(fs_ptr));
@@ -171,6 +243,14 @@ impl VM {
     }
 
     fn execute_task(&mut self, task: Task) {
+        // Stack overflow protection
+        if self.call_stack.len() >= MAX_CALL_STACK_DEPTH {
+            panic!(
+                "Stack overflow: maximum call depth of {} exceeded",
+                MAX_CALL_STACK_DEPTH
+            );
+        }
+
         match task.function_ptr {
             JsValue::Function { address, env } => {
                 // Push args in call order so the function prologue `Store(...)` consumes correctly.
@@ -284,6 +364,13 @@ impl VM {
                                         self.stack.push(JsValue::Undefined);
                                     }
                                 }
+                                HeapData::ByteStream(bytes) => {
+                                    if name == "length" {
+                                        self.stack.push(JsValue::Number(bytes.len() as f64));
+                                    } else {
+                                        self.stack.push(JsValue::Undefined);
+                                    }
+                                }
                             }
                         } else {
                             self.stack.push(JsValue::Undefined);
@@ -339,6 +426,14 @@ impl VM {
             }
 
             OpCode::Call(arg_count) => {
+                // Stack overflow protection
+                if self.call_stack.len() >= MAX_CALL_STACK_DEPTH {
+                    panic!(
+                        "Stack overflow: maximum call depth of {} exceeded",
+                        MAX_CALL_STACK_DEPTH
+                    );
+                }
+
                 let callee = self.stack.pop().expect("Missing callee");
                 let mut args = Vec::with_capacity(arg_count);
                 for _ in 0..arg_count {
@@ -776,6 +871,14 @@ impl VM {
             }
 
             OpCode::Construct(arg_count) => {
+                // Stack overflow protection
+                if self.call_stack.len() >= MAX_CALL_STACK_DEPTH {
+                    panic!(
+                        "Stack overflow: maximum call depth of {} exceeded",
+                        MAX_CALL_STACK_DEPTH
+                    );
+                }
+
                 // Stack layout: [..., this_obj, this_obj_copy, arg1, arg2, ..., constructor]
                 let constructor = self.stack.pop().expect("Missing constructor");
 
@@ -1164,6 +1267,14 @@ impl VM {
                             self.ip += 1;
                             return ExecResult::Continue;
                         } else if let JsValue::Function { address, env } = method {
+                            // Stack overflow protection
+                            if self.call_stack.len() >= MAX_CALL_STACK_DEPTH {
+                                panic!(
+                                    "Stack overflow: maximum call depth of {} exceeded",
+                                    MAX_CALL_STACK_DEPTH
+                                );
+                            }
+
                             // Collect arguments
                             let mut args = Vec::with_capacity(arg_count);
                             for _ in 0..arg_count {
@@ -1210,6 +1321,25 @@ impl VM {
 
         self.ip += 1;
         ExecResult::Continue
+    }
+    fn native_write_bytecode_file(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+        if let Some(JsValue::String(path)) = args.get(0) {
+            match std::fs::write(
+                path,
+                vm.program
+                    .iter()
+                    .map(|op| format!("{:?}", op))
+                    .collect::<Vec<String>>()
+                    .join("\n")
+                    .as_bytes()
+                    .to_vec(),
+            ) {
+                Ok(_) => JsValue::Undefined,
+                Err(e) => JsValue::String(format!("Error writing bytecode file: {}", e)),
+            }
+        } else {
+            JsValue::Undefined
+        }
     }
 }
 

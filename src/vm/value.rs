@@ -39,4 +39,6 @@ pub struct HeapArray {
 pub enum HeapData {
     Object(HashMap<String, JsValue>),
     Array(Vec<JsValue>),
+    /// ByteStream for building binary bytecode buffers
+    ByteStream(Vec<u8>),
 }

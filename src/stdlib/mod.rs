@@ -1,7 +1,7 @@
 //! Standard Library - Native functions for the WarpyScript VM
 
 use crate::vm::VM;
-use crate::vm::value::JsValue;
+use crate::vm::value::{HeapData, HeapObject, JsValue};
 
 /// console.log implementation
 pub fn native_log(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
@@ -64,6 +64,197 @@ pub fn native_require(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
             .cloned()
             .unwrap_or(JsValue::Undefined);
         return module;
+    }
+    JsValue::Undefined
+}
+
+// ============================================================================
+// ByteStream Native Functions for Binary Bytecode Generation
+// ============================================================================
+
+/// Create a new ByteStream buffer on the heap
+pub fn native_create_byte_stream(vm: &mut VM, _args: Vec<JsValue>) -> JsValue {
+    let ptr = vm.heap.len();
+    vm.heap.push(HeapObject {
+        data: HeapData::ByteStream(Vec::new()),
+    });
+    JsValue::Object(ptr)
+}
+
+/// Write a single byte (u8) to a ByteStream
+pub fn native_byte_stream_write_u8(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    if let (Some(JsValue::Object(ptr)), Some(JsValue::Number(byte))) = (args.get(0), args.get(1)) {
+        if let Some(HeapObject {
+            data: HeapData::ByteStream(bytes),
+        }) = vm.heap.get_mut(*ptr)
+        {
+            bytes.push(*byte as u8);
+            return JsValue::Undefined;
+        }
+    }
+    JsValue::Undefined
+}
+
+/// Write a variable-length integer (varint) to a ByteStream
+/// Uses LEB128-style encoding: 7 bits per byte, high bit indicates continuation
+pub fn native_byte_stream_write_varint(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    if let (Some(JsValue::Object(ptr)), Some(JsValue::Number(value))) = (args.get(0), args.get(1)) {
+        if let Some(HeapObject {
+            data: HeapData::ByteStream(bytes),
+        }) = vm.heap.get_mut(*ptr)
+        {
+            let mut n = *value as u64;
+            loop {
+                let mut byte = (n & 0x7F) as u8;
+                n >>= 7;
+                if n != 0 {
+                    byte |= 0x80; // Set continuation bit
+                }
+                bytes.push(byte);
+                if n == 0 {
+                    break;
+                }
+            }
+            return JsValue::Undefined;
+        }
+    }
+    JsValue::Undefined
+}
+
+/// Write a length-prefixed UTF-8 string to a ByteStream
+pub fn native_byte_stream_write_string(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    if let (Some(JsValue::Object(ptr)), Some(JsValue::String(s))) = (args.get(0), args.get(1)) {
+        if let Some(HeapObject {
+            data: HeapData::ByteStream(bytes),
+        }) = vm.heap.get_mut(*ptr)
+        {
+            let str_bytes = s.as_bytes();
+            let len = str_bytes.len();
+
+            // Write length as varint
+            let mut n = len as u64;
+            loop {
+                let mut byte = (n & 0x7F) as u8;
+                n >>= 7;
+                if n != 0 {
+                    byte |= 0x80;
+                }
+                bytes.push(byte);
+                if n == 0 {
+                    break;
+                }
+            }
+
+            // Write UTF-8 bytes
+            bytes.extend_from_slice(str_bytes);
+            return JsValue::Undefined;
+        }
+    }
+    JsValue::Undefined
+}
+
+/// Get the current length of a ByteStream
+pub fn native_byte_stream_length(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    if let Some(JsValue::Object(ptr)) = args.get(0) {
+        if let Some(HeapObject {
+            data: HeapData::ByteStream(bytes),
+        }) = vm.heap.get(*ptr)
+        {
+            return JsValue::Number(bytes.len() as f64);
+        }
+    }
+    JsValue::Number(0.0)
+}
+
+/// Convert ByteStream to a JsValue array of numbers (for debugging/inspection)
+pub fn native_byte_stream_to_array(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    if let Some(JsValue::Object(ptr)) = args.get(0) {
+        if let Some(HeapObject {
+            data: HeapData::ByteStream(bytes),
+        }) = vm.heap.get(*ptr)
+        {
+            let elements: Vec<JsValue> = bytes.iter().map(|b| JsValue::Number(*b as f64)).collect();
+            let arr_ptr = vm.heap.len();
+            vm.heap.push(HeapObject {
+                data: HeapData::Array(elements),
+            });
+            return JsValue::Object(arr_ptr);
+        }
+    }
+    JsValue::Undefined
+}
+
+/// Write ByteStream contents to a binary file
+pub fn native_write_binary_file(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    if let (Some(JsValue::String(path)), Some(JsValue::Object(ptr))) = (args.get(0), args.get(1)) {
+        if let Some(HeapObject {
+            data: HeapData::ByteStream(bytes),
+        }) = vm.heap.get(*ptr)
+        {
+            match std::fs::write(path, bytes) {
+                Ok(_) => return JsValue::Boolean(true),
+                Err(e) => return JsValue::String(format!("Error writing file: {}", e)),
+            }
+        }
+    }
+    JsValue::Boolean(false)
+}
+
+/// Patch a 32-bit value at a specific offset in a ByteStream (for backpatching jumps)
+pub fn native_byte_stream_patch_u32(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    if let (
+        Some(JsValue::Object(ptr)),
+        Some(JsValue::Number(offset)),
+        Some(JsValue::Number(value)),
+    ) = (args.get(0), args.get(1), args.get(2))
+    {
+        if let Some(HeapObject {
+            data: HeapData::ByteStream(bytes),
+        }) = vm.heap.get_mut(*ptr)
+        {
+            let off = *offset as usize;
+            let val = *value as u32;
+            if off + 4 <= bytes.len() {
+                bytes[off] = (val & 0xFF) as u8;
+                bytes[off + 1] = ((val >> 8) & 0xFF) as u8;
+                bytes[off + 2] = ((val >> 16) & 0xFF) as u8;
+                bytes[off + 3] = ((val >> 24) & 0xFF) as u8;
+                return JsValue::Boolean(true);
+            }
+        }
+    }
+    JsValue::Boolean(false)
+}
+
+/// Write a 32-bit unsigned integer (little-endian) to a ByteStream
+pub fn native_byte_stream_write_u32(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    if let (Some(JsValue::Object(ptr)), Some(JsValue::Number(value))) = (args.get(0), args.get(1)) {
+        if let Some(HeapObject {
+            data: HeapData::ByteStream(bytes),
+        }) = vm.heap.get_mut(*ptr)
+        {
+            let val = *value as u32;
+            bytes.push((val & 0xFF) as u8);
+            bytes.push(((val >> 8) & 0xFF) as u8);
+            bytes.push(((val >> 16) & 0xFF) as u8);
+            bytes.push(((val >> 24) & 0xFF) as u8);
+            return JsValue::Undefined;
+        }
+    }
+    JsValue::Undefined
+}
+
+/// Write an IEEE 754 double (f64) to a ByteStream (8 bytes, little-endian)
+pub fn native_byte_stream_write_f64(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    if let (Some(JsValue::Object(ptr)), Some(JsValue::Number(value))) = (args.get(0), args.get(1)) {
+        if let Some(HeapObject {
+            data: HeapData::ByteStream(bytes),
+        }) = vm.heap.get_mut(*ptr)
+        {
+            let float_bytes = value.to_le_bytes();
+            bytes.extend_from_slice(&float_bytes);
+            return JsValue::Undefined;
+        }
     }
     JsValue::Undefined
 }

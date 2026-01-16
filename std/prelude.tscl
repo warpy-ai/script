@@ -1,0 +1,467 @@
+// ============================================================================
+// tscl Standard Prelude
+// This file is loaded automatically before any user script.
+// Contains: OpCodes, Token Types, Character Helpers, Lexer/Parser utilities
+// ============================================================================
+
+// ============================================================================
+// OpCode Constants - Must match Rust VM (src/vm/opcodes.rs)
+// ============================================================================
+
+let OP = {
+    LOAD_THIS: 0,
+    PUSH: 1,
+    ADD: 2,
+    SUB: 3,
+    MUL: 4,
+    DIV: 5,
+    PRINT: 6,
+    POP: 7,
+    STORE: 8,
+    LOAD: 9,
+    DROP: 10,
+    CALL: 11,
+    RETURN: 12,
+    JUMP: 13,
+    NEW_OBJECT: 14,
+    SET_PROP: 15,
+    GET_PROP: 16,
+    DUP: 17,
+    EQ: 18,
+    EQ_EQ: 19,
+    NE: 20,
+    NE_EQ: 21,
+    LT: 22,
+    LT_EQ: 23,
+    GT: 24,
+    GT_EQ: 25,
+    MOD: 26,
+    AND: 27,
+    OR: 28,
+    NOT: 29,
+    NEG: 30,
+    NEW_ARRAY: 31,
+    STORE_ELEMENT: 32,
+    LOAD_ELEMENT: 33,
+    JUMP_IF_FALSE: 34,
+    HALT: 255,
+    CALL_METHOD: 36,
+    REQUIRE: 37,
+    MAKE_CLOSURE: 38,
+    CONSTRUCT: 39
+};
+
+// ============================================================================
+// Type Tags for PUSH operand
+// ============================================================================
+
+let TYPE = {
+    NUMBER: 0,
+    STRING: 1,
+    TRUE: 2,
+    FALSE: 3,
+    NULL: 4,
+    UNDEFINED: 5
+};
+
+// ============================================================================
+// Token Types
+// ============================================================================
+
+let TOKEN = {
+    IDENTIFIER: "identifier",
+    KEYWORD: "keyword",
+    NUMBER: "number",
+    STRING: "string",
+    OPERATOR: "operator",
+    DELIMITER: "delimiter",
+    EOF: "eof",
+    ERROR: "error"
+};
+
+// ============================================================================
+// Language Keywords
+// ============================================================================
+
+let KEYWORDS = [
+    "let", "const", "function", "if", "else", "while", "return",
+    "true", "false", "null", "new", "this", "break", "continue"
+];
+
+// ============================================================================
+// Operators - Two character operators must be checked before single char
+// ============================================================================
+
+let TWO_CHAR_OPS = ["==", "!=", "<=", ">=", "&&", "||", "=>"];
+let SINGLE_CHAR_OPS = ["+", "-", "*", "/", "%", "=", "<", ">", "!"];
+
+// ============================================================================
+// Delimiters
+// ============================================================================
+
+let DELIMITERS = ["(", ")", "{", "}", "[", "]", ";", ",", ":", "."];
+
+// ============================================================================
+// Character Classification Helpers
+// ============================================================================
+
+function isAlpha(code) {
+    // a-z: 97-122, A-Z: 65-90, _: 95
+    if (code >= 97 && code <= 122) { return true; }
+    if (code >= 65 && code <= 90) { return true; }
+    if (code == 95) { return true; }
+    return false;
+}
+
+function isDigit(code) {
+    // 0-9: 48-57
+    return code >= 48 && code <= 57;
+}
+
+function isAlphaNumeric(code) {
+    return isAlpha(code) || isDigit(code);
+}
+
+function isWhitespace(code) {
+    // space: 32, tab: 9, newline: 10, carriage return: 13
+    return code == 32 || code == 9 || code == 10 || code == 13;
+}
+
+// ============================================================================
+// Array Utilities
+// ============================================================================
+
+function arrayIncludes(arr, item) {
+    let i = 0;
+    while (i < arr.length) {
+        if (arr[i] == item) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+function arrayIndexOf(arr, item) {
+    let i = 0;
+    while (i < arr.length) {
+        if (arr[i] == item) { return i; }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// ============================================================================
+// String Utilities
+// ============================================================================
+
+function parseFloat(str) {
+    let result = 0;
+    let decimal = false;
+    let decimalPlace = 0.1;
+    let negative = false;
+    let i = 0;
+
+    if (str.length > 0 && str.charCodeAt(0) == 45) {
+        negative = true;
+        i = 1;
+    }
+
+    while (i < str.length) {
+        let code = str.charCodeAt(i);
+        if (code == 46) {
+            decimal = true;
+        } else if (code >= 48 && code <= 57) {
+            let digit = code - 48;
+            if (decimal) {
+                result = result + digit * decimalPlace;
+                decimalPlace = decimalPlace * 0.1;
+            } else {
+                result = result * 10 + digit;
+            }
+        }
+        i = i + 1;
+    }
+
+    if (negative) {
+        result = 0 - result;
+    }
+    return result;
+}
+
+function parseInt(str) {
+    let result = 0;
+    let negative = false;
+    let i = 0;
+
+    if (str.length > 0 && str.charCodeAt(0) == 45) {
+        negative = true;
+        i = 1;
+    }
+
+    while (i < str.length) {
+        let code = str.charCodeAt(i);
+        if (code >= 48 && code <= 57) {
+            let digit = code - 48;
+            result = result * 10 + digit;
+        }
+        i = i + 1;
+    }
+
+    if (negative) {
+        result = 0 - result;
+    }
+    return result;
+}
+
+// ============================================================================
+// Binary Operator to OpCode Mapping
+// ============================================================================
+
+function getOpCodeForBinaryOp(op) {
+    if (op == "+") { return OP.ADD; }
+    if (op == "-") { return OP.SUB; }
+    if (op == "*") { return OP.MUL; }
+    if (op == "/") { return OP.DIV; }
+    if (op == "%") { return OP.MOD; }
+    if (op == "===") { return OP.EQ; }
+    if (op == "==") { return OP.EQ_EQ; }
+    if (op == "!==") { return OP.NE; }
+    if (op == "!=") { return OP.NE_EQ; }
+    if (op == "<") { return OP.LT; }
+    if (op == "<=") { return OP.LT_EQ; }
+    if (op == ">") { return OP.GT; }
+    if (op == ">=") { return OP.GT_EQ; }
+    if (op == "&&") { return OP.AND; }
+    if (op == "||") { return OP.OR; }
+    return -1;
+}
+
+function getOpCodeForUnaryOp(op) {
+    if (op == "!") { return OP.NOT; }
+    if (op == "-") { return OP.NEG; }
+    return -1;
+}
+
+// ============================================================================
+// Token Factory
+// ============================================================================
+
+function makeToken(type, value, line, col) {
+    return {
+        type: type,
+        value: value,
+        line: line,
+        col: col
+    };
+}
+
+// ============================================================================
+// AST Node Constructors
+// ============================================================================
+
+function Program(body) {
+    this.type = "Program";
+    this.body = body;
+}
+
+function VariableDeclaration(kind, name, init) {
+    this.type = "VariableDeclaration";
+    this.kind = kind;
+    this.name = name;
+    this.init = init;
+}
+
+function FunctionDeclaration(name, params, body) {
+    this.type = "FunctionDeclaration";
+    this.name = name;
+    this.params = params;
+    this.body = body;
+}
+
+function ReturnStatement(argument) {
+    this.type = "ReturnStatement";
+    this.argument = argument;
+}
+
+function IfStatement(test, consequent, alternate) {
+    this.type = "IfStatement";
+    this.test = test;
+    this.consequent = consequent;
+    this.alternate = alternate;
+}
+
+function WhileStatement(test, body) {
+    this.type = "WhileStatement";
+    this.test = test;
+    this.body = body;
+}
+
+function BlockStatement(body) {
+    this.type = "BlockStatement";
+    this.body = body;
+}
+
+function ExpressionStatement(expression) {
+    this.type = "ExpressionStatement";
+    this.expression = expression;
+}
+
+function BinaryExpression(operator, left, right) {
+    this.type = "BinaryExpression";
+    this.operator = operator;
+    this.left = left;
+    this.right = right;
+}
+
+function UnaryExpression(operator, argument) {
+    this.type = "UnaryExpression";
+    this.operator = operator;
+    this.argument = argument;
+}
+
+function AssignmentExpression(operator, left, right) {
+    this.type = "AssignmentExpression";
+    this.operator = operator;
+    this.left = left;
+    this.right = right;
+}
+
+function CallExpression(callee, arguments) {
+    this.type = "CallExpression";
+    this.callee = callee;
+    this.arguments = arguments;
+}
+
+function MemberExpression(object, property, computed) {
+    this.type = "MemberExpression";
+    this.object = object;
+    this.property = property;
+    this.computed = computed;
+}
+
+function Identifier(name) {
+    this.type = "Identifier";
+    this.name = name;
+}
+
+function Literal(value, raw) {
+    this.type = "Literal";
+    this.value = value;
+    this.raw = raw;
+}
+
+function ArrayExpression(elements) {
+    this.type = "ArrayExpression";
+    this.elements = elements;
+}
+
+function ObjectExpression(properties) {
+    this.type = "ObjectExpression";
+    this.properties = properties;
+}
+
+function Property(key, value) {
+    this.type = "Property";
+    this.key = key;
+    this.value = value;
+}
+
+function NewExpression(callee, arguments) {
+    this.type = "NewExpression";
+    this.callee = callee;
+    this.arguments = arguments;
+}
+
+function ThisExpression() {
+    this.type = "ThisExpression";
+}
+
+function ArrowFunctionExpression(params, body) {
+    this.type = "ArrowFunctionExpression";
+    this.params = params;
+    this.body = body;
+}
+
+function BreakStatement() {
+    this.type = "BreakStatement";
+}
+
+function ContinueStatement() {
+    this.type = "ContinueStatement";
+}
+
+// ============================================================================
+// Node-like fs API Wrapper
+// ============================================================================
+
+let fs = require("fs");
+
+// Sync file operations (node-like API)
+let File = {
+    // Read entire file as string
+    readSync: function(path) {
+        return fs.readFileSync(path);
+    },
+    
+    // Write string to file
+    writeSync: function(path, content) {
+        return fs.writeFileSync(path, content);
+    },
+    
+    // Write binary data to file
+    writeBinarySync: function(path, byteStream) {
+        return fs.writeBinaryFile(path, byteStream);
+    }
+};
+
+// ============================================================================
+// ByteStream Utilities (for emitter)
+// ============================================================================
+
+let Bytes = {
+    // Create a new byte buffer
+    create: function() {
+        return ByteStream.create();
+    },
+    
+    // Write operations
+    writeU8: function(stream, byte) {
+        return ByteStream.writeU8(stream, byte);
+    },
+    
+    writeU32: function(stream, value) {
+        return ByteStream.writeU32(stream, value);
+    },
+    
+    writeF64: function(stream, value) {
+        return ByteStream.writeF64(stream, value);
+    },
+    
+    writeVarint: function(stream, value) {
+        return ByteStream.writeVarint(stream, value);
+    },
+    
+    writeString: function(stream, str) {
+        return ByteStream.writeString(stream, str);
+    },
+    
+    // Backpatch a 32-bit value at offset
+    patchU32: function(stream, offset, value) {
+        return ByteStream.patchU32(stream, offset, value);
+    },
+    
+    // Get current length
+    length: function(stream) {
+        return ByteStream.length(stream);
+    },
+    
+    // Convert to array (for debugging)
+    toArray: function(stream) {
+        return ByteStream.toArray(stream);
+    }
+};
+
+// ============================================================================
+// Prelude loaded indicator
+// ============================================================================
+
+let __PRELUDE_LOADED__ = true;
