@@ -10,6 +10,7 @@ use crate::stdlib::{
     native_byte_stream_write_u32, native_byte_stream_write_varint, native_create_byte_stream,
     native_log, native_read_file, native_require, native_set_timeout, native_write_binary_file,
     native_write_file,
+    native_string_from_char_code,
 };
 use crate::vm::opcodes::OpCode;
 use crate::vm::value::HeapData;
@@ -36,7 +37,7 @@ pub struct TimerTask {
 }
 
 pub struct VM {
-    stack: Vec<JsValue>,
+    pub stack: Vec<JsValue>,
     pub call_stack: Vec<Frame>,
     pub heap: Vec<HeapObject>,
     pub native_functions: Vec<NativeFn>,
@@ -44,7 +45,7 @@ pub struct VM {
     timers: Vec<TimerTask>,
     pub program: Vec<OpCode>,
     pub modules: HashMap<String, JsValue>,
-    ip: usize, // Instruction Pointer
+    pub ip: usize, // Instruction Pointer
 }
 
 impl VM {
@@ -87,6 +88,9 @@ impl VM {
         let stream_length_idx = self.register_native(native_byte_stream_length);
         let to_array_idx = self.register_native(native_byte_stream_to_array);
         let write_binary_file_idx = self.register_native(native_write_binary_file);
+        
+        // ASCII String Native Functions
+        let string_from_char_code_idx = self.register_native(native_string_from_char_code);
 
         // console = { log: <native fn> }
         let console_ptr = self.heap.len();
@@ -170,6 +174,14 @@ impl VM {
         // Module registry
         self.modules
             .insert("fs".to_string(), JsValue::Object(fs_ptr));
+
+        let string_ptr = self.heap.len();
+        let mut string_props = HashMap::new();
+        string_props.insert("fromCharCode".to_string(), JsValue::NativeFunction(string_from_char_code_idx));
+        self.heap.push(HeapObject {
+            data: HeapData::Object(string_props),
+        });
+        self.call_stack[0].locals.insert("String".into(), JsValue::Object(string_ptr));
     }
 
     pub fn register_native(&mut self, func: NativeFn) -> usize {
@@ -191,6 +203,33 @@ impl VM {
     pub fn load_program(&mut self, bytecode: Vec<OpCode>) {
         self.program = bytecode;
         self.ip = 0;
+    }
+
+    /// Append bytecode to the existing program and return the starting offset.
+    /// This rebases all address-containing instructions so they point to the correct
+    /// locations in the combined program.
+    pub fn append_program(&mut self, bytecode: Vec<OpCode>) -> usize {
+        let start_offset = self.program.len();
+
+        // Rebase all address-containing instructions
+        for op in bytecode {
+            let rebased_op = match op {
+                OpCode::Jump(addr) => OpCode::Jump(addr + start_offset),
+                OpCode::JumpIfFalse(addr) => OpCode::JumpIfFalse(addr + start_offset),
+                OpCode::MakeClosure(addr) => OpCode::MakeClosure(addr + start_offset),
+                OpCode::Push(JsValue::Function { address, env }) => {
+                    OpCode::Push(JsValue::Function {
+                        address: address + start_offset,
+                        env,
+                    })
+                }
+                other => other,
+            };
+            self.program.push(rebased_op);
+        }
+
+        self.ip = start_offset;
+        start_offset
     }
 
     pub fn run_event_loop(&mut self) {
@@ -332,6 +371,7 @@ impl VM {
                     data: HeapData::Object(HashMap::new()),
                 });
                 self.stack.push(JsValue::Object(ptr));
+                println!("DEBUG VM: NEW_OBJECT -> heap[{}]", ptr);
             }
 
             OpCode::SetProp(name) => {
@@ -341,6 +381,9 @@ impl VM {
                         data: HeapData::Object(props),
                     }) = self.heap.get_mut(ptr)
                 {
+                    if name == "value" {
+                        println!("DEBUG VM: SET_PROP heap[{}].value = {:?}", ptr, value);
+                    }
                     props.insert(name.to_string(), value);
                 }
             }
@@ -355,6 +398,9 @@ impl VM {
                                 HeapData::Object(props) => {
                                     let val =
                                         props.get(&name).cloned().unwrap_or(JsValue::Undefined);
+                                    if name == "value" {
+                                        println!("DEBUG VM: GET_PROP heap[{}].value = {:?}", ptr, val);
+                                    }
                                     self.stack.push(val);
                                 }
                                 HeapData::Array(arr) => {
@@ -391,6 +437,13 @@ impl VM {
             }
 
             OpCode::Push(v) => self.stack.push(v),
+
+            OpCode::Let(name) => {
+                // Create a new binding in the CURRENT frame only (let declaration)
+                // This shadows any outer variable with the same name
+                let val = self.stack.pop().unwrap_or(JsValue::Undefined);
+                self.call_stack.last_mut().unwrap().locals.insert(name, val);
+            }
 
             OpCode::Store(name) => {
                 let val = self.stack.pop().unwrap_or(JsValue::Undefined);

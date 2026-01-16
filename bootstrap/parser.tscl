@@ -339,11 +339,26 @@ function parseComparison(parser) {
 
 function parseAdditive(parser) {
     let left = parseMultiplicative(parser);
+    if (left.type == "Literal" && left.literalType == "number") {
+        console.log("DEBUG parseAdditive: after parsing left, value =", left.value);
+    }
 
     while (check(parser, TOKEN.OPERATOR, "+") || check(parser, TOKEN.OPERATOR, "-")) {
         let op = parserAdvance(parser).value;
+        if (left.type == "Literal" && left.literalType == "number") {
+            console.log("DEBUG parseAdditive: before parsing right, left.value =", left.value);
+        }
         let right = parseMultiplicative(parser);
-        left = new BinaryExpression(op, left, right);
+        if (left.type == "Literal" && left.literalType == "number") {
+            console.log("DEBUG parseAdditive: after parsing right, left.value =", left.value);
+        }
+        if (right.type == "Literal" && right.literalType == "number") {
+            console.log("DEBUG parseAdditive: right.value =", right.value);
+        }
+        let binExpr = new BinaryExpression(op, left, right);
+        console.log("DEBUG parseAdditive: binExpr.left.value =", binExpr.left.value);
+        console.log("DEBUG parseAdditive: binExpr.right.value =", binExpr.right.value);
+        left = binExpr;
     }
 
     return left;
@@ -433,30 +448,33 @@ function parsePrimary(parser) {
     // true/false
     if (check(parser, TOKEN.KEYWORD, "true")) {
         parserAdvance(parser);
-        return new Literal(true, "true");
+        return new Literal(true, "true", "boolean");
     }
     if (check(parser, TOKEN.KEYWORD, "false")) {
         parserAdvance(parser);
-        return new Literal(false, "false");
+        return new Literal(false, "false", "boolean");
     }
 
     // null
     if (check(parser, TOKEN.KEYWORD, "null")) {
         parserAdvance(parser);
-        return new Literal(null, "null");
+        return new Literal(null, "null", "null");
     }
 
     // number
     if (check(parser, TOKEN.NUMBER, null)) {
         let tok = parserAdvance(parser);
         let numVal = parseFloat(tok.value);
-        return new Literal(numVal, tok.value);
+        console.log("DEBUG parser: creating Literal with numVal =", numVal);
+        let lit = new Literal(numVal, tok.value, "number");
+        console.log("DEBUG parser: Literal.value =", lit.value);
+        return lit;
     }
 
     // string
     if (check(parser, TOKEN.STRING, null)) {
         let tok = parserAdvance(parser);
-        return new Literal(tok.value, tok.value);
+        return new Literal(tok.value, tok.value, "string");
     }
 
     // identifier (might be start of arrow function)

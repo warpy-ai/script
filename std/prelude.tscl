@@ -261,6 +261,7 @@ function makeToken(type, value, line, col) {
 function Program(body) {
     this.type = "Program";
     this.body = body;
+    return this;
 }
 
 function VariableDeclaration(kind, name, init) {
@@ -268,6 +269,7 @@ function VariableDeclaration(kind, name, init) {
     this.kind = kind;
     this.name = name;
     this.init = init;
+    return this;
 }
 
 function FunctionDeclaration(name, params, body) {
@@ -275,11 +277,13 @@ function FunctionDeclaration(name, params, body) {
     this.name = name;
     this.params = params;
     this.body = body;
+    return this;
 }
 
 function ReturnStatement(argument) {
     this.type = "ReturnStatement";
     this.argument = argument;
+    return this;
 }
 
 function IfStatement(test, consequent, alternate) {
@@ -287,22 +291,26 @@ function IfStatement(test, consequent, alternate) {
     this.test = test;
     this.consequent = consequent;
     this.alternate = alternate;
+    return this;
 }
 
 function WhileStatement(test, body) {
     this.type = "WhileStatement";
     this.test = test;
     this.body = body;
+    return this;
 }
 
 function BlockStatement(body) {
     this.type = "BlockStatement";
     this.body = body;
+    return this;
 }
 
 function ExpressionStatement(expression) {
     this.type = "ExpressionStatement";
     this.expression = expression;
+    return this;
 }
 
 function BinaryExpression(operator, left, right) {
@@ -310,12 +318,14 @@ function BinaryExpression(operator, left, right) {
     this.operator = operator;
     this.left = left;
     this.right = right;
+    return this;
 }
 
 function UnaryExpression(operator, argument) {
     this.type = "UnaryExpression";
     this.operator = operator;
     this.argument = argument;
+    return this;
 }
 
 function AssignmentExpression(operator, left, right) {
@@ -323,12 +333,14 @@ function AssignmentExpression(operator, left, right) {
     this.operator = operator;
     this.left = left;
     this.right = right;
+    return this;
 }
 
 function CallExpression(callee, arguments) {
     this.type = "CallExpression";
     this.callee = callee;
     this.arguments = arguments;
+    return this;
 }
 
 function MemberExpression(object, property, computed) {
@@ -336,57 +348,69 @@ function MemberExpression(object, property, computed) {
     this.object = object;
     this.property = property;
     this.computed = computed;
+    return this;
 }
 
 function Identifier(name) {
     this.type = "Identifier";
     this.name = name;
+    return this;
 }
 
-function Literal(value, raw) {
+function Literal(value, raw, literalType) {
     this.type = "Literal";
     this.value = value;
     this.raw = raw;
+    this.literalType = literalType;
+    return this;
 }
 
 function ArrayExpression(elements) {
     this.type = "ArrayExpression";
     this.elements = elements;
+    return this;
 }
 
 function ObjectExpression(properties) {
     this.type = "ObjectExpression";
     this.properties = properties;
+    return this;
 }
 
 function Property(key, value) {
     this.type = "Property";
     this.key = key;
     this.value = value;
+    return this;
 }
 
 function NewExpression(callee, arguments) {
     this.type = "NewExpression";
     this.callee = callee;
     this.arguments = arguments;
+    return this;
 }
 
 function ThisExpression() {
     this.type = "ThisExpression";
+    return this;
 }
 
 function ArrowFunctionExpression(params, body) {
     this.type = "ArrowFunctionExpression";
     this.params = params;
     this.body = body;
+    return this;
 }
 
 function BreakStatement() {
     this.type = "BreakStatement";
+    return this;
 }
 
 function ContinueStatement() {
     this.type = "ContinueStatement";
+    return this;
 }
 
 // ============================================================================

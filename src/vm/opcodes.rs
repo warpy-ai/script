@@ -9,6 +9,9 @@ pub enum OpCode {
     #[allow(dead_code)]
     Print,
     Pop,
+    /// Create a new variable binding in the current frame (let declaration)
+    Let(String),
+    /// Assign to an existing variable (searches frames from inner to outer)
     Store(String),
     Load(String),
     Drop(String),

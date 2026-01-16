@@ -315,24 +315,33 @@ function emitContinueStatement(emitter, node) {
 // ============================================================================
 
 function emitBinaryExpression(emitter, node) {
+    // Save properties FIRST before any recursive calls
+    let operator = node.operator;
+    let left = node.left;
+    let right = node.right;
+
     // Emit left operand
-    emit(emitter, node.left);
+    emit(emitter, left);
     // Emit right operand
-    emit(emitter, node.right);
+    emit(emitter, right);
     // Emit operator
-    let opcode = getOpCodeForBinaryOp(node.operator);
+    let opcode = getOpCodeForBinaryOp(operator);
     if (opcode == -1) {
-        console.log("Unknown binary operator:", node.operator);
+        console.log("Unknown binary operator:", operator);
         return;
     }
     emitU8(emitter, opcode);
 }
 
 function emitUnaryExpression(emitter, node) {
-    emit(emitter, node.argument);
-    let opcode = getOpCodeForUnaryOp(node.operator);
+    // Save before recursive calls
+    let operator = node.operator;
+    let argument = node.argument;
+
+    emit(emitter, argument);
+    let opcode = getOpCodeForUnaryOp(operator);
     if (opcode == -1) {
-        console.log("Unknown unary operator:", node.operator);
+        console.log("Unknown unary operator:", operator);
         return;
     }
     emitU8(emitter, opcode);
@@ -426,27 +435,32 @@ function emitIdentifier(emitter, node) {
 }
 
 function emitLiteral(emitter, node) {
+    // Save node properties before any operations
+    let literalType = node.literalType;
+    let value = node.value;
+
     emitU8(emitter, OP.PUSH);
 
-    if (node.value == null) {
+    if (literalType == "null") {
         emitU8(emitter, TYPE.NULL);
-    } else if (node.value == true) {
-        emitU8(emitter, TYPE.TRUE);
-    } else if (node.value == false) {
-        emitU8(emitter, TYPE.FALSE);
-    } else if (node.raw == "true" || node.raw == "false" || node.raw == "null") {
-        // Already handled above
-    } else {
-        // Check if it's a number or string
-        // Numbers have numeric values, strings have string values
-        let valType = typeof node.value;
-        if (valType == "number") {
-            emitU8(emitter, TYPE.NUMBER);
-            emitF64(emitter, node.value);
+    } else if (literalType == "boolean") {
+        if (value == true) {
+            emitU8(emitter, TYPE.TRUE);
         } else {
-            emitU8(emitter, TYPE.STRING);
-            emitString(emitter, node.value);
+            emitU8(emitter, TYPE.FALSE);
         }
+    } else if (literalType == "number") {
+        console.log("emitLiteral NUMBER: value =", value);
+        emitU8(emitter, TYPE.NUMBER);
+        emitF64(emitter, value);
+    } else if (literalType == "string") {
+        emitU8(emitter, TYPE.STRING);
+        emitString(emitter, value);
+    } else {
+        // Fallback: treat as string
+        console.log("Warning: unknown literal type:", literalType);
+        emitU8(emitter, TYPE.STRING);
+        emitString(emitter, value);
     }
 }
 

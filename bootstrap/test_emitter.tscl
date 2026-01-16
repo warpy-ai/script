@@ -6,6 +6,9 @@
 
 console.log("=== Testing Emitter ===");
 
+// Quick sanity check that prelude is available
+console.log("Prelude check: TOKEN.NUMBER =", TOKEN.NUMBER, ", isDigit(49) =", isDigit(49));
+
 // Test 1: Simple expression 1 + 2
 console.log("\nTest 1: Compiling '1 + 2'");
 let bytecode1 = compile("1 + 2;");
