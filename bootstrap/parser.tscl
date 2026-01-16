@@ -339,26 +339,11 @@ function parseComparison(parser) {
 
 function parseAdditive(parser) {
     let left = parseMultiplicative(parser);
-    if (left.type == "Literal" && left.literalType == "number") {
-        console.log("DEBUG parseAdditive: after parsing left, value =", left.value);
-    }
 
     while (check(parser, TOKEN.OPERATOR, "+") || check(parser, TOKEN.OPERATOR, "-")) {
         let op = parserAdvance(parser).value;
-        if (left.type == "Literal" && left.literalType == "number") {
-            console.log("DEBUG parseAdditive: before parsing right, left.value =", left.value);
-        }
         let right = parseMultiplicative(parser);
-        if (left.type == "Literal" && left.literalType == "number") {
-            console.log("DEBUG parseAdditive: after parsing right, left.value =", left.value);
-        }
-        if (right.type == "Literal" && right.literalType == "number") {
-            console.log("DEBUG parseAdditive: right.value =", right.value);
-        }
-        let binExpr = new BinaryExpression(op, left, right);
-        console.log("DEBUG parseAdditive: binExpr.left.value =", binExpr.left.value);
-        console.log("DEBUG parseAdditive: binExpr.right.value =", binExpr.right.value);
-        left = binExpr;
+        left = new BinaryExpression(op, left, right);
     }
 
     return left;
@@ -465,10 +450,7 @@ function parsePrimary(parser) {
     if (check(parser, TOKEN.NUMBER, null)) {
         let tok = parserAdvance(parser);
         let numVal = parseFloat(tok.value);
-        console.log("DEBUG parser: creating Literal with numVal =", numVal);
-        let lit = new Literal(numVal, tok.value, "number");
-        console.log("DEBUG parser: Literal.value =", lit.value);
-        return lit;
+        return new Literal(numVal, tok.value, "number");
     }
 
     // string
@@ -652,7 +634,7 @@ function parseProperty(parser) {
         key = new Identifier(tok.value);
     } else if (check(parser, TOKEN.STRING, null)) {
         let tok = parserAdvance(parser);
-        key = new Literal(tok.value, tok.value);
+        key = new Literal(tok.value, tok.value, "string");
     } else {
         console.log("Parse error: expected property key");
         return null;

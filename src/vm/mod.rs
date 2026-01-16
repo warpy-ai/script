@@ -312,10 +312,6 @@ impl VM {
                 {
                     for (name, value) in props {
                         frame.locals.insert(name.clone(), value.clone());
-                        println!(
-                            "DEBUG: Loaded captured var '{}' from env into closure frame",
-                            name
-                        );
                     }
                 }
 
@@ -371,7 +367,6 @@ impl VM {
                     data: HeapData::Object(HashMap::new()),
                 });
                 self.stack.push(JsValue::Object(ptr));
-                println!("DEBUG VM: NEW_OBJECT -> heap[{}]", ptr);
             }
 
             OpCode::SetProp(name) => {
@@ -381,9 +376,6 @@ impl VM {
                         data: HeapData::Object(props),
                     }) = self.heap.get_mut(ptr)
                 {
-                    if name == "value" {
-                        println!("DEBUG VM: SET_PROP heap[{}].value = {:?}", ptr, value);
-                    }
                     props.insert(name.to_string(), value);
                 }
             }
@@ -398,9 +390,6 @@ impl VM {
                                 HeapData::Object(props) => {
                                     let val =
                                         props.get(&name).cloned().unwrap_or(JsValue::Undefined);
-                                    if name == "value" {
-                                        println!("DEBUG VM: GET_PROP heap[{}].value = {:?}", ptr, val);
-                                    }
                                     self.stack.push(val);
                                 }
                                 HeapData::Array(arr) => {
@@ -549,7 +538,6 @@ impl VM {
                     }) = self.heap.get_mut(ptr)
                 {
                     props.clear();
-                    println!("DEBUG: Memory Freed at Heap Index {}", ptr);
                 }
             }
 
@@ -914,10 +902,6 @@ impl VM {
                         address,
                         env: Some(ptr),
                     });
-                    println!(
-                        "DEBUG: Created closure with env at heap[{}], jumps to {}",
-                        ptr, address
-                    );
                 } else {
                     panic!("MakeClosure expects an Object pointer on stack");
                 }

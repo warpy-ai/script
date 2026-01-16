@@ -256,6 +256,10 @@ function makeToken(type, value, line, col) {
 
 // ============================================================================
 // AST Node Constructors
+// AST Node Contract
+// All AST nodes must have:
+// - type: string ( node type identifier)
+// - Additional properties specific to node type 
 // ============================================================================
 
 function Program(body) {
@@ -396,8 +400,9 @@ function ThisExpression() {
     return this;
 }
 
-function ArrowFunctionExpression(params, body) {
+function ArrowFunctionExpression(name, params, body) {
     this.type = "ArrowFunctionExpression";
+    this.name = name;
     this.params = params;
     this.body = body;
     return this;

@@ -55,12 +55,12 @@ function lexerAdvance(lexer) {
 function skipWhitespace(lexer) {
     while (lexer.pos < lexer.source.length) {
         let code = lexerPeek(lexer);
-        
+
         if (isWhitespace(code)) {
             lexerAdvance(lexer);
             continue;
         }
-        
+
         // Check for comment: // (47 is '/')
         if (code == 47) {
             let nextCode = lexerPeekNext(lexer);
@@ -78,7 +78,7 @@ function skipWhitespace(lexer) {
                 continue;
             }
         }
-        
+
         return;
     }
 }
@@ -155,7 +155,7 @@ function scanString(lexer) {
             else if (nextCode == 39) { value = value + "'"; }
             else if (nextCode == 92) { value = value + "\\"; }
             else if (nextCode != -1) {
-                value = value + lexer.source.slice(lexer.pos, lexer.pos + 1);
+                value = value + String.fromCharCode(nextCode);
             }
             lexerAdvance(lexer);
         } else if (code == 10) {
@@ -177,7 +177,7 @@ function scanOperatorOrDelimiter(lexer) {
         return makeToken(TOKEN.ERROR, "Unexpected end of file", startLine, startCol);
     }
 
-    let char = lexer.source.slice(lexer.pos, lexer.pos + 1);
+    let char = String.fromCharCode(code);
 
     // Check for two-character operators first
     if (lexer.pos + 1 < lexer.source.length) {

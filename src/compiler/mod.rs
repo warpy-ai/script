@@ -260,7 +260,8 @@ impl Codegen {
                     if let Some(init) = &decl.init {
                         let name = decl.name.as_ident().unwrap().sym.to_string();
                         self.gen_expr(init);
-                        self.instructions.push(OpCode::Store(name.clone()));
+                        // Use Let to create a new binding in current scope (shadows outer vars)
+                        self.instructions.push(OpCode::Let(name.clone()));
                         // Track this variable so inner functions can capture it
                         self.outer_scope_vars.insert(name);
                     }
@@ -274,12 +275,12 @@ impl Codegen {
                 // for consistency but top-level functions usually won't have any.
 
                 // 1. Push function address and store it
-                let start_ip = self.instructions.len() + 3; // +3 to skip Push, Store, and Jump
+                let start_ip = self.instructions.len() + 3; // +3 to skip Push, Let, and Jump
                 self.instructions.push(OpCode::Push(JsValue::Function {
                     address: start_ip,
                     env: None, // Named function declarations typically don't capture
                 }));
-                self.instructions.push(OpCode::Store(name.clone()));
+                self.instructions.push(OpCode::Let(name.clone()));
 
                 // Track this function name in outer scope
                 self.outer_scope_vars.insert(name);
@@ -296,7 +297,8 @@ impl Codegen {
                     if let Pat::Ident(id) = &param.pat {
                         let param_name = id.id.sym.to_string();
                         // The value is already on the stack from the Caller
-                        self.instructions.push(OpCode::Store(param_name));
+                        // Parameters are new bindings in the function scope
+                        self.instructions.push(OpCode::Let(param_name));
                     }
                 }
                 let stmts = &fn_decl.function.body.as_ref().unwrap().stmts;
@@ -491,10 +493,11 @@ impl Codegen {
                 self.in_function = true;
 
                 // Pop args into locals (reverse order)
+                // Parameters are new bindings in the function scope
                 for param in fn_expr.function.params.iter().rev() {
                     if let Pat::Ident(id) = &param.pat {
                         let param_name = id.id.sym.to_string();
-                        self.instructions.push(OpCode::Store(param_name));
+                        self.instructions.push(OpCode::Let(param_name));
                     }
                 }
 
@@ -574,10 +577,11 @@ impl Codegen {
                 self.in_function = true;
 
                 // Pop args into locals (reverse order)
+                // Parameters are new bindings in the function scope
                 for param in arrow.params.iter().rev() {
                     if let Pat::Ident(id) = param {
                         let param_name = id.id.sym.to_string();
-                        self.instructions.push(OpCode::Store(param_name));
+                        self.instructions.push(OpCode::Let(param_name));
                     } else {
                         println!("Warning: Non-identifier arrow params not supported yet.");
                     }

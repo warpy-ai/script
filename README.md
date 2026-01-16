@@ -1,96 +1,182 @@
-# 🚀 Script
+# tscl
 
-A custom-built JavaScript interpreter and Virtual Machine implemented in **Rust**. Unlike standard engines that rely entirely on Garbage Collection, this engine utilizes a **Borrow Checker** and **Explicit Ownership** model to manage memory safety at compile-time.
+A custom JavaScript-like scripting language with a stack-based VM implemented in **Rust**. Features a self-hosting bootstrap compiler written in the language itself.
 
-## 🏗️ Architecture
-
-The engine is divided into three primary stages:
+## Architecture
 
 ```
 ┌─────────────┐    ┌─────────────────┐    ┌────────────────┐
 │   Parsing   │───▶│  Borrow Checker │───▶│  Stack-based   │
 │  (SWC AST)  │    │   (Middle-end)  │    │   VM (Back-end)│
 └─────────────┘    └─────────────────┘    └────────────────┘
+
+        │                                         │
+        │         Bootstrap Compiler              │
+        │    ┌─────────────────────────┐         │
+        └───▶│  Lexer → Parser → Emitter │◀───────┘
+             │     (Written in tscl)     │
+             └─────────────────────────┘
 ```
 
-| Stage              | Description                                                                                                                |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| **Parsing**        | Powered by `swc_ecma_parser` to transform JS/TS code into an Abstract Syntax Tree (AST)                                    |
-| **Borrow Checker** | Custom static analysis pass enforcing ownership rules — _Move_ semantics for Heap objects, _Copy_ semantics for Primitives |
-| **VM**             | Stack-based Virtual Machine executing custom bytecode with a managed Heap and Call Stack                                   |
+| Stage                  | Description                                                                 |
+| ---------------------- | --------------------------------------------------------------------------- |
+| **Rust Compiler**      | SWC-based parser with borrow checking and bytecode generation              |
+| **Bootstrap Compiler** | Self-hosting compiler written in tscl (lexer, parser, emitter)             |
+| **VM**                 | Stack-based VM with heap allocation, closures, and event loop              |
 
-## ✨ Features
+## Features
 
-### Memory Management (The "Rust" Secret)
+### Self-Hosting Bootstrap Compiler
 
-- **Ownership Model** — Variables "own" their data. Assigning an object to a new variable _moves_ ownership, invalidating the original
-- **Lifetime Tracking** — Prevents moving an object if active borrows (references) still point to it
-- **Scoped Lifetimes** — Variables are automatically dropped (freed) when their containing Frame or Block ends
-- **Stack vs. Heap** — Primitives (`Number`, `Boolean`) live on the Stack (Copy); Objects and Arrays live on the Heap (Move)
+The project includes a bootstrap compiler written entirely in tscl:
+
+- **Lexer** (`bootstrap/lexer.tscl`) - Tokenizes source code into tokens
+- **Parser** (`bootstrap/parser.tscl`) - Recursive descent parser producing AST
+- **Emitter** (`bootstrap/emitter.tscl`) - Generates bytecode from AST
+
+### Two-Stage Loading Architecture
+
+Scripts are loaded in stages to support modularity:
+
+1. **Prelude** (`std/prelude.tscl`) - Core constants (OpCodes, Types, Tokens) and utility functions
+2. **Bootstrap Modules** - Lexer, parser, and emitter (when running bootstrap tests)
+3. **Main Script** - User code that can use all loaded globals
+
+### Memory Management
+
+- **Ownership Model** - Variables own their data; assigning objects moves ownership
+- **Let vs Store** - `Let` creates new bindings (shadowing), `Store` updates existing ones
+- **Scoped Lifetimes** - Variables freed when their containing scope ends
+- **Stack vs Heap** - Primitives on stack (copy), Objects/Arrays on heap (move)
 
 ### Virtual Machine
 
-- **Stack-based Architecture** — Uses a LIFO stack for expressions and operations
-- **Call Stack & Frames** — Supports nested function calls with isolated local scopes
-- **Heap Allocation** — Dedicated storage area for dynamic data like Objects and Arrays
-- **Native Bridge** — Inject Rust functions (e.g., `console.log`) directly into the JavaScript environment
+- **Stack-based Architecture** - LIFO stack for expressions and operations
+- **Call Stack & Frames** - Nested function calls with isolated local scopes
+- **Closures** - Functions capture variables from enclosing scopes
+- **Event Loop** - Task queue with `setTimeout` support
+- **Bytecode Rebasing** - Appended bytecode has addresses automatically adjusted
 
 ### Language Support
 
-- **Functions** — Arguments passing, return values, and local variable scoping
-- **Objects & Arrays** — Object literals `{a: 1}`, array literals `[1, 2]`, property access `obj.a`, and indexed access `arr[0]`
-- **Control Flow** — `if`/`else` branching and `while` loops using backpatched jumps
-- **Comparisons** — Full support for `>`, `<`, and `===`
-- **Explicit Borrowing** — `void` operator hijacked for explicit reference creation
+- **Functions** - Declarations, expressions, arrow functions, closures
+- **Objects & Arrays** - Literals, property access, computed access, methods
+- **Control Flow** - `if`/`else`, `while`, `break`, `continue`
+- **Operators** - Arithmetic, comparison, logical, unary
+- **Constructors** - `new` expressions with `this` binding
+- **String Methods** - `slice`, `charCodeAt`, `charAt`, `includes`, `trim`
+- **Array Methods** - `push`, `pop`, `shift`, `unshift`, `splice`, `indexOf`, `includes`, `join`
 
-## 📜 Bytecode Instruction Set
+## Bytecode Instruction Set
 
-| OpCode           | Description                                      |
-| ---------------- | ------------------------------------------------ |
-| `Push(Value)`    | Pushes a constant onto the stack                 |
-| `Store(Name)`    | Moves a value from the stack to a local variable |
-| `Load(Name)`     | Pushes a variable's value onto the stack         |
-| `NewObject`      | Allocates a new empty object on the Heap         |
-| `SetProp(Key)`   | Sets a property on a heap object                 |
-| `Call`           | Executes a Bytecode or Native function           |
-| `JumpIfFalse(N)` | Branches execution if the condition is falsy     |
-| `Drop(Name)`     | Manually frees a variable and its heap data      |
+| OpCode             | Description                                           |
+| ------------------ | ----------------------------------------------------- |
+| `Push(Value)`      | Push constant onto stack                              |
+| `Let(Name)`        | Create new variable binding in current scope          |
+| `Store(Name)`      | Update existing variable (searches all scopes)        |
+| `Load(Name)`       | Push variable's value onto stack                      |
+| `NewObject`        | Allocate empty object on heap                         |
+| `NewArray(Size)`   | Allocate array of given size                          |
+| `SetProp(Key)`     | Set property on heap object                           |
+| `GetProp(Key)`     | Get property from heap object                         |
+| `Call(ArgCount)`   | Execute function with N arguments                     |
+| `CallMethod(N,A)`  | Call method on object                                 |
+| `Return`           | Return from function                                  |
+| `Jump(Addr)`       | Unconditional jump                                    |
+| `JumpIfFalse(Addr)`| Conditional branch                                    |
+| `MakeClosure(Addr)`| Create closure with captured environment              |
+| `Construct(Args)`  | Construct new object instance                         |
+| `Drop(Name)`       | Free variable and its heap data                       |
+| `Halt`             | Stop execution                                        |
 
-## 🛠️ Example
+## Standard Library
+
+### Built-in Objects
+
+- `console.log(...)` - Print values to stdout
+- `setTimeout(fn, ms)` - Schedule function execution
+- `require(module)` - Load module (currently supports "fs")
+
+### File System (`fs`)
+
+```javascript
+let fs = require("fs");
+fs.readFileSync(path)           // Read file as string
+fs.writeFileSync(path, content) // Write string to file
+fs.writeBinaryFile(path, bytes) // Write binary data
+```
+
+### ByteStream (Binary Data)
+
+```javascript
+let stream = ByteStream.create();
+ByteStream.writeU8(stream, byte);
+ByteStream.writeU32(stream, value);
+ByteStream.writeF64(stream, value);
+ByteStream.writeString(stream, str);
+ByteStream.writeVarint(stream, value);
+ByteStream.patchU32(stream, offset, value);
+ByteStream.length(stream);
+ByteStream.toArray(stream);
+```
+
+## Example
 
 **Source Code:**
 
 ```javascript
-let count = 3;
-while (count > 0) {
-  console.log(count);
-  count = count - 1;
+function greet(name) {
+    return "Hello, " + name + "!";
 }
+
+let message = greet("World");
+console.log(message);
 ```
 
-**Compiler Logic:**
+**Bootstrap Compiler Usage:**
 
-1. **Borrow Check** — Ensures `count` is a primitive and can be used in the comparison and subtraction without moving
-2. **Loop Label** — Marks the start of the condition
-3. **Jump Logic** — If `count > 0` is false, jumps to the `Halt` instruction at the end
-4. **Native Call** — Loads the `console` object and calls the native Rust `log` function
+```javascript
+// Compile source to bytecode
+let bytecode = compile("1 + 2 * 3");
 
-## 🚀 Roadmap
+// Write bytecode to file
+compileToFile("let x = 42;", "output.bc");
+```
 
-- [ ] **Event Loop** — Implementing a Task Queue to support `setTimeout` and asynchronous I/O
-- [ ] **Standard Library** — Adding `fs` (File System) and `net` (Networking) native bindings for Node.js compatibility
-- [ ] **Garbage-Free Refinement** — Implementing Reference Counting (RC) for shared ownership of heap objects
-
-## 📦 Getting Started
+## Getting Started
 
 ```bash
 # Build the project
 cargo build --release
 
-# Run the interpreter
-cargo run
+# Run a script
+cargo run -- path/to/script.tscl
+
+# Run bootstrap compiler tests
+cargo run -- bootstrap/test_emitter.tscl
 ```
 
-## 📄 License
+## Project Structure
+
+```
+script/
+├── src/
+│   ├── main.rs          # Entry point with two-stage loading
+│   ├── compiler/        # Rust compiler (SWC-based)
+│   ├── vm/
+│   │   ├── mod.rs       # VM implementation
+│   │   ├── opcodes.rs   # Bytecode opcodes
+│   │   └── value.rs     # Runtime value types
+│   └── stdlib/          # Native function implementations
+├── std/
+│   └── prelude.tscl     # Standard prelude (OpCodes, Types, utilities)
+└── bootstrap/
+    ├── lexer.tscl       # Self-hosting lexer
+    ├── parser.tscl      # Self-hosting parser
+    ├── emitter.tscl     # Self-hosting bytecode emitter
+    └── test_emitter.tscl # Emitter test suite
+```
+
+## License
 
 See [LICENSE](./LICENSE) for details.

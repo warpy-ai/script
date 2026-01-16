@@ -450,7 +450,6 @@ function emitLiteral(emitter, node) {
             emitU8(emitter, TYPE.FALSE);
         }
     } else if (literalType == "number") {
-        console.log("emitLiteral NUMBER: value =", value);
         emitU8(emitter, TYPE.NUMBER);
         emitF64(emitter, value);
     } else if (literalType == "string") {
