@@ -112,7 +112,26 @@ function scanNumber(lexer) {
     let startCol = lexer.col;
     let start = lexer.pos;
 
-    // Scan integer part
+    // Check for hex literal: 0x or 0X
+    if (lexerPeek(lexer) == 48) { // '0'
+        let next = lexerPeekNext(lexer);
+        if (next == 120 || next == 88) { // 'x' or 'X'
+            lexerAdvance(lexer); // consume '0'
+            lexerAdvance(lexer); // consume 'x'
+
+            // Parse hex digits and compute value
+            let hexValue = 0;
+            while (lexer.pos < lexer.source.length && isHexDigit(lexerPeek(lexer))) {
+                hexValue = hexValue * 16 + hexCharToValue(lexerPeek(lexer));
+                lexerAdvance(lexer);
+            }
+
+            // Return the decimal string representation
+            return makeToken(TOKEN.NUMBER, "" + hexValue, startLine, startCol);
+        }
+    }
+
+    // Regular decimal number
     while (lexer.pos < lexer.source.length && isDigit(lexerPeek(lexer))) {
         lexerAdvance(lexer);
     }
@@ -177,6 +196,7 @@ function scanOperatorOrDelimiter(lexer) {
         return makeToken(TOKEN.ERROR, "Unexpected end of file", startLine, startCol);
     }
 
+    let code = lexerPeek(lexer);
     let char = String.fromCharCode(code);
 
     // Check for two-character operators first

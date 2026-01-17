@@ -120,6 +120,21 @@ function isDigit(code) {
     return code >= 48 && code <= 57;
 }
 
+function isHexDigit(code) {
+    // 0-9: 48-57, a-f: 97-102, A-F: 65-70
+    return (code >= 48 && code <= 57) ||
+           (code >= 97 && code <= 102) ||
+           (code >= 65 && code <= 70);
+}
+
+function hexCharToValue(code) {
+    // Convert hex char code to numeric value
+    if (code >= 48 && code <= 57) { return code - 48; }       // 0-9
+    if (code >= 97 && code <= 102) { return code - 97 + 10; } // a-f
+    if (code >= 65 && code <= 70) { return code - 65 + 10; }  // A-F
+    return 0;
+}
+
 function isAlphaNumeric(code) {
     return isAlpha(code) || isDigit(code);
 }

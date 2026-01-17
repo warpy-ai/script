@@ -14,8 +14,8 @@
 console.log("=== Bootstrap Compiler Test ===");
 console.log("");
 
-// Test program: recursive fibonacci
-let testCode = "function fib(n) { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } console.log(fib(10));";
+// Self-hosting: compile the emitter (with hex literal support)
+let testCode = File.readSync("bootstrap/emitter.tscl");
 
 console.log("Source code:");
 console.log("  " + testCode);

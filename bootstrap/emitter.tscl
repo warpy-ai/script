@@ -430,13 +430,11 @@ function emitUnaryExpression(emitter, node) {
 }
 
 function emitAssignmentExpression(emitter, node) {
-    // Emit the value
-    emit(emitter, node.right);
-
     // Handle different assignment targets
     if (node.left.type == "Identifier") {
-        // Simple variable assignment
-        emitU8(emitter, OP.DUP); // Keep value on stack for expression result
+        // Simple variable assignment: x = value
+        emit(emitter, node.right);        // Push value
+        emitU8(emitter, OP.DUP);          // DUP for expression result
 
         // Check if variable is a local in current scope
         let isLocal = false;
@@ -449,29 +447,30 @@ function emitAssignmentExpression(emitter, node) {
         }
 
         if (isLocal) {
-            // Local variable - use indexed store
             emitStoreLocal(emitter, slot);
         } else {
-            // Global or not found locally - use string-based store
             emitU8(emitter, OP.STORE);
             emitString(emitter, node.left.name);
         }
     } else if (node.left.type == "MemberExpression") {
         // Property assignment: obj.prop = value or obj[key] = value
-        // Stack: value
-        // Need: obj, key, value
-        emit(emitter, node.left.object);
+        // SET_PROP(name) pops: value, obj; sets obj[name] = value
+        // Stack should end with: value (the expression result)
+
+        emit(emitter, node.left.object);  // Push obj
+        emit(emitter, node.right);        // Push value
+        emitU8(emitter, OP.DUP);          // Stack: obj, value, value
+
         if (node.left.computed) {
-            emit(emitter, node.left.property);
+            // obj[key] = value - STORE_ELEMENT pops: index, value, array
+            emit(emitter, node.left.property);  // Push key
+            emitU8(emitter, OP.STORE_ELEMENT);
         } else {
-            // Non-computed: property is an identifier, use its name as string
-            emitU8(emitter, OP.PUSH);
-            emitU8(emitter, TYPE.STRING);
+            // obj.prop = value - SET_PROP pops: value, obj
+            emitU8(emitter, OP.SET_PROP);
             emitString(emitter, node.left.property.name);
         }
-        // Now stack is: value, obj, key
-        // We need to swap things around... for simplicity, re-emit value
-        emitU8(emitter, OP.SET_PROP);
+        // Stack now: value (the expression result)
     } else {
         console.log("Invalid assignment target:", node.left.type);
     }
@@ -606,20 +605,16 @@ function emitObjectExpression(emitter, node) {
         let prop = node.properties[i];
         emitU8(emitter, OP.DUP); // Keep object on stack
 
-        // Property key
-        if (prop.key.type == "Identifier") {
-            emitU8(emitter, OP.PUSH);
-            emitU8(emitter, TYPE.STRING);
-            emitString(emitter, prop.key.name);
-        } else {
-            emit(emitter, prop.key);
-        }
-
-        // Property value
+        // Property value (emit first, will be popped by SET_PROP)
         emit(emitter, prop.value);
 
+        // SET_PROP expects property name in bytecode, not on stack
         emitU8(emitter, OP.SET_PROP);
-        emitU8(emitter, OP.POP); // Pop result of SET_PROP
+        if (prop.key.type == "Identifier") {
+            emitString(emitter, prop.key.name);
+        } else if (prop.key.type == "Literal") {
+            emitString(emitter, prop.key.value);
+        }
 
         i = i + 1;
     }
