@@ -1,6 +1,8 @@
 mod compiler;
 use compiler::Compiler;
+mod ir;
 mod loader;
+mod runtime;
 mod stdlib;
 mod vm;
 
@@ -23,9 +25,16 @@ const BOOTSTRAP_FILES: &[&str] = &[
 ];
 
 /// Helper to load and run a script file
-fn load_and_run_script(vm: &mut VM, compiler: &mut Compiler, path: &str, append: bool) -> Result<(), String> {
+fn load_and_run_script(
+    vm: &mut VM,
+    compiler: &mut Compiler,
+    path: &str,
+    append: bool,
+) -> Result<(), String> {
     let source = fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {}", path, e))?;
-    let bytecode = compiler.compile(&source).map_err(|e| format!("Failed to compile {}: {}", path, e))?;
+    let bytecode = compiler
+        .compile(&source)
+        .map_err(|e| format!("Failed to compile {}: {}", path, e))?;
     let bytecode_len = bytecode.len();
 
     if append {
@@ -42,7 +51,8 @@ fn load_and_run_script(vm: &mut VM, compiler: &mut Compiler, path: &str, append:
 
 /// Load and run a pre-compiled bytecode file
 fn run_binary_file(vm: &mut VM, path: &str) -> Result<(), String> {
-    let bytes = fs::read(path).map_err(|e| format!("Failed to read binary file {}: {}", path, e))?;
+    let bytes =
+        fs::read(path).map_err(|e| format!("Failed to read binary file {}: {}", path, e))?;
 
     let mut decoder = BytecodeDecoder::new(&bytes);
 
@@ -75,12 +85,40 @@ fn run_binary_file(vm: &mut VM, path: &str) -> Result<(), String> {
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
-        eprintln!("Usage: {} <filename> [--run-binary]", args[0]);
-        eprintln!("  <filename>      Source file (.tscl) or bytecode file (.bc)");
-        eprintln!("  --run-binary    Force interpretation as bytecode file");
+        eprintln!("Usage: {} <command> [args...]", args[0]);
+        eprintln!("Commands:");
+        eprintln!("  check <filename>     Check a .tscl file for errors (for LSP)");
+        eprintln!("  ir <filename>        Dump SSA IR for a .tscl file");
+        eprintln!("  <filename>           Run a .tscl file");
+        eprintln!("  --run-binary <file>  Run a bytecode file (.bc)");
         return;
     }
-    let filename = &args[1];
+
+    let command = &args[1];
+
+    // Handle "check" command for LSP diagnostics
+    if command == "check" {
+        if args.len() < 3 {
+            eprintln!("Usage: {} check <filename>", args[0]);
+            std::process::exit(1);
+        }
+        let filename = &args[2];
+        check_file(filename);
+        return;
+    }
+
+    // Handle "ir" command to dump SSA IR
+    if command == "ir" {
+        if args.len() < 3 {
+            eprintln!("Usage: {} ir <filename>", args[0]);
+            std::process::exit(1);
+        }
+        let filename = &args[2];
+        dump_ir(filename);
+        return;
+    }
+
+    let filename = command;
 
     // Check if we should run in binary mode
     let run_binary = args.iter().any(|a| a == "--run-binary")
@@ -147,6 +185,100 @@ fn main() {
         }
         Err(e) => {
             eprintln!("Compilation failed: {}", e);
+        }
+    }
+}
+
+/// Dump SSA IR for a file
+fn dump_ir(filename: &str) {
+    let source = match fs::read_to_string(filename) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to read {}: {}", filename, e);
+            std::process::exit(1);
+        }
+    };
+
+    let mut compiler = Compiler::new();
+    let bytecode = match compiler.compile(&source) {
+        Ok(bc) => bc,
+        Err(e) => {
+            eprintln!("Compilation failed: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    println!("=== Bytecode ({} instructions) ===", bytecode.len());
+    for (i, op) in bytecode.iter().enumerate() {
+        println!("  [{:4}] {:?}", i, op);
+    }
+    println!();
+
+    // Lower to SSA IR
+    match ir::lower::lower_module(&bytecode) {
+        Ok(mut module) => {
+            println!("=== SSA IR (before optimization) ===");
+            println!("{}", module);
+
+            // Run type inference and specialization
+            ir::typecheck::typecheck_module(&mut module);
+            println!("=== SSA IR (after type inference) ===");
+            println!("{}", module);
+
+            // Run optimizations
+            ir::opt::optimize_module(&mut module);
+            println!("=== SSA IR (after optimization) ===");
+            println!("{}", module);
+        }
+        Err(e) => {
+            eprintln!("IR lowering failed: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Check a file for errors without running it
+fn check_file(filename: &str) {
+    let source = match fs::read_to_string(filename) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{}:1:1: Failed to read file: {}", filename, e);
+            std::process::exit(1);
+        }
+    };
+
+    let mut compiler = Compiler::new();
+    match compiler.compile(&source) {
+        Ok(_) => {
+            // Success - no errors
+            std::process::exit(0);
+        }
+        Err(e) => {
+            // Parse error message to extract line/column if possible
+            // Format: "Parsing error: ..." or "BORROW ERROR: ..." or "LIFETIME ERROR: ..."
+
+            // Try to find the line number from the error
+            let mut line_num = 1;
+            let col_num = 1;
+
+            // Check if error contains line information from SWC
+            if e.contains("error at") || e.contains("line") {
+                // Try to extract line number from error message
+                // This is a simple heuristic - SWC errors might have different formats
+                let lines: Vec<&str> = source.lines().collect();
+                for (i, _line) in lines.iter().enumerate() {
+                    if e.contains(&format!("line {}", i + 1))
+                        || e.contains(&format!("{}:{}", filename, i + 1))
+                    {
+                        line_num = i + 1;
+                        break;
+                    }
+                }
+            }
+
+            // Output in format: filename:line:col: message
+            eprintln!("{}:{}:{}: {}", filename, line_num, col_num, e);
+            std::process::exit(1);
         }
     }
 }

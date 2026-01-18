@@ -1,0 +1,849 @@
+//! Bytecode → SSA IR lowering pass.
+//!
+//! This module transforms stack-based bytecode into register-based SSA form.
+//! The algorithm:
+//! 1. Scan bytecode to identify basic block boundaries (jump targets, after jumps)
+//! 2. Abstract-interpret each instruction to track stack state
+//! 3. Convert stack operations to explicit value assignments
+//! 4. Insert phi nodes at CFG merge points
+
+use crate::ir::{
+    BasicBlock, BlockId, IrFunction, IrModule, IrOp, IrType, Literal, Terminator, ValueId,
+};
+use crate::vm::opcodes::OpCode;
+use crate::vm::value::JsValue;
+use std::collections::{HashMap, HashSet};
+
+/// Errors that can occur during lowering.
+#[derive(Debug)]
+pub enum LowerError {
+    /// Stack underflow during abstract interpretation
+    StackUnderflow,
+    /// Invalid jump target
+    InvalidJumpTarget(usize),
+    /// Unsupported opcode for lowering
+    UnsupportedOpcode(String),
+    /// Internal error
+    Internal(String),
+}
+
+impl std::fmt::Display for LowerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LowerError::StackUnderflow => write!(f, "Stack underflow during IR lowering"),
+            LowerError::InvalidJumpTarget(addr) => write!(f, "Invalid jump target: {}", addr),
+            LowerError::UnsupportedOpcode(op) => write!(f, "Unsupported opcode: {}", op),
+            LowerError::Internal(msg) => write!(f, "Internal error: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for LowerError {}
+
+/// Bytecode to SSA lowering context.
+pub struct Lowerer {
+    /// The function being built.
+    func: IrFunction,
+    /// Current basic block being populated.
+    current_block: BlockId,
+    /// Abstract stack: maps stack position to SSA value.
+    stack: Vec<ValueId>,
+    /// Mapping from instruction index to block ID (for jump targets).
+    instr_to_block: HashMap<usize, BlockId>,
+    /// Set of instruction indices that start a new basic block.
+    block_starts: HashSet<usize>,
+    /// Variable name to local slot mapping.
+    var_to_slot: HashMap<String, u32>,
+    /// Current value in each local slot (for SSA rename).
+    local_values: HashMap<u32, ValueId>,
+    /// Block entry states for phi node generation.
+    block_entry_stacks: HashMap<BlockId, Vec<ValueId>>,
+}
+
+impl Lowerer {
+    /// Create a new lowerer for a function.
+    pub fn new(name: String) -> Self {
+        let mut func = IrFunction::new(name);
+        let entry = func.alloc_block();
+
+        Self {
+            func,
+            current_block: entry,
+            stack: Vec::new(),
+            instr_to_block: HashMap::new(),
+            block_starts: HashSet::new(),
+            var_to_slot: HashMap::new(),
+            local_values: HashMap::new(),
+            block_entry_stacks: HashMap::new(),
+        }
+    }
+
+    /// Lower a sequence of bytecode instructions to SSA IR.
+    pub fn lower(mut self, instructions: &[OpCode]) -> Result<IrFunction, LowerError> {
+        // Pass 1: Identify basic block boundaries
+        self.find_block_boundaries(instructions);
+
+        // Pass 2: Create blocks for each boundary
+        self.create_blocks(instructions);
+
+        // Pass 3: Lower each instruction
+        self.lower_instructions(instructions)?;
+
+        // Pass 4: Compute predecessors and insert phi nodes
+        self.func.compute_predecessors();
+
+        Ok(self.func)
+    }
+
+    /// Find all instruction indices that start a new basic block.
+    fn find_block_boundaries(&mut self, instructions: &[OpCode]) {
+        // Entry block starts at 0
+        self.block_starts.insert(0);
+
+        for (i, op) in instructions.iter().enumerate() {
+            match op {
+                OpCode::Jump(target) => {
+                    // Target is a block start
+                    self.block_starts.insert(*target);
+                    // Instruction after jump is a block start (if exists)
+                    if i + 1 < instructions.len() {
+                        self.block_starts.insert(i + 1);
+                    }
+                }
+                OpCode::JumpIfFalse(target) => {
+                    // Both branch targets are block starts
+                    self.block_starts.insert(*target);
+                    // Fall-through is also a block start
+                    if i + 1 < instructions.len() {
+                        self.block_starts.insert(i + 1);
+                    }
+                }
+                OpCode::Return | OpCode::Halt => {
+                    // Instruction after terminator is a block start
+                    if i + 1 < instructions.len() {
+                        self.block_starts.insert(i + 1);
+                    }
+                }
+                OpCode::Call(_) | OpCode::CallMethod(_, _) => {
+                    // Calls can throw, so next instruction could be a catch block
+                    // For now, we don't split on calls
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Create basic blocks for each boundary.
+    fn create_blocks(&mut self, instructions: &[OpCode]) {
+        // Sort block starts for deterministic ordering
+        let mut starts: Vec<_> = self.block_starts.iter().copied().collect();
+        starts.sort();
+
+        // Entry block (index 0) is already created
+        self.instr_to_block.insert(0, BlockId(0));
+
+        // Create additional blocks
+        for &start in &starts {
+            if start != 0 && start < instructions.len() {
+                let block_id = self.func.alloc_block();
+                self.instr_to_block.insert(start, block_id);
+            }
+        }
+    }
+
+    /// Allocate a new SSA value with the given type.
+    fn alloc_value(&mut self, ty: IrType) -> ValueId {
+        self.func.alloc_value(ty)
+    }
+
+    /// Push a value onto the abstract stack.
+    fn push(&mut self, value: ValueId) {
+        self.stack.push(value);
+    }
+
+    /// Pop a value from the abstract stack.
+    fn pop(&mut self) -> Result<ValueId, LowerError> {
+        self.stack.pop().ok_or(LowerError::StackUnderflow)
+    }
+
+    /// Peek at the top of the stack without popping.
+    fn peek(&self) -> Result<ValueId, LowerError> {
+        self.stack.last().copied().ok_or(LowerError::StackUnderflow)
+    }
+
+    /// Emit an operation to the current block.
+    fn emit(&mut self, op: IrOp) {
+        self.func.block_mut(self.current_block).push(op);
+    }
+
+    /// Set the terminator for the current block.
+    fn terminate(&mut self, term: Terminator) {
+        self.func.block_mut(self.current_block).terminate(term);
+    }
+
+    /// Get or create a local slot for a variable.
+    fn get_or_create_local(&mut self, name: &str) -> u32 {
+        if let Some(&slot) = self.var_to_slot.get(name) {
+            slot
+        } else {
+            let slot = self.func.add_local(name.to_string(), IrType::Any);
+            self.var_to_slot.insert(name.to_string(), slot);
+            slot
+        }
+    }
+
+    /// Lower all instructions.
+    fn lower_instructions(&mut self, instructions: &[OpCode]) -> Result<(), LowerError> {
+        // Track stack state at each block entry for proper phi generation
+        let mut block_stacks: HashMap<BlockId, Vec<ValueId>> = HashMap::new();
+        block_stacks.insert(BlockId(0), Vec::new()); // Entry block starts with empty stack
+
+        // Pre-compute reachability by following control flow
+        let reachable_blocks = self.compute_reachable_blocks(instructions);
+
+        for (i, op) in instructions.iter().enumerate() {
+            // Check if we need to start a new block
+            if i > 0 && self.block_starts.contains(&i) {
+                let new_block = self.instr_to_block[&i];
+
+                // If current block doesn't have a terminator, add a jump and save stack
+                if matches!(
+                    self.func.block(self.current_block).terminator,
+                    Terminator::Unreachable
+                ) && reachable_blocks.contains(&self.current_block)
+                {
+                    self.terminate(Terminator::Jump(new_block));
+                    block_stacks
+                        .entry(new_block)
+                        .or_insert_with(|| self.stack.clone());
+                }
+
+                // Skip unreachable blocks (e.g., function bodies jumped over)
+                if !reachable_blocks.contains(&new_block) {
+                    self.current_block = new_block;
+                    self.stack.clear();
+                    continue;
+                }
+
+                // Restore stack state from saved entry (or use empty if not saved)
+                self.stack = block_stacks.get(&new_block).cloned().unwrap_or_default();
+                self.current_block = new_block;
+            }
+
+            // Skip if we're in an unreachable block
+            if !reachable_blocks.contains(&self.current_block) {
+                continue;
+            }
+
+            // Before lowering jumps, save target block stack state
+            match op {
+                OpCode::Jump(target) => {
+                    if let Some(&target_block) = self.instr_to_block.get(target) {
+                        block_stacks
+                            .entry(target_block)
+                            .or_insert_with(|| self.stack.clone());
+                    }
+                }
+                OpCode::JumpIfFalse(target) => {
+                    // Compute stack state after popping condition
+                    let stack_after_pop: Vec<_> = if !self.stack.is_empty() {
+                        self.stack[..self.stack.len() - 1].to_vec()
+                    } else {
+                        Vec::new()
+                    };
+
+                    // Save for false branch target
+                    if let Some(&target_block) = self.instr_to_block.get(target) {
+                        block_stacks
+                            .entry(target_block)
+                            .or_insert_with(|| stack_after_pop.clone());
+                    }
+
+                    // Save for fall-through (true branch)
+                    if let Some(&fall_through) = self.instr_to_block.get(&(i + 1)) {
+                        block_stacks.entry(fall_through).or_insert(stack_after_pop);
+                    }
+                }
+                _ => {}
+            }
+
+            self.lower_instruction(i, op)?;
+        }
+
+        // Save block entry stacks for phi generation
+        self.block_entry_stacks = block_stacks;
+
+        // If the last block doesn't have a terminator, add one
+        if matches!(
+            self.func.block(self.current_block).terminator,
+            Terminator::Unreachable
+        ) {
+            self.terminate(Terminator::Return(None));
+        }
+
+        Ok(())
+    }
+
+    /// Compute which blocks are reachable from entry by following control flow.
+    fn compute_reachable_blocks(&self, instructions: &[OpCode]) -> HashSet<BlockId> {
+        let mut reachable = HashSet::new();
+        let mut worklist = vec![0usize]; // Start from instruction 0
+        let mut visited_instrs = HashSet::new();
+
+        while let Some(ip) = worklist.pop() {
+            if ip >= instructions.len() || visited_instrs.contains(&ip) {
+                continue;
+            }
+            visited_instrs.insert(ip);
+
+            // Mark the block containing this instruction as reachable
+            if let Some(&block) = self.instr_to_block.get(&ip) {
+                reachable.insert(block);
+            } else if ip == 0 {
+                reachable.insert(BlockId(0));
+            }
+
+            match &instructions[ip] {
+                OpCode::Jump(target) => {
+                    worklist.push(*target);
+                }
+                OpCode::JumpIfFalse(target) => {
+                    worklist.push(*target);
+                    worklist.push(ip + 1); // Fall-through
+                }
+                OpCode::Return | OpCode::Halt => {
+                    // No successors
+                }
+                _ => {
+                    // Fall through to next instruction
+                    worklist.push(ip + 1);
+                }
+            }
+        }
+
+        reachable
+    }
+
+    /// Lower a single instruction.
+    fn lower_instruction(&mut self, idx: usize, op: &OpCode) -> Result<(), LowerError> {
+        match op {
+            OpCode::LoadThis => {
+                let dst = self.alloc_value(IrType::Object);
+                self.emit(IrOp::LoadThis(dst));
+                self.push(dst);
+            }
+
+            OpCode::Push(value) => {
+                let (lit, ty) = self.jsvalue_to_literal(value);
+                let dst = self.alloc_value(ty);
+                self.emit(IrOp::Const(dst, lit));
+                self.push(dst);
+            }
+
+            OpCode::Pop => {
+                self.pop()?;
+            }
+
+            OpCode::Dup => {
+                let top = self.peek()?;
+                self.push(top);
+            }
+
+            // Arithmetic operations (binary)
+            OpCode::Add => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::AddAny(dst, a, b));
+                self.push(dst);
+            }
+
+            OpCode::Sub => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::SubAny(dst, a, b));
+                self.push(dst);
+            }
+
+            OpCode::Mul => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::MulAny(dst, a, b));
+                self.push(dst);
+            }
+
+            OpCode::Div => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::DivAny(dst, a, b));
+                self.push(dst);
+            }
+
+            OpCode::Mod => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::ModAny(dst, a, b));
+                self.push(dst);
+            }
+
+            OpCode::Neg => {
+                let a = self.pop()?;
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::NegAny(dst, a));
+                self.push(dst);
+            }
+
+            // Comparison operations
+            OpCode::Eq | OpCode::EqEq => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                let dst = self.alloc_value(IrType::Boolean);
+                self.emit(IrOp::EqStrict(dst, a, b));
+                self.push(dst);
+            }
+
+            OpCode::Ne | OpCode::NeEq => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                let dst = self.alloc_value(IrType::Boolean);
+                self.emit(IrOp::NeStrict(dst, a, b));
+                self.push(dst);
+            }
+
+            OpCode::Lt => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                let dst = self.alloc_value(IrType::Boolean);
+                self.emit(IrOp::Lt(dst, a, b));
+                self.push(dst);
+            }
+
+            OpCode::LtEq => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                let dst = self.alloc_value(IrType::Boolean);
+                self.emit(IrOp::LtEq(dst, a, b));
+                self.push(dst);
+            }
+
+            OpCode::Gt => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                let dst = self.alloc_value(IrType::Boolean);
+                self.emit(IrOp::Gt(dst, a, b));
+                self.push(dst);
+            }
+
+            OpCode::GtEq => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                let dst = self.alloc_value(IrType::Boolean);
+                self.emit(IrOp::GtEq(dst, a, b));
+                self.push(dst);
+            }
+
+            // Logical operations
+            OpCode::Not => {
+                let a = self.pop()?;
+                let dst = self.alloc_value(IrType::Boolean);
+                self.emit(IrOp::Not(dst, a));
+                self.push(dst);
+            }
+
+            OpCode::And => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::And(dst, a, b));
+                self.push(dst);
+            }
+
+            OpCode::Or => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::Or(dst, a, b));
+                self.push(dst);
+            }
+
+            // Variable operations (name-based)
+            OpCode::Let(name) | OpCode::Store(name) => {
+                let val = self.pop()?;
+                let slot = self.get_or_create_local(name);
+                self.emit(IrOp::StoreLocal(slot, val));
+                self.local_values.insert(slot, val);
+            }
+
+            OpCode::Load(name) => {
+                let slot = self.get_or_create_local(name);
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::LoadLocal(dst, slot));
+                self.local_values.insert(slot, dst);
+                self.push(dst);
+            }
+
+            OpCode::Drop(_name) => {
+                // Drop is a no-op in SSA form
+            }
+
+            // Indexed local operations
+            OpCode::StoreLocal(slot) => {
+                let val = self.pop()?;
+                self.emit(IrOp::StoreLocal(*slot, val));
+                self.local_values.insert(*slot, val);
+            }
+
+            OpCode::LoadLocal(slot) => {
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::LoadLocal(dst, *slot));
+                self.local_values.insert(*slot, dst);
+                self.push(dst);
+            }
+
+            // Object operations
+            OpCode::NewObject => {
+                let dst = self.alloc_value(IrType::Object);
+                self.emit(IrOp::NewObject(dst));
+                self.push(dst);
+            }
+
+            OpCode::GetProp(name) => {
+                let obj = self.pop()?;
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::GetProp(dst, obj, name.clone()));
+                self.push(dst);
+            }
+
+            OpCode::SetProp(name) => {
+                let val = self.pop()?;
+                let obj = self.pop()?;
+                self.emit(IrOp::SetProp(obj, name.clone(), val));
+                // Push obj back for chaining
+                self.push(obj);
+            }
+
+            // Array operations
+            OpCode::NewArray(_size) => {
+                let dst = self.alloc_value(IrType::Array);
+                self.emit(IrOp::NewArray(dst));
+                self.push(dst);
+            }
+
+            OpCode::LoadElement => {
+                let idx = self.pop()?;
+                let arr = self.pop()?;
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::GetElement(dst, arr, idx));
+                self.push(dst);
+            }
+
+            OpCode::StoreElement => {
+                let val = self.pop()?;
+                let idx = self.pop()?;
+                let arr = self.pop()?;
+                self.emit(IrOp::SetElement(arr, idx, val));
+            }
+
+            // Control flow
+            OpCode::Jump(target) => {
+                let target_block = self
+                    .instr_to_block
+                    .get(target)
+                    .copied()
+                    .ok_or_else(|| LowerError::InvalidJumpTarget(*target))?;
+                self.terminate(Terminator::Jump(target_block));
+            }
+
+            OpCode::JumpIfFalse(target) => {
+                let cond = self.pop()?;
+                let false_block = self
+                    .instr_to_block
+                    .get(target)
+                    .copied()
+                    .ok_or_else(|| LowerError::InvalidJumpTarget(*target))?;
+
+                // True block is the fall-through (next instruction)
+                let true_block = self
+                    .instr_to_block
+                    .get(&(idx + 1))
+                    .copied()
+                    .ok_or_else(|| LowerError::InvalidJumpTarget(idx + 1))?;
+
+                self.terminate(Terminator::Branch(cond, true_block, false_block));
+            }
+
+            OpCode::Return => {
+                let ret_val = if self.stack.is_empty() {
+                    None
+                } else {
+                    Some(self.pop()?)
+                };
+                self.terminate(Terminator::Return(ret_val));
+            }
+
+            OpCode::Halt => {
+                self.terminate(Terminator::Return(None));
+            }
+
+            // Function calls
+            OpCode::Call(argc) => {
+                // Pop arguments in reverse order
+                let mut args = Vec::with_capacity(*argc);
+                for _ in 0..*argc {
+                    args.push(self.pop()?);
+                }
+                args.reverse();
+
+                // Pop function
+                let func_val = self.pop()?;
+
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::Call(dst, func_val, args));
+                self.push(dst);
+            }
+
+            OpCode::CallMethod(name, argc) => {
+                // VM pops receiver first (top of stack), then args below
+                // Stack: [..., arg0, arg1, ..., argN, receiver]
+                let obj = self.pop()?;
+
+                // Pop arguments (they're below the receiver on the stack)
+                let mut args = Vec::with_capacity(*argc);
+                for _ in 0..*argc {
+                    args.push(self.pop()?);
+                }
+                args.reverse();
+
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::CallMethod(dst, obj, name.clone(), args));
+                self.push(dst);
+            }
+
+            OpCode::MakeClosure(addr) => {
+                // Pop environment object
+                let env = self.pop()?;
+                let dst = self.alloc_value(IrType::Function);
+                self.emit(IrOp::MakeClosure(dst, *addr as u32, env));
+                self.push(dst);
+            }
+
+            OpCode::Construct(argc) => {
+                // Pop arguments
+                let mut args = Vec::with_capacity(*argc);
+                for _ in 0..*argc {
+                    args.push(self.pop()?);
+                }
+                args.reverse();
+
+                // Pop constructor
+                let ctor = self.pop()?;
+
+                // For now, treat construct as a call
+                let dst = self.alloc_value(IrType::Object);
+                self.emit(IrOp::Call(dst, ctor, args));
+                self.push(dst);
+            }
+
+            OpCode::Require => {
+                // Module require: pop path, push module
+                let path = self.pop()?;
+                let dst = self.alloc_value(IrType::Any);
+                // Treat as a global function call for now
+                self.emit(IrOp::LoadGlobal(dst, "require".to_string()));
+                let result = self.alloc_value(IrType::Any);
+                self.emit(IrOp::Call(result, dst, vec![path]));
+                self.push(result);
+            }
+
+            OpCode::Print => {
+                let val = self.pop()?;
+                // Emit as method call on console
+                let console = self.alloc_value(IrType::Object);
+                self.emit(IrOp::LoadGlobal(console, "console".to_string()));
+                let _result = self.alloc_value(IrType::Void);
+                self.emit(IrOp::CallMethod(
+                    _result,
+                    console,
+                    "log".to_string(),
+                    vec![val],
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Convert a JsValue to an IR literal.
+    fn jsvalue_to_literal(&self, value: &JsValue) -> (Literal, IrType) {
+        match value {
+            JsValue::Number(n) => (Literal::Number(*n), IrType::Number),
+            JsValue::String(s) => (Literal::String(s.clone()), IrType::String),
+            JsValue::Boolean(b) => (Literal::Boolean(*b), IrType::Boolean),
+            JsValue::Null => (Literal::Null, IrType::Any),
+            JsValue::Undefined => (Literal::Undefined, IrType::Any),
+            JsValue::Object(_) => (Literal::Null, IrType::Object), // Placeholder
+            JsValue::Function { address, .. } => {
+                // Functions are represented as a special constant
+                (Literal::Number(*address as f64), IrType::Function)
+            }
+            JsValue::NativeFunction(_) => (Literal::Null, IrType::Function),
+        }
+    }
+}
+
+/// Lower an entire bytecode module to SSA IR.
+pub fn lower_module(instructions: &[OpCode]) -> Result<IrModule, LowerError> {
+    let mut module = IrModule::new();
+
+    // For now, treat the entire bytecode as a single "main" function
+    // TODO: Detect function boundaries and lower separately
+    let lowerer = Lowerer::new("main".to_string());
+    let main_func = lowerer.lower(instructions)?;
+    module.add_function(main_func);
+
+    Ok(module)
+}
+
+/// Lower a single function's bytecode to SSA IR.
+pub fn lower_function(name: &str, instructions: &[OpCode]) -> Result<IrFunction, LowerError> {
+    let lowerer = Lowerer::new(name.to_string());
+    lowerer.lower(instructions)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_lower_simple_add() {
+        // Push 1, Push 2, Add, Return
+        let instructions = vec![
+            OpCode::Push(JsValue::Number(1.0)),
+            OpCode::Push(JsValue::Number(2.0)),
+            OpCode::Add,
+            OpCode::Return,
+        ];
+
+        let func = lower_function("test", &instructions).unwrap();
+
+        // Should have one block
+        assert_eq!(func.blocks.len(), 1);
+
+        // Print IR for debugging
+        println!("{}", func);
+
+        // Check operations
+        let block = &func.blocks[0];
+        assert!(block.ops.len() >= 3); // Two constants + add
+    }
+
+    #[test]
+    fn test_lower_conditional() {
+        // if (x < 10) { return 1 } else { return 2 }
+        let instructions = vec![
+            OpCode::Push(JsValue::Number(5.0)),
+            OpCode::Push(JsValue::Number(10.0)),
+            OpCode::Lt,
+            OpCode::JumpIfFalse(6), // Jump to else branch
+            OpCode::Push(JsValue::Number(1.0)),
+            OpCode::Return,
+            OpCode::Push(JsValue::Number(2.0)),
+            OpCode::Return,
+        ];
+
+        let func = lower_function("test", &instructions).unwrap();
+
+        // Should have 3 blocks: entry, then, else
+        assert!(func.blocks.len() >= 2);
+
+        println!("{}", func);
+    }
+
+    #[test]
+    fn test_lower_variable_access() {
+        // let x = 42; return x;
+        let instructions = vec![
+            OpCode::Push(JsValue::Number(42.0)),
+            OpCode::Let("x".to_string()),
+            OpCode::Load("x".to_string()),
+            OpCode::Return,
+        ];
+
+        let func = lower_function("test", &instructions).unwrap();
+
+        println!("{}", func);
+
+        // Should have local variable 'x'
+        assert_eq!(func.locals.len(), 1);
+        assert_eq!(func.locals[0].0, "x");
+    }
+
+    #[test]
+    fn test_lower_function_call() {
+        // foo(1, 2)
+        let instructions = vec![
+            OpCode::Push(JsValue::Function {
+                address: 100,
+                env: None,
+            }),
+            OpCode::Push(JsValue::Number(1.0)),
+            OpCode::Push(JsValue::Number(2.0)),
+            OpCode::Call(2),
+            OpCode::Return,
+        ];
+
+        let func = lower_function("test", &instructions).unwrap();
+
+        println!("{}", func);
+
+        // Should contain a Call operation
+        let has_call = func.blocks[0]
+            .ops
+            .iter()
+            .any(|op| matches!(op, IrOp::Call(_, _, _)));
+        assert!(has_call);
+    }
+
+    #[test]
+    fn test_lower_loop() {
+        // while (x < 10) { x = x + 1 }
+        // The Store opcode consumes the value, so no Pop needed after it
+        // 0: Push 0
+        // 1: Let x
+        // 2: Load x         <- loop header block
+        // 3: Push 10
+        // 4: Lt
+        // 5: JumpIfFalse 10 <- exit loop
+        // 6: Load x         <- loop body block
+        // 7: Push 1
+        // 8: Add
+        // 9: Store x
+        // 10: Jump 2        <- back to loop header
+        // 11: Halt          <- loop exit block
+        let instructions = vec![
+            OpCode::Push(JsValue::Number(0.0)),  // 0
+            OpCode::Let("x".to_string()),        // 1
+            OpCode::Load("x".to_string()),       // 2 - loop header
+            OpCode::Push(JsValue::Number(10.0)), // 3
+            OpCode::Lt,                          // 4
+            OpCode::JumpIfFalse(11),             // 5 - jump to exit
+            OpCode::Load("x".to_string()),       // 6 - loop body
+            OpCode::Push(JsValue::Number(1.0)),  // 7
+            OpCode::Add,                         // 8
+            OpCode::Store("x".to_string()),      // 9
+            OpCode::Jump(2),                     // 10 - back edge
+            OpCode::Halt,                        // 11 - exit
+        ];
+
+        let func = lower_function("test", &instructions).unwrap();
+
+        println!("{}", func);
+
+        // Should have multiple blocks due to the loop
+        assert!(func.blocks.len() >= 3);
+    }
+}
