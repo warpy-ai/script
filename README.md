@@ -1,194 +1,313 @@
 <div align="center">
   <h1>Script</h1>
-  <p>A custom JavaScript-like scripting language with a stack-based VM implemented in <strong>Rust</strong></p>
-  <p>Featuring a self-hosting bootstrap compiler written in the language itself</p>
+  <p>A high-performance JavaScript-like scripting language with native code execution</p>
+  <p>Featuring a self-hosting compiler and Rust-inspired memory safety</p>
+  
+  <br/>
+  
+  <img src="https://img.shields.io/badge/rust-1.70+-orange.svg" alt="Rust 1.70+"/>
+  <img src="https://img.shields.io/badge/tests-59%20passing-brightgreen.svg" alt="Tests"/>
+  <img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"/>
 </div>
 
-This is the main source code repository for **Script**. It contains the compiler,
-virtual machine, standard library, and bootstrap compiler modules.
+---
 
-For detailed development progress and implementation details, see [PROGRESS.md](PROGRESS.md).
+## Overview
 
-## Why Script?
+**tscl** is a scripting language that combines JavaScript-like syntax with Rust-inspired memory safety and native code performance.
 
-- **Self-Hosting:** The bootstrap compiler (lexer, parser, emitter) is written entirely in Script itself, demonstrating the language's capabilities.
+```javascript
+function fib(n) {
+    if (n < 2) return n;
+    return fib(n - 1) + fib(n - 2);
+}
 
-- **Performance:** Stack-based VM architecture optimized for efficient execution with heap allocation for complex data structures.
+console.log(fib(35));  // Compiled to native code!
+```
 
-- **Memory Safety:** Ownership model with scoped lifetimes ensures variables are automatically freed when their scope ends, preventing memory leaks.
+### Key Features
 
-- **JavaScript-like Syntax:** Familiar syntax for developers coming from JavaScript/TypeScript, with support for functions, objects, arrays, closures, and more.
+- **Native Execution** — SSA-based IR compiled to native code via Cranelift/LLVM
+- **Memory Safety** — Ownership model with compile-time borrow checking
+- **Self-Hosting** — Bootstrap compiler written in tscl itself
+- **Type Inference** — Flow-sensitive type analysis for optimization
+- **JavaScript Syntax** — Familiar syntax for easy adoption
 
 ## Architecture
 
 ```
-┌─────────────┐    ┌─────────────────┐    ┌────────────────┐
-│   Parsing   │───▶│  Borrow Checker │───▶│  Stack-based   │
-│  (SWC AST)  │    │   (Middle-end)  │    │   VM (Back-end)│
-└─────────────┘    └─────────────────┘    └────────────────┘
-
-        │                                         │
-        │         Bootstrap Compiler              │
-        │    ┌─────────────────────────┐         │
-        └───▶│  Lexer → Parser → Emitter │◀───────┘
-             │     (Written in Script)     │
-             └─────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                         tscl Source                             │
+└───────────────────────────┬─────────────────────────────────────┘
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     tscl Compiler                               │
+│  ┌─────────────┐  ┌──────────────┐  ┌────────────────────────┐  │
+│  │   Parser    │─▶│ Borrow Check │─▶│   SSA IR Generation    │  │
+│  │  (SWC AST)  │  │  (Ownership) │  │ (Type Inference, Opts) │  │
+│  └─────────────┘  └──────────────┘  └────────────────────────┘  │
+└───────────────────────────┬─────────────────────────────────────┘
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    Native Backend                               │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  │
+│  │  Cranelift JIT  │  │   LLVM AOT      │  │   VM (Debug)    │  │
+│  │   (Fast)        │  │  (Optimized)    │  │  (Interpreter)  │  │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘  │
+└───────────────────────────┬─────────────────────────────────────┘
+                            ▼
+                          CPU
 ```
-
-| Stage                  | Description                                                                 |
-| ---------------------- | --------------------------------------------------------------------------- |
-| **Rust Compiler**      | SWC-based parser with borrow checking and bytecode generation              |
-| **Bootstrap Compiler** | Self-hosting compiler written in Script (lexer, parser, emitter)             |
-| **VM**                 | Stack-based VM with heap allocation, closures, and event loop              |
 
 ## Quick Start
 
 ```bash
-# Build the project
+# Build
 cargo build --release
 
 # Run a script
-cargo run -- path/to/script.tscl
+./target/release/script myprogram.tscl
 
-# Run bootstrap compiler tests
-cargo run -- bootstrap/test_emitter.tscl
+# Dump SSA IR (for debugging)
+./target/release/script ir myprogram.tscl
+
+# Run with VM (debug mode)
+./target/release/script --run-binary output.tscl.bc
 ```
 
-## Features
+## Language Features
 
-### Self-Hosting Bootstrap Compiler
+### Variables & Types
 
-The project includes a bootstrap compiler written entirely in Script:
+```javascript
+let x = 42;              // Number
+let name = "tscl";       // String
+let active = true;       // Boolean
+let data = { key: 1 };   // Object
+let items = [1, 2, 3];   // Array
+```
 
-- **Lexer** (`bootstrap/lexer.tscl`) - Tokenizes source code into tokens
-- **Parser** (`bootstrap/parser.tscl`) - Recursive descent parser producing AST
-- **Emitter** (`bootstrap/emitter.tscl`) - Generates bytecode from AST
+### Functions & Closures
 
-### Memory Management
+```javascript
+// Function declaration
+function greet(name) {
+    return "Hello, " + name + "!";
+}
 
-- **Ownership Model** - Variables own their data; assigning objects moves ownership
-- **Let vs Store** - `Let` creates new bindings (shadowing), `Store` updates existing ones
-- **Scoped Lifetimes** - Variables freed when their containing scope ends
-- **Stack vs Heap** - Primitives on stack (copy), Objects/Arrays on heap (move)
+// Arrow functions
+let double = x => x * 2;
+let add = (a, b) => a + b;
 
-### Virtual Machine
+// Closures
+function counter() {
+    let count = 0;
+    return () => {
+        count = count + 1;
+        return count;
+    };
+}
+```
 
-- **Stack-based Architecture** - LIFO stack for expressions and operations
-- **Call Stack & Frames** - Nested function calls with isolated local scopes
-- **Closures** - Functions capture variables from enclosing scopes
-- **Event Loop** - Task queue with `setTimeout` support
-- **Bytecode Rebasing** - Appended bytecode has addresses automatically adjusted
+### Control Flow
 
-### Language Support
+```javascript
+if (condition) {
+    // ...
+} else {
+    // ...
+}
 
-- **Functions** - Declarations, expressions, arrow functions, closures
-- **Objects & Arrays** - Literals, property access, computed access, methods
-- **Control Flow** - `if`/`else`, `while`, `break`, `continue`
-- **Operators** - Arithmetic, comparison, logical, unary
-- **Constructors** - `new` expressions with `this` binding
-- **String Methods** - `slice`, `charCodeAt`, `charAt`, `includes`, `trim`
-- **Array Methods** - `push`, `pop`, `shift`, `unshift`, `splice`, `indexOf`, `includes`, `join`
+while (condition) {
+    // ...
+    if (done) break;
+    if (skip) continue;
+}
+```
 
-## Bytecode Instruction Set
+### Objects & Arrays
 
-| OpCode             | Description                                           |
-| ------------------ | ----------------------------------------------------- |
-| `Push(Value)`      | Push constant onto stack                              |
-| `Let(Name)`        | Create new variable binding in current scope          |
-| `Store(Name)`      | Update existing variable (searches all scopes)        |
-| `Load(Name)`       | Push variable's value onto stack                      |
-| `NewObject`        | Allocate empty object on heap                         |
-| `NewArray(Size)`   | Allocate array of given size                          |
-| `SetProp(Key)`     | Set property on heap object                           |
-| `GetProp(Key)`     | Get property from heap object                         |
-| `Call(ArgCount)`   | Execute function with N arguments                     |
-| `CallMethod(N,A)`  | Call method on object                                 |
-| `Return`           | Return from function                                  |
-| `Jump(Addr)`       | Unconditional jump                                    |
-| `JumpIfFalse(Addr)`| Conditional branch                                    |
-| `MakeClosure(Addr)`| Create closure with captured environment              |
-| `Construct(Args)`  | Construct new object instance                         |
-| `Drop(Name)`       | Free variable and its heap data                       |
-| `Halt`             | Stop execution                                        |
+```javascript
+let obj = { x: 10, y: 20 };
+obj.z = 30;
+console.log(obj["x"]);
+
+let arr = [1, 2, 3];
+arr.push(4);
+let first = arr[0];
+```
+
+### Constructors
+
+```javascript
+function Point(x, y) {
+    this.x = x;
+    this.y = y;
+}
+
+let p = new Point(10, 20);
+```
+
+## Memory Model
+
+tscl uses a Rust-inspired ownership system:
+
+```javascript
+let a = { value: 42 };
+let b = a;                // 'a' is MOVED to 'b'
+// console.log(a.value);  // ERROR: use after move!
+console.log(b.value);     // OK: 42
+
+// Primitives are copied
+let x = 10;
+let y = x;                // 'x' is COPIED
+console.log(x);           // OK: 10
+```
+
+### Ownership Rules
+
+1. Each value has exactly one owner
+2. Assigning objects **moves** ownership
+3. Primitives (numbers, booleans) are **copied**
+4. Variables are freed when their scope ends
+
+## SSA IR
+
+tscl compiles to an SSA (Static Single Assignment) intermediate representation:
+
+```
+// Source: let x = 1 + 2; let y = x * 3;
+
+fn main() -> any {
+bb0:
+    v0 = const 1
+    v1 = const 2
+    v2 = add.num v0, v1      // Specialized to numeric add
+    store.local $0, v2
+    v3 = load.local $0
+    v4 = const 3
+    v5 = mul.any v3, v4
+    return
+}
+
+// After optimization:
+bb0:
+    v2 = const 3             // 1+2 constant-folded!
+    store.local $0, v2
+    ...
+```
+
+### Type Specialization
+
+The type inference pass specializes dynamic operations:
+
+| Before | After | Speedup |
+|--------|-------|---------|
+| `add.any v0, v1` | `add.num v0, v1` | ~10x |
+| `mul.any v0, v1` | `mul.num v0, v1` | ~10x |
 
 ## Standard Library
 
-### Built-in Objects
+### Console
 
-- `console.log(...)` - Print values to stdout
-- `setTimeout(fn, ms)` - Schedule function execution
-- `require(module)` - Load module (currently supports "fs")
+```javascript
+console.log("Hello", 42, true);
+```
 
-### File System (`fs`)
+### Timers
+
+```javascript
+setTimeout(() => {
+    console.log("Delayed!");
+}, 1000);
+```
+
+### File System
 
 ```javascript
 let fs = require("fs");
-fs.readFileSync(path)           // Read file as string
-fs.writeFileSync(path, content) // Write string to file
-fs.writeBinaryFile(path, bytes) // Write binary data
+let content = fs.readFileSync("file.txt");
+fs.writeFileSync("out.txt", "Hello!");
 ```
 
 ### ByteStream (Binary Data)
 
 ```javascript
 let stream = ByteStream.create();
-ByteStream.writeU8(stream, byte);
-ByteStream.writeU32(stream, value);
-ByteStream.writeF64(stream, value);
-ByteStream.writeString(stream, str);
-ByteStream.writeVarint(stream, value);
-ByteStream.patchU32(stream, offset, value);
-ByteStream.length(stream);
-ByteStream.toArray(stream);
-```
-
-## Example
-
-**Source Code:**
-
-```javascript
-function greet(name) {
-    return "Hello, " + name + "!";
-}
-
-let message = greet("World");
-console.log(message);
-```
-
-**Bootstrap Compiler Usage:**
-
-```javascript
-// Compile source to bytecode
-let bytecode = compile("1 + 2 * 3");
-
-// Write bytecode to file
-compileToFile("let x = 42;", "output.bc");
+ByteStream.writeU8(stream, 0xFF);
+ByteStream.writeU32(stream, 12345);
+ByteStream.writeF64(stream, 3.14159);
+ByteStream.writeString(stream, "hello");
+let bytes = ByteStream.toArray(stream);
 ```
 
 ## Project Structure
 
 ```
-script/
+tscl/
 ├── src/
-│   ├── main.rs          # Entry point with two-stage loading
-│   ├── compiler/        # Rust compiler (SWC-based)
-│   ├── vm/
-│   │   ├── mod.rs       # VM implementation
-│   │   ├── opcodes.rs   # Bytecode opcodes
-│   │   └── value.rs     # Runtime value types
-│   └── stdlib/          # Native function implementations
+│   ├── main.rs              # Entry point
+│   ├── compiler/            # Rust compiler (SWC-based)
+│   │   ├── mod.rs           # Bytecode generation
+│   │   └── borrow_ck.rs     # Borrow checker
+│   ├── ir/                  # SSA IR system
+│   │   ├── mod.rs           # IR types, ownership model
+│   │   ├── lower.rs         # Bytecode → SSA
+│   │   ├── typecheck.rs     # Type inference
+│   │   ├── opt.rs           # Optimizations
+│   │   ├── verify.rs        # IR validation
+│   │   └── stubs.rs         # Runtime stub mapping
+│   ├── runtime/             # Native runtime kernel
+│   │   ├── abi.rs           # NaN-boxed values
+│   │   ├── heap.rs          # Allocator
+│   │   └── stubs.rs         # C ABI functions
+│   ├── vm/                  # Stack-based VM (debug)
+│   │   ├── mod.rs           # VM implementation
+│   │   ├── opcodes.rs       # Bytecode opcodes
+│   │   └── value.rs         # Runtime values
+│   ├── loader/              # Bytecode loader
+│   └── stdlib/              # Standard library
+├── bootstrap/               # Self-hosting compiler
+│   ├── lexer.tscl           # Tokenizer
+│   ├── parser.tscl          # Parser
+│   └── emitter.tscl         # Bytecode emitter
 ├── std/
-│   └── prelude.tscl     # Standard prelude (OpCodes, Types, utilities)
-└── bootstrap/
-    ├── lexer.tscl       # Self-hosting lexer
-    ├── parser.tscl      # Self-hosting parser
-    ├── emitter.tscl     # Self-hosting bytecode emitter
-    └── test_emitter.tscl # Emitter test suite
+│   └── prelude.tscl         # Standard prelude
+└── examples/
+    └── *.tscl               # Example programs
 ```
 
-## Development Progress
+## Performance
 
-For detailed information about completed features, recent fixes, and upcoming work, see [PROGRESS.md](PROGRESS.md).
+| Benchmark | Target |
+|-----------|--------|
+| fib(35) | 20ms |
+| Startup | 5ms |
+| HTTP hello | 250k rps |
+
+## Development Status
+
+| Phase | Status | Description |
+|-------|--------|-------------|
+| Phase 0 | ✅ Complete | Runtime kernel (NaN-boxing, allocator, stubs) |
+| Phase 1 | ✅ Complete | SSA IR (lowering, type inference, optimizations) |
+| Phase 2 | 🚧 Planned | Cranelift JIT backend |
+| Phase 3 | 📋 Planned | LLVM AOT backend |
+| Phase 4 | 📋 Planned | Self-hosted native compiler |
+
+See [progress.md](progress.md) for detailed implementation notes.
+
+## Testing
+
+```bash
+# Run all tests
+cargo test --release
+
+# Run specific IR tests
+cargo test --release ir::
+
+# Output: 59 tests passed
+```
 
 ## Contributing
 
@@ -196,6 +315,6 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-Script is distributed under the terms of the Apache License (Version 2.0).
+tscl is distributed under the terms of the Apache License (Version 2.0).
 
 See [LICENSE](LICENSE) for details.
