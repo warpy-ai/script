@@ -1014,6 +1014,8 @@ pub struct IrModule {
     pub mono_cache: HashMap<(usize, Vec<IrType>), MonoFuncId>,
     /// Next mono func ID.
     next_mono_id: u32,
+    /// Mapping from bytecode address to function index (for extracted functions).
+    pub function_addrs: HashMap<usize, usize>,
 }
 
 impl IrModule {
@@ -1025,7 +1027,18 @@ impl IrModule {
             next_struct_id: 0,
             mono_cache: HashMap::new(),
             next_mono_id: 0,
+            function_addrs: HashMap::new(),
         }
+    }
+    
+    /// Get a function by its bytecode address.
+    pub fn get_function_by_addr(&self, addr: usize) -> Option<&IrFunction> {
+        self.function_addrs.get(&addr).and_then(|&idx| self.functions.get(idx))
+    }
+    
+    /// Get the function index for a bytecode address.
+    pub fn get_function_idx_by_addr(&self, addr: usize) -> Option<usize> {
+        self.function_addrs.get(&addr).copied()
     }
 
     /// Add a function and return its index.

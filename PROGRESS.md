@@ -210,6 +210,7 @@ Outputs:
 | `src/backend/cranelift.rs` | IR → Cranelift IR translation |
 | `src/backend/jit.rs` | JIT compilation and execution runtime |
 | `src/backend/aot.rs` | AOT compilation scaffold (future) |
+| `src/backend/tier.rs` | Tiered compilation manager |
 
 ### Backend Architecture
 ```rust
@@ -270,17 +271,127 @@ impl JitRuntime {
 | Variables | `LoadLocal`, `StoreLocal`, `LoadGlobal`, `StoreGlobal` |
 | Objects | `NewObject`, `GetProp`, `SetProp`, `GetElement`, `SetElement` |
 | Arrays | `NewArray`, `ArrayLen`, `ArrayPush` |
-| Control | `Jump`, `Branch`, `Return` |
+| Control | `Jump`, `Branch`, `Return`, `Phi` |
+| Functions | `Call` (direct calls with constant propagation) |
+| Closures | `MakeClosure` (basic implementation) |
 | Borrow | `Borrow`, `BorrowMut`, `Deref`, `DerefStore`, `EndBorrow` |
 | Structs | `StructNew`, `StructGetField`, `StructSetField` |
 
-### Future Work (Phase 2B-Beta/Gamma)
-- [ ] Function calls (`Call`, `CallMethod`, `CallMono`)
-- [ ] Closure creation (`MakeClosure`)
-- [ ] Phi node handling for SSA merge points
+---
+
+## Phase 2B-Beta: Complete Native Backend ✅
+
+**Goal:** Enable function calls, closures, phi nodes, and tiered compilation.
+
+### Files Modified/Created
+| File | Purpose |
+|------|---------|
+| `src/ir/lower.rs` | Function extraction, parameter detection, jump rebasing |
+| `src/backend/cranelift.rs` | Multi-function compilation, call resolution, phi handling |
+| `src/backend/tier.rs` | Tiered compilation manager (new) |
+| `src/runtime/stubs.rs` | `tscl_make_closure` stub |
+| `src/vm/mod.rs` | Execution counters for hotspot detection |
+| `src/main.rs` | `bench` command for performance comparison |
+
+### Function Extraction
+Inline function definitions in bytecode are now extracted as separate IR functions:
+```
+Bytecode:
+[0] Push(Function { address: 3, env: None })
+[1] Let("fib")
+[2] Jump(23)   <- Skips function body
+[3] Let("n")   <- Function body starts here
+...
+[22] Return
+[23] ...       <- Main code continues
+
+IR Result:
+fn func_3(n: any) { ... }   <- Extracted function
+fn main() { ... }           <- Main with call to func_3
+```
+
+### Multi-Function Compilation
+- All functions declared before compilation (enables inter-function calls)
+- Function IDs tracked for cross-reference
+- Proper signature handling for parameters
+
+### Call Resolution
+```rust
+// Constant propagation tracks function addresses
+v0 = const 3        // Function address
+store.local $0, v0
+v2 = load.local $0  // v2 now known to be func_3
+v3 = call v2(v1)    // Direct call to compiled func_3
+```
+
+### Phi Node Handling
+Cranelift uses block parameters instead of explicit phi nodes:
+```rust
+// IR phi node:
+bb2: phi v5 = [(bb0, v1), (bb1, v3)]
+
+// Cranelift translation:
+bb2(v5: i64):           // Block parameter
+  ...
+bb0: jump bb2(v1)       // Pass v1 as argument
+bb1: jump bb2(v3)       // Pass v3 as argument
+```
+
+### Tiered Compilation Infrastructure
+```rust
+pub struct TierManager {
+    baseline_threshold: u64,    // Default: 100 calls
+    optimizing_threshold: u64,  // Default: 1000 calls
+    function_stats: HashMap<usize, FunctionStats>,
+    compiled_functions: HashMap<usize, *const u8>,
+}
+```
+
+### Execution Counters
+```rust
+// VM tracks function call counts
+impl VM {
+    pub function_call_counts: HashMap<usize, u64>,
+    pub fn record_function_call(&mut self, func_addr: usize);
+    pub fn get_hot_functions(&self, threshold: u64) -> Vec<(usize, u64)>;
+}
+```
+
+### Performance Benchmarks
+
+```bash
+./target/release/script bench examples/bench_arithmetic.tscl
+```
+
+Results:
+```
+=== Summary ===
+VM:        2.34 µs/iter
+JIT:       0.39 µs/iter
+JIT compilation:  980 µs
+
+JIT is 5.98x faster than VM
+Break-even point: 503 iterations
+```
+
+### Known Limitations
+- **Recursive self-reference:** Functions that call themselves by name (like `fib`) require proper closure capture, which is not yet implemented. The function's own name is in the outer scope and not accessible from the extracted function.
+- **Workaround:** Pass function as explicit parameter or use Y-combinator style
+
+### CLI Commands
+```bash
+# Run with JIT compilation
+./target/release/script jit <filename>
+
+# Benchmark VM vs JIT
+./target/release/script bench <filename>
+```
+
+### Future Work (Phase 2B-Gamma)
+- [ ] Closure capture for self-referencing functions
 - [ ] String literal allocation
 - [ ] LLVM AOT backend
-- [ ] Performance benchmarks vs VM
+- [ ] On-stack replacement (OSR)
 
 ---
 
@@ -387,7 +498,7 @@ impl JitRuntime {
 ## Test Results
 
 ```
-91 tests passed, 0 failed
+94 tests passed, 0 failed
 ```
 
 All tests cover:
@@ -408,18 +519,23 @@ All tests cover:
 - **Backend:** Function compilation (constants, arithmetic)
 - **Backend:** Memory layout calculation
 - **Backend:** AOT target detection
+- **Backend:** Function extraction and multi-function compilation
+- **Backend:** Call resolution (direct calls)
+- **Backend:** Phi node handling via block parameters
+- **Backend:** Tiered compilation manager
 
 ---
 
 ## Next Steps
 
-### Phase 2B-Beta: Complete Native Backend
+### Phase 2B-Beta: Complete Native Backend ✅
 - [x] Integrate Cranelift as JIT backend
 - [x] Implement basic codegen (constants, arithmetic, locals)
-- [ ] Implement function calls and closures
-- [ ] Implement phi node handling
-- [ ] Add tiered compilation (interpreter → JIT → optimizing JIT)
-- [ ] Performance benchmarks vs VM
+- [x] Implement function calls (direct calls with constant propagation)
+- [x] Implement phi node handling (block parameters)
+- [x] Add tiered compilation infrastructure
+- [x] Performance benchmarks vs VM (JIT is ~6x faster)
+- [ ] Closure capture for self-referencing functions (recursion)
 
 ### Phase 2B-Gamma: AOT & Optimization
 - [ ] LLVM backend for AOT compilation
@@ -443,6 +559,5 @@ All tests cover:
 - [ ] ES6 classes
 - [ ] Import/export modules
 - [ ] Async/await
-- [ ] Garbage collection
 - [ ] Source maps
 - [ ] REPL

@@ -13,7 +13,7 @@
 //! - Pointers to arrays use *const u64
 
 use super::abi::TsclValue;
-use super::heap::{heap, NativeArray, NativeObject, NativeString, ObjectHeader, ObjectKind};
+use super::heap::{NativeArray, NativeObject, NativeString, ObjectHeader, ObjectKind, heap};
 use std::collections::HashMap;
 
 // =========================================================================
@@ -350,19 +350,25 @@ pub extern "C" fn tscl_mod_any(a: u64, b: u64) -> u64 {
 /// Dynamic strict equality (===).
 #[unsafe(no_mangle)]
 pub extern "C" fn tscl_eq_strict(a: u64, b: u64) -> u64 {
-    TsclValue::from_bits(a).strict_eq(TsclValue::from_bits(b)).to_bits()
+    TsclValue::from_bits(a)
+        .strict_eq(TsclValue::from_bits(b))
+        .to_bits()
 }
 
 /// Dynamic less-than comparison.
 #[unsafe(no_mangle)]
 pub extern "C" fn tscl_lt(a: u64, b: u64) -> u64 {
-    TsclValue::from_bits(a).lt(TsclValue::from_bits(b)).to_bits()
+    TsclValue::from_bits(a)
+        .lt(TsclValue::from_bits(b))
+        .to_bits()
 }
 
 /// Dynamic greater-than comparison.
 #[unsafe(no_mangle)]
 pub extern "C" fn tscl_gt(a: u64, b: u64) -> u64 {
-    TsclValue::from_bits(a).gt(TsclValue::from_bits(b)).to_bits()
+    TsclValue::from_bits(a)
+        .gt(TsclValue::from_bits(b))
+        .to_bits()
 }
 
 /// Logical NOT.
@@ -459,6 +465,28 @@ pub extern "C" fn tscl_call(_func: u64, _argc: usize, _argv: *const u64) -> u64 
 // Console/IO Stubs
 // =========================================================================
 
+/// Create a closure object that pairs a function address with an environment.
+///
+/// # Parameters
+/// - `func_addr`: The function's bytecode address (as a number)
+/// - `env`: Environment object containing captured variables
+///
+/// # Returns
+/// A closure object (pointer to heap-allocated closure data).
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_make_closure(func_addr: u64, env: u64) -> u64 {
+    // For now, just return the function address as a simple closure
+    // A full implementation would:
+    // 1. Allocate a closure object on the heap
+    // 2. Store func_addr and env in the closure
+    // 3. Return a pointer to the closure
+
+    // Simplified: pack func_addr in the low bits, treat as pointer
+    // This works because we're using NaN-boxing and func_addr fits
+    let _ = env; // Environment not used in simplified version
+    TsclValue::number(func_addr as f64).to_bits()
+}
+
 /// Print a value to the console.
 #[unsafe(no_mangle)]
 pub extern "C" fn tscl_console_log(value: u64) {
@@ -479,13 +507,23 @@ fn value_to_string(val: TsclValue) -> String {
             return "NaN".to_string();
         }
         if n.is_infinite() {
-            return if n.is_sign_positive() { "Infinity" } else { "-Infinity" }.to_string();
+            return if n.is_sign_positive() {
+                "Infinity"
+            } else {
+                "-Infinity"
+            }
+            .to_string();
         }
         return format!("{}", n);
     }
 
     if val.is_boolean() {
-        return if val.as_boolean_unchecked() { "true" } else { "false" }.to_string();
+        return if val.as_boolean_unchecked() {
+            "true"
+        } else {
+            "false"
+        }
+        .to_string();
     }
 
     if val.is_null() {
@@ -544,11 +582,22 @@ mod tests {
         let a = TsclValue::number(10.0).to_bits();
         let b = TsclValue::number(3.0).to_bits();
 
-        assert_eq!(TsclValue::from_bits(tscl_add_any(a, b)).as_number(), Some(13.0));
-        assert_eq!(TsclValue::from_bits(tscl_sub_any(a, b)).as_number(), Some(7.0));
-        assert_eq!(TsclValue::from_bits(tscl_mul_any(a, b)).as_number(), Some(30.0));
+        assert_eq!(
+            TsclValue::from_bits(tscl_add_any(a, b)).as_number(),
+            Some(13.0)
+        );
+        assert_eq!(
+            TsclValue::from_bits(tscl_sub_any(a, b)).as_number(),
+            Some(7.0)
+        );
+        assert_eq!(
+            TsclValue::from_bits(tscl_mul_any(a, b)).as_number(),
+            Some(30.0)
+        );
 
-        let div = TsclValue::from_bits(tscl_div_any(a, b)).as_number().unwrap();
+        let div = TsclValue::from_bits(tscl_div_any(a, b))
+            .as_number()
+            .unwrap();
         assert!((div - 3.333333).abs() < 0.001);
     }
 

@@ -105,6 +105,7 @@ fn main() {
         eprintln!("  check <filename>     Check a .tscl file for errors (for LSP)");
         eprintln!("  ir <filename>        Dump SSA IR for a .tscl file");
         eprintln!("  jit <filename>       Run a .tscl file with JIT compilation");
+        eprintln!("  bench <filename>     Benchmark VM vs JIT for a .tscl file");
         eprintln!("  <filename>           Run a .tscl file (VM interpreter)");
         eprintln!("  --run-binary <file>  Run a bytecode file (.bc)");
         return;
@@ -142,6 +143,17 @@ fn main() {
         }
         let filename = &args[2];
         run_jit(filename);
+        return;
+    }
+
+    // Handle "bench" command for benchmarking
+    if command == "bench" {
+        if args.len() < 3 {
+            eprintln!("Usage: {} bench <filename>", args[0]);
+            std::process::exit(1);
+        }
+        let filename = &args[2];
+        run_benchmark(filename);
         return;
     }
 
@@ -377,13 +389,18 @@ fn run_jit(filename: &str) {
         println!("[{:3}] {:?}", i, op);
     }
 
-    // Lower to SSA IR
-    let lowerer = ir::lower::Lowerer::new("main".to_string());
-    match lowerer.lower(&bytecode) {
-        Ok(mut func) => {
-            // Create module
-            let mut module = ir::IrModule::new();
-            module.add_function(func);
+    // Lower to SSA IR (using lower_module to extract all functions)
+    match ir::lower::lower_module(&bytecode) {
+        Ok(mut module) => {
+            // Show extracted functions
+            if module.functions.len() > 1 {
+                println!("\n=== Extracted Functions ===");
+                for (i, func) in module.functions.iter().enumerate() {
+                    if func.name != "main" {
+                        println!("  [{}] {} ({} blocks)", i, func.name, func.blocks.len());
+                    }
+                }
+            }
 
             // Run type inference
             ir::typecheck::typecheck_module(&mut module);
@@ -409,6 +426,13 @@ fn run_jit(filename: &str) {
                 Ok(()) => {
                     println!("JIT compilation successful!");
 
+                    // Show compiled functions
+                    let funcs = runtime.get_all_funcs();
+                    println!("Compiled {} functions:", funcs.len());
+                    for name in funcs.keys() {
+                        println!("  - {}", name);
+                    }
+
                     // Try to call main
                     println!("\n=== Execution ===");
                     match runtime.call_main() {
@@ -430,5 +454,154 @@ fn run_jit(filename: &str) {
             eprintln!("IR lowering failed: {}", e);
             std::process::exit(1);
         }
+    }
+}
+
+/// Run a benchmark comparing VM vs JIT performance
+fn run_benchmark(filename: &str) {
+    use crate::backend::{BackendConfig, jit::JitRuntime};
+    use std::time::Instant;
+
+    let source = match fs::read_to_string(filename) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to read {}: {}", filename, e);
+            std::process::exit(1);
+        }
+    };
+
+    // Determine syntax based on file extension
+    let syntax = if filename.ends_with(".ts") || filename.ends_with(".tsx") {
+        Some(Syntax::Typescript(Default::default()))
+    } else if filename.ends_with(".js") || filename.ends_with(".jsx") {
+        Some(Syntax::Es(Default::default()))
+    } else {
+        Some(Syntax::Typescript(Default::default()))
+    };
+
+    // Compile to bytecode
+    let mut compiler = Compiler::new();
+    let bytecode = match compiler.compile_with_syntax(&source, syntax) {
+        Ok(bc) => bc,
+        Err(e) => {
+            eprintln!("Compilation failed: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    println!("=== Benchmark: {} ===\n", filename);
+
+    const ITERATIONS: u32 = 100;
+
+    // Benchmark VM (without prelude for fair comparison)
+    // Note: For VM, we replace top-level Return with Halt to keep the frame intact
+    println!("VM Interpreter ({} iterations):", ITERATIONS);
+    let mut vm_bytecode = bytecode.clone();
+    // Replace the last Return before Halt with just letting execution continue
+    for i in 0..vm_bytecode.len() {
+        if matches!(vm_bytecode[i], crate::vm::opcodes::OpCode::Return)
+            && i + 1 < vm_bytecode.len()
+            && matches!(vm_bytecode[i + 1], crate::vm::opcodes::OpCode::Halt)
+        {
+            // The return value is already on the stack - just skip to Halt
+            vm_bytecode[i] = crate::vm::opcodes::OpCode::Halt;
+            break;
+        }
+    }
+
+    let mut vm_results = Vec::new();
+    let vm_start = Instant::now();
+    for _ in 0..ITERATIONS {
+        let mut vm = VM::new_bare(); // Use bare VM without stdlib for benchmark
+        vm.load_program(vm_bytecode.clone());
+        vm.run_until_halt();
+        // Get the result (top of stack or undefined)
+        let result = vm
+            .stack
+            .pop()
+            .unwrap_or(crate::vm::value::JsValue::Undefined);
+        vm_results.push(result);
+    }
+    let vm_duration = vm_start.elapsed();
+    println!("  Total time: {:?}", vm_duration);
+    println!("  Per iteration: {:?}", vm_duration / ITERATIONS);
+    if let Some(result) = vm_results.first() {
+        println!("  Result: {:?}", result);
+    }
+
+    // Benchmark JIT
+    println!("\nJIT Compilation:");
+
+    // Lower to IR
+    let module = match ir::lower::lower_module(&bytecode) {
+        Ok(mut m) => {
+            ir::typecheck::typecheck_module(&mut m);
+            ir::opt::optimize_module(&mut m);
+            m
+        }
+        Err(e) => {
+            eprintln!("  IR lowering failed: {}", e);
+            return;
+        }
+    };
+
+    // JIT compile
+    let config = BackendConfig::default();
+    let mut runtime = match JitRuntime::new(&config) {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("  Failed to create JIT runtime: {}", e);
+            return;
+        }
+    };
+
+    let compile_start = Instant::now();
+    if let Err(e) = runtime.compile(&module) {
+        eprintln!("  JIT compilation failed: {}", e);
+        return;
+    }
+    let compile_duration = compile_start.elapsed();
+    println!("  Compilation time: {:?}", compile_duration);
+
+    // Run JIT
+    println!("\nJIT Execution ({} iterations):", ITERATIONS);
+    let mut jit_results = Vec::new();
+    let jit_start = Instant::now();
+    for _ in 0..ITERATIONS {
+        match runtime.call_main() {
+            Ok(result) => jit_results.push(result),
+            Err(e) => {
+                eprintln!("  Execution error: {}", e);
+                break;
+            }
+        }
+    }
+    let jit_duration = jit_start.elapsed();
+    println!("  Total time: {:?}", jit_duration);
+    println!("  Per iteration: {:?}", jit_duration / ITERATIONS);
+    if let Some(result) = jit_results.first() {
+        println!("  Result: {:?}", result);
+    }
+
+    // Summary
+    println!("\n=== Summary ===");
+    let vm_per_iter = vm_duration.as_nanos() as f64 / ITERATIONS as f64;
+    let jit_per_iter = jit_duration.as_nanos() as f64 / ITERATIONS as f64;
+    let speedup = vm_per_iter / jit_per_iter;
+
+    println!("VM:  {:>10.2} µs/iter", vm_per_iter / 1000.0);
+    println!("JIT: {:>10.2} µs/iter", jit_per_iter / 1000.0);
+    println!("JIT compilation: {:>10.2} µs", compile_duration.as_micros());
+
+    if speedup > 1.0 {
+        println!("\nJIT is {:.2}x faster than VM", speedup);
+    } else {
+        println!("\nVM is {:.2}x faster than JIT", 1.0 / speedup);
+    }
+
+    // Break-even analysis
+    let break_even = compile_duration.as_nanos() as f64 / (vm_per_iter - jit_per_iter).max(1.0);
+    if speedup > 1.0 {
+        println!("Break-even point: {:.0} iterations", break_even);
     }
 }

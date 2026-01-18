@@ -78,6 +78,21 @@ impl Lowerer {
         }
     }
 
+    /// Create a new lowerer for an extracted function with parameters.
+    pub fn new_with_params(name: String, param_names: &[String]) -> Self {
+        let mut lowerer = Self::new(name);
+
+        // Add parameters to the function and pre-populate the stack
+        for param_name in param_names {
+            let param_val = lowerer.alloc_value(IrType::Any);
+            lowerer.func.params.push((param_name.clone(), IrType::Any));
+            // Pre-populate stack with parameter values (they'll be popped by Let)
+            lowerer.stack.push(param_val);
+        }
+
+        lowerer
+    }
+
     /// Lower a sequence of bytecode instructions to SSA IR.
     pub fn lower(mut self, instructions: &[OpCode]) -> Result<IrFunction, LowerError> {
         // Pass 1: Identify basic block boundaries
@@ -586,20 +601,24 @@ impl Lowerer {
             }
 
             OpCode::Halt => {
-                self.terminate(Terminator::Return(None));
+                // If there's a value on the stack, return it (for REPL-style scripts)
+                let ret_val = if self.stack.is_empty() {
+                    None
+                } else {
+                    Some(self.pop()?)
+                };
+                self.terminate(Terminator::Return(ret_val));
             }
 
             // Function calls
             OpCode::Call(argc) => {
+                let func_val = self.pop()?;
                 // Pop arguments in reverse order
                 let mut args = Vec::with_capacity(*argc);
                 for _ in 0..*argc {
                     args.push(self.pop()?);
                 }
                 args.reverse();
-
-                // Pop function
-                let func_val = self.pop()?;
 
                 let dst = self.alloc_value(IrType::Any);
                 self.emit(IrOp::Call(dst, func_val, args));
@@ -695,17 +714,186 @@ impl Lowerer {
     }
 }
 
+/// Information about an extracted function from bytecode.
+#[derive(Debug, Clone)]
+pub struct ExtractedFunction {
+    /// Bytecode address where the function starts.
+    pub address: usize,
+    /// Bytecode address where the function ends (inclusive).
+    pub end_address: usize,
+    /// Whether this function captures variables (closure).
+    pub has_env: bool,
+    /// Number of parameters (detected from leading Let instructions).
+    pub param_count: usize,
+    /// Parameter names.
+    pub param_names: Vec<String>,
+}
+
 /// Lower an entire bytecode module to SSA IR.
 pub fn lower_module(instructions: &[OpCode]) -> Result<IrModule, LowerError> {
     let mut module = IrModule::new();
 
-    // For now, treat the entire bytecode as a single "main" function
-    // TODO: Detect function boundaries and lower separately
+    // Step 1: Extract all function definitions from bytecode
+    let extracted_funcs = extract_functions(instructions);
+
+    // Step 2: Lower each extracted function
+    for func_info in &extracted_funcs {
+        let func_bytecode = &instructions[func_info.address..=func_info.end_address];
+        let func_name = format!("func_{}", func_info.address);
+
+        // Lower with parameter info and base address for rebasing jump targets
+        match lower_extracted_function(
+            &func_name,
+            func_bytecode,
+            &func_info.param_names,
+            func_info.address,
+        ) {
+            Ok(ir_func) => {
+                module.add_function(ir_func);
+            }
+            Err(e) => {
+                // Log but continue - some functions may have issues
+                eprintln!("Warning: Failed to lower func_{}: {}", func_info.address, e);
+            }
+        }
+    }
+
+    // Step 3: Lower the main code (treating skipped function bodies as jumps)
     let lowerer = Lowerer::new("main".to_string());
     let main_func = lowerer.lower(instructions)?;
     module.add_function(main_func);
 
+    // Store function address mappings in the module
+    for (i, func_info) in extracted_funcs.iter().enumerate() {
+        module.function_addrs.insert(func_info.address, i);
+    }
+
     Ok(module)
+}
+
+/// Lower an extracted function with known parameters.
+fn lower_extracted_function(
+    name: &str,
+    instructions: &[OpCode],
+    param_names: &[String],
+    base_addr: usize,
+) -> Result<IrFunction, LowerError> {
+    // Rebase jump targets to be relative to the function start
+    let rebased = rebase_jump_targets(instructions, base_addr);
+    let lowerer = Lowerer::new_with_params(name.to_string(), param_names);
+    lowerer.lower(&rebased)
+}
+
+/// Rebase jump targets in bytecode to be relative to a base address.
+/// For extracted functions, base_addr is the function's start address.
+fn rebase_jump_targets(instructions: &[OpCode], base_addr: usize) -> Vec<OpCode> {
+    instructions
+        .iter()
+        .map(|op| match op {
+            OpCode::Jump(target) => {
+                let rebased = target.saturating_sub(base_addr);
+                OpCode::Jump(rebased)
+            }
+            OpCode::JumpIfFalse(target) => {
+                let rebased = target.saturating_sub(base_addr);
+                OpCode::JumpIfFalse(rebased)
+            }
+            other => other.clone(),
+        })
+        .collect()
+}
+
+/// Extract function definitions from bytecode.
+///
+/// Detects patterns like:
+/// ```text
+/// Push(Function { address: X, env: ... })
+/// Let("name") or Store("name")
+/// Jump(Y)  <- Jumps over the function body
+/// [X] Let("param1")  <- Parameter binding
+/// [X+1] Let("param2")  <- Another parameter
+/// ... function body ...
+/// [Y-1] Return
+/// [Y] ... main code continues ...
+/// ```
+fn extract_functions(instructions: &[OpCode]) -> Vec<ExtractedFunction> {
+    let mut functions = Vec::new();
+
+    for (_i, op) in instructions.iter().enumerate() {
+        if let OpCode::Push(JsValue::Function { address, env }) = op {
+            // Find the end of this function (the Return before the next main code)
+            if let Some(end_addr) = find_function_end(*address, instructions) {
+                // Detect parameters: consecutive Let instructions at function start
+                let (param_count, param_names) = detect_function_params(*address, instructions);
+
+                functions.push(ExtractedFunction {
+                    address: *address,
+                    end_address: end_addr,
+                    has_env: env.is_some(),
+                    param_count,
+                    param_names,
+                });
+            }
+        }
+    }
+
+    // Sort by address and deduplicate
+    functions.sort_by_key(|f| f.address);
+    functions.dedup_by_key(|f| f.address);
+
+    functions
+}
+
+/// Detect function parameters from leading Let instructions.
+/// Returns (count, names).
+fn detect_function_params(start: usize, instructions: &[OpCode]) -> (usize, Vec<String>) {
+    let mut params = Vec::new();
+
+    for i in start..instructions.len() {
+        match &instructions[i] {
+            OpCode::Let(name) => {
+                params.push(name.clone());
+            }
+            _ => break, // Stop at first non-Let instruction
+        }
+    }
+
+    (params.len(), params)
+}
+
+/// Find the end address of a function body.
+///
+/// A function ends at the last Return instruction before we hit either:
+/// - Another function's body
+/// - Code that jumps back into the main flow
+fn find_function_end(start: usize, instructions: &[OpCode]) -> Option<usize> {
+    let mut last_return = None;
+
+    for i in start..instructions.len() {
+        match &instructions[i] {
+            OpCode::Return => {
+                last_return = Some(i);
+                // Check if next instruction might be different function or main code
+                if i + 1 < instructions.len() {
+                    // If next op is a new Let after Return, this is likely end of function
+                    if let OpCode::Push(JsValue::Function { .. }) =
+                        &instructions[i.saturating_sub(1).max(start)]
+                    {
+                        // Nested function - keep going
+                        continue;
+                    }
+                }
+            }
+            OpCode::Halt => {
+                // Halt means end of program - function must end before this
+                return last_return;
+            }
+            _ => {}
+        }
+    }
+
+    // If we reach the end without finding a clear boundary, use last Return
+    last_return
 }
 
 /// Lower a single function's bytecode to SSA IR.

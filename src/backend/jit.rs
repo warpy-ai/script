@@ -30,16 +30,17 @@ impl JitRuntime {
         })
     }
 
+    pub fn get_func_ptr(&self, name: &str) -> Option<*const u8> {
+        self.codegen.get_func(name)
+    }
+
     /// Compile an IR module
     pub fn compile(&mut self, module: &IrModule) -> Result<(), BackendError> {
-        // Compile each function in the module
-        for func in &module.functions {
-            let ptr = self.codegen.compile_function(func)?;
-            let name = if func.name.is_empty() {
-                "anonymous".to_string()
-            } else {
-                func.name.clone()
-            };
+        // Use the new compile_module method for proper inter-function call support
+        self.codegen.compile_module(module)?;
+
+        // Copy compiled function pointers
+        for (name, ptr) in self.codegen.get_all_funcs() {
             self.compiled_funcs.insert(name, ptr);
         }
 
@@ -98,7 +99,7 @@ impl JitRuntime {
             _ => {
                 return Err(BackendError::JitError(
                     "Too many arguments (max 3 supported)".into(),
-                ))
+                ));
             }
         };
 
@@ -106,7 +107,7 @@ impl JitRuntime {
     }
 
     /// Execute a simple numeric function for benchmarking
-    /// 
+    ///
     /// This is a convenience method for testing numeric computations
     /// like fibonacci.
     pub fn call_numeric(&self, name: &str, arg: f64) -> Result<f64, BackendError> {
@@ -188,7 +189,8 @@ mod tests {
         let v0 = func.alloc_value(IrType::Number);
         func.block_mut(entry)
             .push(IrOp::Const(v0, Literal::Number(42.0)));
-        func.block_mut(entry).terminate(Terminator::Return(Some(v0)));
+        func.block_mut(entry)
+            .terminate(Terminator::Return(Some(v0)));
 
         let mut module = IrModule::new();
         module.add_function(func);
@@ -227,7 +229,8 @@ mod tests {
         // v2 = v0 + v1
         let v2 = func.alloc_value(IrType::Number);
         func.block_mut(entry).push(IrOp::AddNum(v2, v0, v1));
-        func.block_mut(entry).terminate(Terminator::Return(Some(v2)));
+        func.block_mut(entry)
+            .terminate(Terminator::Return(Some(v2)));
 
         let mut module = IrModule::new();
         module.add_function(func);

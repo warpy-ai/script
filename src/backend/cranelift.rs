@@ -17,7 +17,7 @@ use std::collections::HashMap;
 
 use super::layout::VALUE_SIZE;
 use super::{BackendConfig, BackendError};
-use crate::ir::{BasicBlock, BlockId, IrFunction, IrOp, Literal, Terminator, ValueId};
+use crate::ir::{BasicBlock, BlockId, IrFunction, IrModule, IrOp, Literal, Terminator, ValueId};
 
 /// Cranelift code generator
 pub struct CraneliftCodegen {
@@ -40,14 +40,14 @@ impl CraneliftCodegen {
     pub fn new(config: &BackendConfig) -> Result<Self, BackendError> {
         // Create JIT builder with appropriate settings for the platform
         let mut flag_builder = settings::builder();
-        
+
         // Disable PLT on aarch64 since it's not supported in cranelift-jit 0.113
         flag_builder.set("use_colocated_libcalls", "true").unwrap();
         flag_builder.set("is_pic", "false").unwrap();
-        
+
         let isa_builder = cranelift_native::builder()
             .map_err(|e| BackendError::Cranelift(format!("Failed to create ISA builder: {}", e)))?;
-        
+
         let isa = isa_builder
             .finish(settings::Flags::new(flag_builder))
             .map_err(|e| BackendError::Cranelift(format!("Failed to create ISA: {}", e)))?;
@@ -109,6 +109,10 @@ impl CraneliftCodegen {
 
         // Console/IO stubs
         builder.symbol("tscl_console_log", tscl_console_log as *const u8);
+        builder.symbol("tscl_call", tscl_call as *const u8);
+
+        // Closure stubs
+        builder.symbol("tscl_make_closure", tscl_make_closure as *const u8);
     }
 
     /// Declare a runtime stub function in the module
@@ -127,14 +131,100 @@ impl CraneliftCodegen {
         let id = self
             .module
             .declare_function(name, Linkage::Import, &sig)
-            .map_err(|e| BackendError::Cranelift(format!("Failed to declare stub {}: {}", name, e)))?;
+            .map_err(|e| {
+                BackendError::Cranelift(format!("Failed to declare stub {}: {}", name, e))
+            })?;
 
         self.stubs.insert(name.to_string(), id);
         Ok(id)
     }
 
-    /// Compile a single function
-    pub fn compile_function(&mut self, func: &IrFunction) -> Result<*const u8, BackendError> {
+    /// Compile an entire IR module (all functions at once)
+    ///
+    /// This is the preferred method as it allows inter-function calls to be resolved.
+    pub fn compile_module(&mut self, ir_module: &IrModule) -> Result<(), BackendError> {
+        // Step 1: Declare all functions first (so we can reference them from each other)
+        let mut func_ids: HashMap<String, FuncId> = HashMap::new();
+        let mut func_sigs: HashMap<String, Signature> = HashMap::new();
+
+        for func in &ir_module.functions {
+            let func_name = if func.name.is_empty() {
+                "anonymous".to_string()
+            } else {
+                func.name.clone()
+            };
+
+            // Create function signature
+            let mut sig = self.module.make_signature();
+            for _ in &func.params {
+                sig.params.push(AbiParam::new(types::I64));
+            }
+            sig.returns.push(AbiParam::new(types::I64));
+
+            let func_id = self
+                .module
+                .declare_function(&func_name, Linkage::Export, &sig)
+                .map_err(|e| {
+                    BackendError::Cranelift(format!(
+                        "Failed to declare function {}: {}",
+                        func_name, e
+                    ))
+                })?;
+
+            func_ids.insert(func_name.clone(), func_id);
+            func_sigs.insert(func_name, sig);
+        }
+
+        // Step 2: Compile each function
+        for func in &ir_module.functions {
+            let func_name = if func.name.is_empty() {
+                "anonymous".to_string()
+            } else {
+                func.name.clone()
+            };
+
+            self.ctx.clear();
+            self.ctx.func.signature = func_sigs[&func_name].clone();
+
+            // Build the function body with access to all declared functions
+            {
+                let mut builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_ctx);
+                translate_function(&mut builder, &mut self.module, func, ir_module, &func_ids)?;
+                builder.finalize();
+            }
+
+            // Define the function
+            let func_id = func_ids[&func_name];
+            self.module
+                .define_function(func_id, &mut self.ctx)
+                .map_err(|e| {
+                    BackendError::Cranelift(format!(
+                        "Failed to compile function {}: {}",
+                        func_name, e
+                    ))
+                })?;
+        }
+
+        // Step 3: Finalize all definitions
+        self.module
+            .finalize_definitions()
+            .map_err(|e| BackendError::Cranelift(format!("Failed to finalize: {}", e)))?;
+
+        // Step 4: Get function pointers
+        for (name, func_id) in &func_ids {
+            let ptr = self.module.get_finalized_function(*func_id);
+            self.compiled_funcs.insert(name.clone(), ptr);
+        }
+
+        Ok(())
+    }
+
+    /// Compile a single function (legacy method - use compile_module for better inter-function calls)
+    pub fn compile_function(
+        &mut self,
+        func: &IrFunction,
+        ir_module: &IrModule,
+    ) -> Result<*const u8, BackendError> {
         // Clear previous context
         self.ctx.clear();
 
@@ -167,10 +257,11 @@ impl CraneliftCodegen {
 
         // Build the function body
         {
-            let mut builder =
-                FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_ctx);
+            let mut builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_ctx);
 
-            translate_function(&mut builder, &mut self.module, func)?;
+            // Create empty func_ids map for single-function compilation
+            let func_ids = HashMap::new();
+            translate_function(&mut builder, &mut self.module, func, ir_module, &func_ids)?;
 
             builder.finalize();
         }
@@ -183,9 +274,9 @@ impl CraneliftCodegen {
             })?;
 
         // Finalize and get the function pointer
-        self.module.finalize_definitions().map_err(|e| {
-            BackendError::Cranelift(format!("Failed to finalize: {}", e))
-        })?;
+        self.module
+            .finalize_definitions()
+            .map_err(|e| BackendError::Cranelift(format!("Failed to finalize: {}", e)))?;
 
         let ptr = self.module.get_finalized_function(func_id);
         self.compiled_funcs.insert(func_name.to_string(), ptr);
@@ -209,18 +300,47 @@ fn translate_function(
     builder: &mut FunctionBuilder,
     module: &mut JITModule,
     ir_func: &IrFunction,
+    ir_module: &IrModule,
+    func_ids: &HashMap<String, FuncId>,
 ) -> Result<(), BackendError> {
     let mut ctx = TranslationContext {
         values: HashMap::new(),
         blocks: HashMap::new(),
         locals: Vec::new(),
         stubs: HashMap::new(),
+        module_func_ids: func_ids.clone(),
+        ir_module_ref: ir_module,
+        constants: HashMap::new(),
+        local_stores: HashMap::new(),
+        phi_params: HashMap::new(),
+        block_phis: HashMap::new(),
     };
 
     // Create Cranelift blocks for each IR block
     for block in &ir_func.blocks {
         let cl_block = builder.create_block();
         ctx.blocks.insert(block.id, cl_block);
+    }
+
+    // Scan for phi nodes and set up block parameters
+    for block in &ir_func.blocks {
+        let cl_block = ctx.blocks[&block.id];
+        let mut param_idx = 0;
+        let mut phis = Vec::new();
+
+        for op in &block.ops {
+            if let IrOp::Phi(dst, entries) = op {
+                // Add a block parameter for this phi
+                builder.append_block_param(cl_block, types::I64);
+                ctx.phi_params.insert(*dst, (block.id, param_idx));
+                phis.push((*dst, entries.clone()));
+                param_idx += 1;
+            }
+        }
+
+        if !phis.is_empty() {
+            ctx.block_phis.insert(block.id, phis);
+        }
     }
 
     // Create stack slots for locals
@@ -233,14 +353,17 @@ fn translate_function(
         ctx.locals.push(slot);
     }
 
-    // Set up entry block with parameters
+    // Set up entry block with function parameters
     let entry_block = ctx.blocks[&BlockId(0)];
     builder.switch_to_block(entry_block);
     builder.append_block_params_for_function_params(entry_block);
 
-    // Map parameters to values
+    // Map function parameters to values (skip phi params which are handled separately)
+    let func_param_count = ir_func.params.len();
     let params = builder.block_params(entry_block).to_vec();
-    for (i, param) in params.iter().enumerate() {
+    // The last func_param_count params are function params (phi params come first)
+    let phi_param_count = params.len().saturating_sub(func_param_count);
+    for (i, param) in params.iter().skip(phi_param_count).enumerate() {
         ctx.values.insert(ValueId(i as u32), *param);
     }
 
@@ -249,6 +372,16 @@ fn translate_function(
         if i > 0 {
             let cl_block = ctx.blocks[&block.id];
             builder.switch_to_block(cl_block);
+
+            // Map phi block parameters to values
+            let block_params = builder.block_params(cl_block).to_vec();
+            if let Some(phis) = ctx.block_phis.get(&block.id) {
+                for (idx, (dst, _)) in phis.iter().enumerate() {
+                    if idx < block_params.len() {
+                        ctx.values.insert(*dst, block_params[idx]);
+                    }
+                }
+            }
         }
 
         translate_block(builder, module, &mut ctx, block)?;
@@ -261,7 +394,7 @@ fn translate_function(
 }
 
 /// Translation context holding state during function translation
-struct TranslationContext {
+struct TranslationContext<'a> {
     /// Map from IR ValueId to Cranelift Value
     values: HashMap<ValueId, Value>,
     /// Map from IR BlockId to Cranelift Block
@@ -270,6 +403,18 @@ struct TranslationContext {
     locals: Vec<StackSlot>,
     /// Declared stubs in this function
     stubs: HashMap<String, FuncRef>,
+    /// Map of module function names to their FuncId (for direct calls)
+    module_func_ids: HashMap<String, FuncId>,
+    /// Reference to the IR module for function lookups
+    ir_module_ref: &'a IrModule,
+    /// Track constant values for call resolution
+    constants: HashMap<ValueId, Literal>,
+    /// Track local slot contents (ValueId that was stored)
+    local_stores: HashMap<u32, ValueId>,
+    /// Phi node mappings: (dst ValueId) -> (block param index in target block)
+    phi_params: HashMap<ValueId, (BlockId, usize)>,
+    /// Phi entries for each block: BlockId -> Vec<(dst, entries)>
+    block_phis: HashMap<BlockId, Vec<(ValueId, Vec<(BlockId, ValueId)>)>>,
 }
 
 /// Translate a single basic block
@@ -284,8 +429,8 @@ fn translate_block(
         translate_op(builder, module, ctx, op)?;
     }
 
-    // Translate terminator
-    translate_terminator(builder, ctx, &block.terminator)?;
+    // Translate terminator, passing current block ID for phi argument resolution
+    translate_terminator(builder, ctx, &block.terminator, block.id)?;
 
     Ok(())
 }
@@ -302,6 +447,8 @@ fn translate_op(
         IrOp::Const(dst, lit) => {
             let val = translate_literal(builder, lit);
             ctx.values.insert(*dst, val);
+            // Track the literal for call resolution
+            ctx.constants.insert(*dst, lit.clone());
         }
 
         // === Specialized Numeric Operations (inline) ===
@@ -469,18 +616,30 @@ fn translate_op(
 
         // === Local Variable Operations ===
         IrOp::LoadLocal(dst, slot) => {
-            let stack_slot = ctx.locals.get(*slot as usize).ok_or_else(|| {
-                BackendError::Cranelift(format!("Invalid local slot: {}", slot))
-            })?;
+            let stack_slot = ctx
+                .locals
+                .get(*slot as usize)
+                .ok_or_else(|| BackendError::Cranelift(format!("Invalid local slot: {}", slot)))?;
             let val = builder.ins().stack_load(types::I64, *stack_slot, 0);
             ctx.values.insert(*dst, val);
+
+            // Propagate constant if the local was stored with a constant
+            if let Some(&src_val) = ctx.local_stores.get(slot) {
+                if let Some(lit) = ctx.constants.get(&src_val) {
+                    ctx.constants.insert(*dst, lit.clone());
+                }
+            }
         }
 
         IrOp::StoreLocal(slot, src) => {
             let val = get_value(ctx, *src)?;
-            let stack_slot = ctx.locals.get(*slot as usize).ok_or_else(|| {
-                BackendError::Cranelift(format!("Invalid local slot: {}", slot))
-            })?;
+            let stack_slot = ctx
+                .locals
+                .get(*slot as usize)
+                .ok_or_else(|| BackendError::Cranelift(format!("Invalid local slot: {}", slot)))?;
+
+            // Track which ValueId was stored in this slot
+            ctx.local_stores.insert(*slot, *src);
             builder.ins().stack_store(val, *stack_slot, 0);
         }
 
@@ -519,13 +678,20 @@ fn translate_op(
         }
 
         IrOp::SetElement(obj, idx, val) => {
-            call_stub(builder, module, ctx, "tscl_set_element", &[*obj, *idx, *val])?;
+            call_stub(
+                builder,
+                module,
+                ctx,
+                "tscl_set_element",
+                &[*obj, *idx, *val],
+            )?;
         }
 
         // === Array Operations ===
         IrOp::NewArray(dst) => {
             let capacity = builder.ins().iconst(types::I64, 8);
-            let result = call_stub_with_values(builder, module, ctx, "tscl_alloc_array", &[capacity])?;
+            let result =
+                call_stub_with_values(builder, module, ctx, "tscl_alloc_array", &[capacity])?;
             ctx.values.insert(*dst, result);
         }
 
@@ -541,7 +707,10 @@ fn translate_op(
         }
 
         // === Copy/Move Operations ===
-        IrOp::Copy(dst, src) | IrOp::Move(dst, src) | IrOp::Borrow(dst, src) | IrOp::BorrowMut(dst, src) => {
+        IrOp::Copy(dst, src)
+        | IrOp::Move(dst, src)
+        | IrOp::Borrow(dst, src)
+        | IrOp::BorrowMut(dst, src) => {
             let val = get_value(ctx, *src)?;
             ctx.values.insert(*dst, val);
         }
@@ -596,23 +765,62 @@ fn translate_op(
 
         // === Phi Functions ===
         IrOp::Phi(dst, _entries) => {
-            // Phi nodes are handled by Cranelift's SSA construction
-            // For now, just use undefined
-            let undefined = translate_literal(builder, &Literal::Undefined);
-            ctx.values.insert(*dst, undefined);
+            // Phi nodes are handled via block parameters
+            // The value was already mapped when we switched to this block
+            // If not present (shouldn't happen), use undefined as fallback
+            if !ctx.values.contains_key(dst) {
+                let undefined = translate_literal(builder, &Literal::Undefined);
+                ctx.values.insert(*dst, undefined);
+            }
         }
 
         // === Function Operations ===
-        IrOp::Call(dst, _func, _args) => {
-            // TODO: Implement function calls
-            let undefined = translate_literal(builder, &Literal::Undefined);
-            ctx.values.insert(*dst, undefined);
+        IrOp::Call(dst, func_val, args) => {
+            let arg_values: Vec<Value> = args
+                .iter()
+                .map(|id| get_value(ctx, *id))
+                .collect::<Result<_, _>>()?;
+
+            // Try to resolve the function address for a direct call
+            let func_addr = resolve_function_address(ctx, *func_val);
+
+            if let Some(addr) = func_addr {
+                // Look up the function by bytecode address
+                let func_name = format!("func_{}", addr);
+
+                if let Some(&func_id) = ctx.module_func_ids.get(&func_name) {
+                    // Make a direct call to the compiled function
+                    let func_ref = module.declare_func_in_func(func_id, builder.func);
+
+                    let call = builder.ins().call(func_ref, &arg_values);
+                    let results = builder.inst_results(call);
+                    if results.is_empty() {
+                        // Function returns void, use undefined
+                        let undefined = translate_literal(builder, &Literal::Undefined);
+                        ctx.values.insert(*dst, undefined);
+                    } else {
+                        ctx.values.insert(*dst, results[0]);
+                    }
+                } else {
+                    // Function not found - use runtime stub
+                    let func_ptr = get_value(ctx, *func_val)?;
+                    let result =
+                        call_indirect_function(builder, module, ctx, func_ptr, &arg_values)?;
+                    ctx.values.insert(*dst, result);
+                }
+            } else {
+                // Dynamic call - use runtime stub
+                let func_ptr = get_value(ctx, *func_val)?;
+                let result = call_indirect_function(builder, module, ctx, func_ptr, &arg_values)?;
+                ctx.values.insert(*dst, result);
+            }
         }
 
-        IrOp::CallMethod(dst, _obj, _name, _args) => {
-            // TODO: Implement method calls
-            let undefined = translate_literal(builder, &Literal::Undefined);
-            ctx.values.insert(*dst, undefined);
+        IrOp::CallMethod(dst, obj, name, args) => {
+            let obj_val = get_value(ctx, *obj)?;
+
+            let result = call_stub(builder, module, ctx, "tscl_call", &[*obj])?;
+            ctx.values.insert(*dst, result);
         }
 
         IrOp::CallMono(dst, _mono_id, _args) => {
@@ -621,10 +829,21 @@ fn translate_op(
             ctx.values.insert(*dst, undefined);
         }
 
-        IrOp::MakeClosure(dst, _addr, _env) => {
-            // TODO: Implement closure creation
-            let undefined = translate_literal(builder, &Literal::Undefined);
-            ctx.values.insert(*dst, undefined);
+        IrOp::MakeClosure(dst, addr, env) => {
+            // Create a closure by packing the function address and environment
+            let func_addr = builder.ins().iconst(types::I64, *addr as i64);
+            let env_val = get_value(ctx, *env)?;
+
+            // Call tscl_make_closure(func_addr, env) to create the closure object
+            let result = call_stub_with_values(
+                builder,
+                module,
+                ctx,
+                "tscl_make_closure",
+                &[func_addr, env_val],
+            )?;
+
+            ctx.values.insert(*dst, result);
         }
 
         IrOp::LoadThis(dst) => {
@@ -670,11 +889,13 @@ fn translate_terminator(
     builder: &mut FunctionBuilder,
     ctx: &TranslationContext,
     term: &Terminator,
+    current_block: BlockId,
 ) -> Result<(), BackendError> {
     match term {
         Terminator::Jump(target) => {
             let block = ctx.blocks[target];
-            builder.ins().jump(block, &[]);
+            let phi_args = get_phi_args_for_jump(ctx, *target, current_block)?;
+            builder.ins().jump(block, &phi_args);
         }
 
         Terminator::Branch(cond, true_block, false_block) => {
@@ -686,7 +907,12 @@ fn translate_terminator(
             let true_bl = ctx.blocks[true_block];
             let false_bl = ctx.blocks[false_block];
 
-            builder.ins().brif(is_truthy, true_bl, &[], false_bl, &[]);
+            let true_args = get_phi_args_for_jump(ctx, *true_block, current_block)?;
+            let false_args = get_phi_args_for_jump(ctx, *false_block, current_block)?;
+
+            builder
+                .ins()
+                .brif(is_truthy, true_bl, &true_args, false_bl, &false_args);
         }
 
         Terminator::Return(val) => {
@@ -698,11 +924,48 @@ fn translate_terminator(
         }
 
         Terminator::Unreachable => {
-            builder.ins().trap(TrapCode::user(0).unwrap());
+            builder
+                .ins()
+                .trap(TrapCode::user(1).expect("TrapCode::user(1) should always be valid"));
         }
     }
 
     Ok(())
+}
+
+/// Get the phi argument values for a jump to target_block from current_block.
+fn get_phi_args_for_jump(
+    ctx: &TranslationContext,
+    target_block: BlockId,
+    current_block: BlockId,
+) -> Result<Vec<Value>, BackendError> {
+    let mut args = Vec::new();
+
+    if let Some(phis) = ctx.block_phis.get(&target_block) {
+        for (_dst, entries) in phis {
+            // Find the entry for the current block
+            let value = entries
+                .iter()
+                .find(|(from_block, _)| *from_block == current_block)
+                .map(|(_, val)| get_value(ctx, *val))
+                .transpose()?
+                .unwrap_or_else(|| translate_literal_static(&Literal::Undefined));
+
+            args.push(value);
+        }
+    }
+
+    Ok(args)
+}
+
+/// Translate a literal to a constant value (for use in contexts without builder)
+fn translate_literal_static(lit: &Literal) -> Value {
+    // This is a placeholder - we need a builder to create values
+    // In practice, phi nodes should always have an entry for the current block
+    panic!(
+        "translate_literal_static called - phi node missing entry for current block. Literal: {:?}",
+        lit
+    );
 }
 
 /// Translate a literal to a Cranelift value
@@ -750,6 +1013,57 @@ fn get_value(ctx: &TranslationContext, id: ValueId) -> Result<Value, BackendErro
         .ok_or_else(|| BackendError::Cranelift(format!("Undefined value: {:?}", id)))
 }
 
+/// Try to resolve a function address from a ValueId.
+/// Returns Some(address) if the value is a constant function address.
+fn resolve_function_address(ctx: &TranslationContext, func_val: ValueId) -> Option<usize> {
+    // Check if this value is a known constant
+    if let Some(lit) = ctx.constants.get(&func_val) {
+        match lit {
+            Literal::Number(n) => {
+                let addr = *n as usize;
+                // Verify this is a known function
+                if ctx.ir_module_ref.function_addrs.contains_key(&addr) {
+                    return Some(addr);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+/// Call a function indirectly using the tscl_call runtime stub.
+fn call_indirect_function(
+    builder: &mut FunctionBuilder,
+    module: &mut JITModule,
+    ctx: &mut TranslationContext,
+    func_ptr: Value,
+    args: &[Value],
+) -> Result<Value, BackendError> {
+    // For now, return undefined since tscl_call is not fully implemented
+    // TODO: Implement proper indirect calls
+
+    // Prepare arguments array if needed
+    if args.is_empty() {
+        // Simple case: no arguments
+        let argc = builder.ins().iconst(types::I64, 0);
+        let null_ptr = builder.ins().iconst(types::I64, 0);
+        call_stub_with_values(
+            builder,
+            module,
+            ctx,
+            "tscl_call",
+            &[func_ptr, argc, null_ptr],
+        )
+    } else {
+        // For now, just return undefined for calls with arguments
+        // Full implementation would set up argument array
+        let undefined = translate_literal(builder, &Literal::Undefined);
+        Ok(undefined)
+    }
+}
+
 /// Call a runtime stub with IR value IDs as arguments
 fn call_stub(
     builder: &mut FunctionBuilder,
@@ -787,7 +1101,9 @@ fn call_stub_with_values(
 
         let func_id = module
             .declare_function(name, Linkage::Import, &sig)
-            .map_err(|e| BackendError::Cranelift(format!("Failed to declare stub {}: {}", name, e)))?;
+            .map_err(|e| {
+                BackendError::Cranelift(format!("Failed to declare stub {}: {}", name, e))
+            })?;
 
         let func_ref = module.declare_func_in_func(func_id, builder.func);
         ctx.stubs.insert(name.to_string(), func_ref);
@@ -795,7 +1111,16 @@ fn call_stub_with_values(
     };
 
     let call = builder.ins().call(func_ref, args);
-    let result = builder.inst_results(call)[0];
+    let results = builder.inst_results(call);
+
+    if results.is_empty() {
+        return Err(BackendError::Cranelift(format!(
+            "Call to stub {} returned empty result",
+            name
+        )));
+    }
+
+    let result = results[0];
     Ok(result)
 }
 
@@ -813,7 +1138,9 @@ fn call_stub_no_args(
 fn bool_to_tscl_value(builder: &mut FunctionBuilder, b: Value) -> Value {
     const QNAN: u64 = 0x7FFC_0000_0000_0000;
     const TAG_BOOLEAN: u64 = 0x0001_0000_0000_0000;
-    let base = builder.ins().iconst(types::I64, (QNAN | TAG_BOOLEAN) as i64);
+    let base = builder
+        .ins()
+        .iconst(types::I64, (QNAN | TAG_BOOLEAN) as i64);
     let b_i64 = builder.ins().uextend(types::I64, b);
     builder.ins().bor(base, b_i64)
 }

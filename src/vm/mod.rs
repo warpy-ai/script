@@ -47,11 +47,23 @@ pub struct VM {
     pub program: Vec<OpCode>,
     pub modules: HashMap<String, JsValue>,
     pub ip: usize, // Instruction Pointer
+    /// Execution counters for each function (address -> call count).
+    /// Used for tiered compilation to identify hot functions.
+    pub function_call_counts: HashMap<usize, u64>,
+    /// Total number of instructions executed (for profiling).
+    pub total_instructions: u64,
 }
 
 impl VM {
     pub fn new() -> Self {
-        let mut vm = Self {
+        let mut vm = Self::new_bare();
+        vm.setup_stdlib();
+        vm
+    }
+    
+    /// Create a new VM without stdlib (for benchmarking).
+    pub fn new_bare() -> Self {
+        Self {
             stack: Vec::new(),
             call_stack: vec![Frame {
                 return_address: 0,
@@ -66,9 +78,34 @@ impl VM {
             program: Vec::new(),
             modules: HashMap::new(),
             ip: 0,
-        };
-        vm.setup_stdlib();
-        vm
+            function_call_counts: HashMap::new(),
+            total_instructions: 0,
+        }
+    }
+    
+    /// Record a function call for profiling/tiered compilation.
+    pub fn record_function_call(&mut self, func_addr: usize) {
+        *self.function_call_counts.entry(func_addr).or_insert(0) += 1;
+    }
+    
+    /// Get the call count for a function.
+    pub fn get_call_count(&self, func_addr: usize) -> u64 {
+        self.function_call_counts.get(&func_addr).copied().unwrap_or(0)
+    }
+    
+    /// Get all function call counts (for identifying hot functions).
+    pub fn get_hot_functions(&self, threshold: u64) -> Vec<(usize, u64)> {
+        self.function_call_counts
+            .iter()
+            .filter(|&(_, &count)| count >= threshold)
+            .map(|(&addr, &count)| (addr, count))
+            .collect()
+    }
+    
+    /// Reset profiling counters.
+    pub fn reset_counters(&mut self) {
+        self.function_call_counts.clear();
+        self.total_instructions = 0;
     }
 
     pub fn setup_stdlib(&mut self) {
@@ -487,6 +524,9 @@ impl VM {
 
                 match callee {
                     JsValue::Function { address, env } => {
+                        // Record function call for tiered compilation
+                        self.record_function_call(address);
+                        
                         args.reverse();
                         for arg in &args {
                             self.stack.push(arg.clone());

@@ -8,11 +8,13 @@
 //! - `cranelift.rs` - IR to Cranelift IR translation
 //! - `jit.rs` - JIT compilation and execution runtime
 //! - `aot.rs` - Ahead-of-time compilation pipeline (future)
+//! - `tier.rs` - Tiered compilation manager
 
 pub mod aot;
 pub mod cranelift;
 pub mod jit;
 pub mod layout;
+pub mod tier;
 
 use crate::ir::IrModule;
 
