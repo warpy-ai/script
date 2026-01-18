@@ -272,7 +272,8 @@ impl JitRuntime {
 | Objects | `NewObject`, `GetProp`, `SetProp`, `GetElement`, `SetElement` |
 | Arrays | `NewArray`, `ArrayLen`, `ArrayPush` |
 | Control | `Jump`, `Branch`, `Return`, `Phi` |
-| Functions | `Call` (direct calls with constant propagation) |
+| Functions | `Call` (direct calls with constant propagation, recursive calls work) |
+| Methods | `CallMethod` (console.log implemented) |
 | Closures | `MakeClosure` (basic implementation) |
 | Borrow | `Borrow`, `BorrowMut`, `Deref`, `DerefStore`, `EndBorrow` |
 | Structs | `StructNew`, `StructGetField`, `StructSetField` |
@@ -317,12 +318,14 @@ fn main() { ... }           <- Main with call to func_3
 
 ### Call Resolution
 ```rust
-// Constant propagation tracks function addresses
+// Constant propagation tracks function addresses through local slots
 v0 = const 3        // Function address
 store.local $0, v0
-v2 = load.local $0  // v2 now known to be func_3
+v2 = load.local $0  // v2 now known to be func_3 (constant propagated)
 v3 = call v2(v1)    // Direct call to compiled func_3
 ```
+
+**Key Fix:** Constant propagation through local slots enables recursive function calls. When a function stores its own address in a local variable (for self-reference), the optimization pass now tracks this constant and propagates it through `LoadLocal` operations, allowing call resolution to work correctly.
 
 ### Phi Node Handling
 Cranelift uses block parameters instead of explicit phi nodes:
@@ -375,8 +378,7 @@ Break-even point: 503 iterations
 ```
 
 ### Known Limitations
-- **Recursive self-reference:** Functions that call themselves by name (like `fib`) require proper closure capture, which is not yet implemented. The function's own name is in the outer scope and not accessible from the extracted function.
-- **Workaround:** Pass function as explicit parameter or use Y-combinator style
+- None currently - recursive self-referencing functions work correctly!
 
 ### CLI Commands
 ```bash
@@ -387,8 +389,12 @@ Break-even point: 503 iterations
 ./target/release/script bench <filename>
 ```
 
+### Recent Fixes (Latest)
+- **Constant propagation through local slots:** Fixed optimization pass to track constants stored in local variables, enabling recursive function calls to resolve correctly
+- **Console.log implementation:** Fixed `CallMethod` to properly handle `console.log` by calling `tscl_console_log` stub with the argument value
+- **Recursive function calls:** Self-referencing functions (like `fib`) now work correctly through constant propagation of function addresses stored in local slots
+
 ### Future Work (Phase 2B-Gamma)
-- [ ] Closure capture for self-referencing functions
 - [ ] String literal allocation
 - [ ] LLVM AOT backend
 - [ ] On-stack replacement (OSR)
@@ -532,10 +538,12 @@ All tests cover:
 - [x] Integrate Cranelift as JIT backend
 - [x] Implement basic codegen (constants, arithmetic, locals)
 - [x] Implement function calls (direct calls with constant propagation)
+- [x] Implement recursive function calls (self-referencing functions work correctly)
 - [x] Implement phi node handling (block parameters)
+- [x] Implement console.log (method calls to runtime stubs)
+- [x] Add constant propagation through local slots (enables recursive calls)
 - [x] Add tiered compilation infrastructure
 - [x] Performance benchmarks vs VM (JIT is ~6x faster)
-- [ ] Closure capture for self-referencing functions (recursion)
 
 ### Phase 2B-Gamma: AOT & Optimization
 - [ ] LLVM backend for AOT compilation

@@ -6,7 +6,9 @@
 //! - Common Subexpression Elimination (CSE)
 //! - Copy Propagation
 
-use crate::ir::{BasicBlock, BlockId, IrFunction, IrModule, IrOp, IrType, Literal, Terminator, ValueId};
+use crate::ir::{
+    BasicBlock, BlockId, IrFunction, IrModule, IrOp, IrType, Literal, Terminator, ValueId,
+};
 use std::collections::{HashMap, HashSet};
 
 // ============================================================================
@@ -79,28 +81,46 @@ fn has_side_effects(op: &IrOp) -> bool {
 pub fn constant_folding(func: &mut IrFunction) {
     // Track known constant values
     let mut constants: HashMap<ValueId, Literal> = HashMap::new();
+    // Track constants stored in local slots
+    let mut local_constants: HashMap<u32, Literal> = HashMap::new();
 
-    // First pass: collect constants
+    // First pass: collect constants and track local stores
     for block in &func.blocks {
         for op in &block.ops {
-            if let IrOp::Const(dst, lit) = op {
-                constants.insert(*dst, lit.clone());
+            match op {
+                IrOp::Const(dst, lit) => {
+                    constants.insert(*dst, lit.clone());
+                }
+                IrOp::StoreLocal(slot, src) => {
+                    // If source is a constant, track it in the local slot
+                    if let Some(lit) = constants.get(src) {
+                        local_constants.insert(*slot, lit.clone());
+                    } else {
+                        // If we store a non-constant, remove the slot from local_constants
+                        local_constants.remove(slot);
+                    }
+                }
+                _ => {}
             }
         }
     }
 
-    // Second pass: fold operations
+    // Second pass: fold operations and propagate local constants
     for block in &mut func.blocks {
         let ops = std::mem::take(&mut block.ops);
         block.ops = ops
             .into_iter()
-            .map(|op| fold_op(op, &mut constants))
+            .map(|op| fold_op(op, &mut constants, &local_constants))
             .collect();
     }
 }
 
 /// Attempt to fold a single operation.
-fn fold_op(op: IrOp, constants: &mut HashMap<ValueId, Literal>) -> IrOp {
+fn fold_op(
+    op: IrOp,
+    constants: &mut HashMap<ValueId, Literal>,
+    local_constants: &HashMap<u32, Literal>,
+) -> IrOp {
     match op {
         // Numeric binary operations
         IrOp::AddNum(dst, a, b) => {
@@ -251,6 +271,22 @@ fn fold_op(op: IrOp, constants: &mut HashMap<ValueId, Literal>) -> IrOp {
                 return IrOp::Const(dst, lit);
             }
             IrOp::Copy(dst, src)
+        }
+
+        // LoadLocal: propagate constant from local slot if available
+        IrOp::LoadLocal(dst, slot) => {
+            if let Some(lit) = local_constants.get(&slot).cloned() {
+                constants.insert(dst, lit.clone());
+                return IrOp::Const(dst, lit);
+            }
+            IrOp::LoadLocal(dst, slot)
+        }
+
+        // StoreLocal: update local_constants tracking
+        IrOp::StoreLocal(slot, src) => {
+            // Note: We can't modify local_constants here since it's immutable,
+            // but the first pass already handles this. This is just for consistency.
+            IrOp::StoreLocal(slot, src)
         }
 
         // All other operations pass through
@@ -641,9 +677,9 @@ mod tests {
 
         // c should now be a constant 5.0
         let ops = &func.blocks[entry.0 as usize].ops;
-        let has_const_5 = ops.iter().any(|op| {
-            matches!(op, IrOp::Const(_, Literal::Number(n)) if (*n - 5.0).abs() < 0.001)
-        });
+        let has_const_5 = ops
+            .iter()
+            .any(|op| matches!(op, IrOp::Const(_, Literal::Number(n)) if (*n - 5.0).abs() < 0.001));
         assert!(has_const_5, "Should fold 2+3 to 5");
     }
 

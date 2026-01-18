@@ -1,0 +1,10 @@
+// Fibonacci benchmark - tests recursive function calls
+let fib = function(n) {
+    if (n < 2) {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+};
+
+// Note: For JIT, we need to explicitly return the result
+return fib(25);

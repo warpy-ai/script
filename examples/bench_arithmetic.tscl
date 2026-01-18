@@ -1,0 +1,10 @@
+// Arithmetic benchmark - tests basic operations
+let compute = function(x) {
+    let a = x * 2;
+    let b = a + 10;
+    let c = b - 5;
+    let d = c * c;
+    return d + x;
+};
+
+return compute(100);

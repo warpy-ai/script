@@ -727,6 +727,10 @@ pub struct ExtractedFunction {
     pub param_count: usize,
     /// Parameter names.
     pub param_names: Vec<String>,
+    /// Variable name that is self-referenced in the function.
+    pub self_reference_var: Option<String>,
+    /// Whether the function has a self-reference.
+    pub has_self_ref: bool,
 }
 
 /// Lower an entire bytecode module to SSA IR.
@@ -747,6 +751,7 @@ pub fn lower_module(instructions: &[OpCode]) -> Result<IrModule, LowerError> {
             func_bytecode,
             &func_info.param_names,
             func_info.address,
+            func_info.self_reference_var.as_ref(),
         ) {
             Ok(ir_func) => {
                 module.add_function(ir_func);
@@ -777,10 +782,26 @@ fn lower_extracted_function(
     instructions: &[OpCode],
     param_names: &[String],
     base_addr: usize,
+    self_ref_var: Option<&String>,
 ) -> Result<IrFunction, LowerError> {
     // Rebase jump targets to be relative to the function start
     let rebased = rebase_jump_targets(instructions, base_addr);
-    let lowerer = Lowerer::new_with_params(name.to_string(), param_names);
+    let mut lowerer = Lowerer::new_with_params(name.to_string(), param_names);
+
+    for param_name in param_names {
+        lowerer.get_or_create_local(param_name);
+    }
+
+    if let Some(var_name) = self_ref_var {
+        let slot = lowerer.get_or_create_local(var_name);
+        let funct_addr_val = lowerer.alloc_value(IrType::Any);
+        let addr_num = base_addr as f64;
+
+        lowerer.emit(IrOp::Const(funct_addr_val, Literal::Number(addr_num)));
+        lowerer.emit(IrOp::StoreLocal(slot, funct_addr_val));
+        lowerer.local_values.insert(slot, funct_addr_val);
+    }
+
     lowerer.lower(&rebased)
 }
 
@@ -819,12 +840,27 @@ fn rebase_jump_targets(instructions: &[OpCode], base_addr: usize) -> Vec<OpCode>
 fn extract_functions(instructions: &[OpCode]) -> Vec<ExtractedFunction> {
     let mut functions = Vec::new();
 
-    for (_i, op) in instructions.iter().enumerate() {
+    for (i, op) in instructions.iter().enumerate() {
         if let OpCode::Push(JsValue::Function { address, env }) = op {
             // Find the end of this function (the Return before the next main code)
             if let Some(end_addr) = find_function_end(*address, instructions) {
                 // Detect parameters: consecutive Let instructions at function start
                 let (param_count, param_names) = detect_function_params(*address, instructions);
+
+                let func_var_name = if i + 1 < instructions.len() {
+                    match &instructions[i + 1] {
+                        OpCode::Let(name) | OpCode::Store(name) => Some(name.clone()),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+
+                let has_self_ref = if let Some(ref var_name) = func_var_name {
+                    detect_self_reference(*address, end_addr, var_name, instructions)
+                } else {
+                    false
+                };
 
                 functions.push(ExtractedFunction {
                     address: *address,
@@ -832,6 +868,8 @@ fn extract_functions(instructions: &[OpCode]) -> Vec<ExtractedFunction> {
                     has_env: env.is_some(),
                     param_count,
                     param_names,
+                    self_reference_var: func_var_name,
+                    has_self_ref,
                 });
             }
         }
@@ -842,6 +880,24 @@ fn extract_functions(instructions: &[OpCode]) -> Vec<ExtractedFunction> {
     functions.dedup_by_key(|f| f.address);
 
     functions
+}
+
+/// Detect if a function has a self-reference.
+fn detect_self_reference(
+    start: usize,
+    end: usize,
+    var_name: &str,
+    instructions: &[OpCode],
+) -> bool {
+    for i in start..=end.min(instructions.len().saturating_sub(1)) {
+        match &instructions[i] {
+            OpCode::Load(name) if name == var_name => return true,
+            OpCode::CallMethod(name, _) if name == var_name => return true,
+            _ => {}
+        }
+    }
+
+    false
 }
 
 /// Detect function parameters from leading Let instructions.

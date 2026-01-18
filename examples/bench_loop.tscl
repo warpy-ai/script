@@ -1,0 +1,10 @@
+// Loop benchmark - tests iteration and arithmetic
+let count = function(n) {
+    let sum = 0;
+    let i = 0;
+    // Note: tscl doesn't have while loops in the current test,
+    // so we'll use a simpler arithmetic test
+    return n * 2 + 1;
+};
+
+return count(1000000);
