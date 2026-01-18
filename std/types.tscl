@@ -1,0 +1,260 @@
+// ============================================================================
+// tscl Standard Library Type Definitions
+// ============================================================================
+//
+// This file defines the built-in types available in tscl.
+// All types are available globally without import.
+//
+// Core Design Principles:
+// - TypeScript-style syntax for familiarity
+// - Rust-style ownership semantics for memory safety
+// - Zero-cost abstractions where possible
+
+// ============================================================================
+// Primitive Types
+// ============================================================================
+
+// number - IEEE 754 double-precision floating point (64-bit)
+// Copy semantics: passed by value, no ownership transfer
+// Usage: let x: number = 42;
+
+// boolean - true or false
+// Copy semantics: passed by value
+// Usage: let flag: boolean = true;
+
+// string - UTF-8 encoded text (heap-allocated)
+// Move semantics: ownership transfers on assignment
+// Usage: let name: string = "tscl";
+
+// void - absence of a value (function returns nothing)
+// Usage: function log(msg: string): void { ... }
+
+// never - unreachable code / bottom type
+// Usage: function panic(msg: string): never { throw msg; }
+
+// ============================================================================
+// Reference Types (Borrowing)
+// ============================================================================
+
+// Ref<T> - Immutable borrow (&T semantics)
+// Multiple Ref<T> can exist simultaneously
+// Cannot coexist with MutRef<T>
+// Usage: function readBuffer(buf: Ref<Buffer>): number { return buf.len(); }
+
+// MutRef<T> - Mutable borrow (&mut T semantics)  
+// Only one MutRef<T> can exist at a time
+// Cannot coexist with Ref<T>
+// Usage: function appendBuffer(buf: MutRef<Buffer>, data: number): void { buf.push(data); }
+
+// ============================================================================
+// Collection Types
+// ============================================================================
+
+// Array<T> or T[] - Homogeneous dynamic array
+// Move semantics: ownership transfers on assignment
+// Usage: let items: number[] = [1, 2, 3];
+
+// Alias for arrays
+type Vec<T> = T[];
+
+// ============================================================================
+// Object Types
+// ============================================================================
+
+// Object types are defined inline with { field: Type } syntax
+// Move semantics: ownership transfers on assignment
+// Usage: let point: { x: number, y: number } = { x: 0, y: 0 };
+
+// ============================================================================
+// Function Types  
+// ============================================================================
+
+// Function types use arrow syntax: (params) => return
+// Usage: let add: (a: number, b: number) => number = (a, b) => a + b;
+
+// ============================================================================
+// Nullable Types
+// ============================================================================
+
+// Option<T> represents a value that may or may not exist
+// Simplified as T | null for compatibility
+type Option<T> = T | null;
+
+// ============================================================================
+// Error Handling Types
+// ============================================================================
+
+// Result<T, E> for explicit error handling
+type Result<T, E> = 
+    | { ok: true, value: T }
+    | { ok: false, error: E };
+
+// ============================================================================
+// Special Types
+// ============================================================================
+
+// any - Escape hatch for dynamic typing
+// WARNING: Disables type checking and optimizations
+// Use sparingly, prefer concrete types
+// Usage: let data: any = getUnknownData();
+
+// ============================================================================
+// Numeric Type Aliases (for documentation)
+// ============================================================================
+
+// These are all aliases for number (JavaScript's only numeric type)
+// tscl may optimize these in the future for better codegen
+type i32 = number;
+type i64 = number;
+type f32 = number;  
+type f64 = number;
+type usize = number;
+
+// ============================================================================
+// Binary Data
+// ============================================================================
+
+// Buffer for binary data operations
+type Buffer = {
+    len(): number,
+    get(index: number): number,
+    set(index: number, value: number): void,
+    slice(start: number, end: number): Buffer,
+};
+
+// ============================================================================
+// Console API
+// ============================================================================
+
+declare const console: {
+    log(...args: any[]): void,
+    error(...args: any[]): void,
+    warn(...args: any[]): void,
+    info(...args: any[]): void,
+    debug(...args: any[]): void,
+};
+
+// ============================================================================
+// Timer API
+// ============================================================================
+
+declare function setTimeout(callback: () => void, ms: number): number;
+declare function clearTimeout(id: number): void;
+declare function setInterval(callback: () => void, ms: number): number;
+declare function clearInterval(id: number): void;
+
+// ============================================================================
+// File System API (when available)
+// ============================================================================
+
+declare const fs: {
+    readFileSync(path: string): string,
+    writeFileSync(path: string, content: string): void,
+    existsSync(path: string): boolean,
+    mkdirSync(path: string): void,
+    readdirSync(path: string): string[],
+};
+
+// ============================================================================
+// Process API (when available)
+// ============================================================================
+
+declare const process: {
+    argv: string[],
+    env: { [key: string]: string },
+    cwd(): string,
+    exit(code: number): never,
+};
+
+// ============================================================================
+// Math API
+// ============================================================================
+
+declare const Math: {
+    PI: number,
+    E: number,
+    abs(x: number): number,
+    floor(x: number): number,
+    ceil(x: number): number,
+    round(x: number): number,
+    min(...values: number[]): number,
+    max(...values: number[]): number,
+    sqrt(x: number): number,
+    pow(base: number, exp: number): number,
+    sin(x: number): number,
+    cos(x: number): number,
+    tan(x: number): number,
+    random(): number,
+    log(x: number): number,
+    exp(x: number): number,
+};
+
+// ============================================================================
+// JSON API
+// ============================================================================
+
+declare const JSON: {
+    parse(text: string): any,
+    stringify(value: any): string,
+};
+
+// ============================================================================
+// String Methods (built into string type)
+// ============================================================================
+
+// String methods available on all string values:
+// - length: number (property)
+// - charAt(index: number): string
+// - charCodeAt(index: number): number
+// - concat(...strings: string[]): string
+// - includes(search: string): boolean
+// - indexOf(search: string): number
+// - lastIndexOf(search: string): number
+// - slice(start: number, end?: number): string
+// - split(separator: string): string[]
+// - substring(start: number, end?: number): string
+// - toLowerCase(): string
+// - toUpperCase(): string
+// - trim(): string
+// - trimStart(): string
+// - trimEnd(): string
+// - replace(search: string, replacement: string): string
+// - startsWith(search: string): boolean
+// - endsWith(search: string): boolean
+// - repeat(count: number): string
+// - padStart(length: number, padString?: string): string
+// - padEnd(length: number, padString?: string): string
+
+// ============================================================================
+// Array Methods (built into T[] type)
+// ============================================================================
+
+// Array methods available on all array values:
+// - length: number (property)
+// - push(...items: T[]): number
+// - pop(): T | undefined
+// - shift(): T | undefined
+// - unshift(...items: T[]): number
+// - concat(...arrays: T[][]): T[]
+// - join(separator?: string): string
+// - slice(start?: number, end?: number): T[]
+// - splice(start: number, deleteCount?: number, ...items: T[]): T[]
+// - indexOf(item: T): number
+// - lastIndexOf(item: T): number
+// - includes(item: T): boolean
+// - find(predicate: (item: T) => boolean): T | undefined
+// - findIndex(predicate: (item: T) => boolean): number
+// - filter(predicate: (item: T) => boolean): T[]
+// - map<U>(fn: (item: T) => U): U[]
+// - reduce<U>(fn: (acc: U, item: T) => U, initial: U): U
+// - reduceRight<U>(fn: (acc: U, item: T) => U, initial: U): U
+// - forEach(fn: (item: T) => void): void
+// - every(predicate: (item: T) => boolean): boolean
+// - some(predicate: (item: T) => boolean): boolean
+// - reverse(): T[]
+// - sort(compareFn?: (a: T, b: T) => number): T[]
+// - flat<D extends number>(depth?: D): FlatArray<T, D>[]
+// - flatMap<U>(fn: (item: T) => U[]): U[]
+// - fill(value: T, start?: number, end?: number): T[]
+// - copyWithin(target: number, start: number, end?: number): T[]
+// - at(index: number): T | undefined

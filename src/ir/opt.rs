@@ -413,7 +413,15 @@ fn replace_uses_in_op(op: &mut IrOp, copies: &HashMap<ValueId, ValueId>) {
         | IrOp::Copy(_, a)
         | IrOp::ArrayLen(_, a)
         | IrOp::TypeCheck(_, a, _)
-        | IrOp::TypeGuard(_, a, _) => {
+        | IrOp::TypeGuard(_, a, _)
+        | IrOp::Borrow(_, a)
+        | IrOp::BorrowMut(_, a)
+        | IrOp::Deref(_, a)
+        | IrOp::EndBorrow(a)
+        | IrOp::Move(_, a)
+        | IrOp::Clone(_, a)
+        | IrOp::StructGetField(_, a, _)
+        | IrOp::StructGetFieldNamed(_, a, _) => {
             resolve(a);
         }
 
@@ -470,13 +478,27 @@ fn replace_uses_in_op(op: &mut IrOp, copies: &HashMap<ValueId, ValueId>) {
             }
         }
 
+        IrOp::DerefStore(a, b)
+        | IrOp::StructSetField(a, _, b)
+        | IrOp::StructSetFieldNamed(a, _, b) => {
+            resolve(a);
+            resolve(b);
+        }
+
+        IrOp::CallMono(_, _, args) => {
+            for arg in args {
+                resolve(arg);
+            }
+        }
+
         // No uses to replace
         IrOp::Const(_, _)
         | IrOp::LoadLocal(_, _)
         | IrOp::LoadGlobal(_, _)
         | IrOp::NewObject(_)
         | IrOp::NewArray(_)
-        | IrOp::LoadThis(_) => {}
+        | IrOp::LoadThis(_)
+        | IrOp::StructNew(_, _) => {}
     }
 }
 

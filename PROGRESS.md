@@ -198,26 +198,89 @@ Outputs:
 
 ---
 
-## Phase 2: Native Backend (Planned)
+## Phase 2B: Native Backend ✅
 
-**Goal:** Generate native machine code from SSA IR.
+**Goal:** Generate native machine code from SSA IR using Cranelift.
 
-### Backend Strategy
-| Step | Component | Purpose |
-|------|-----------|---------|
-| 1 | Cranelift JIT | JIT compile hot loops and closures |
-| 2 | IR optimizations | Constant folding, DCE, simple inlining |
-| 3 | Borrow-checker runtime | Enforce ownership for heap/stack |
-| 4 | LLVM AOT backend | Compile server apps, peak performance |
-| 5 | Optional custom JIT | Critical numeric/array ops |
+### Files Created
+| File | Purpose |
+|------|---------|
+| `src/backend/mod.rs` | Backend manager, target selection |
+| `src/backend/layout.rs` | Memory layout calculation for structs/arrays |
+| `src/backend/cranelift.rs` | IR → Cranelift IR translation |
+| `src/backend/jit.rs` | JIT compilation and execution runtime |
+| `src/backend/aot.rs` | AOT compilation scaffold (future) |
 
-### Tiered Compilation
-| Tier | When | Backend |
-|------|------|---------|
-| Tier 0 | Immediate | VM interpreter |
-| Tier 1 | ~100 calls | Cranelift baseline JIT |
-| Tier 2 | ~10000 calls | Cranelift optimizing JIT |
-| AOT | `--release` | LLVM full optimization |
+### Backend Architecture
+```rust
+pub enum BackendKind {
+    CraneliftJit,  // JIT compilation (implemented)
+    CraneliftAot,  // AOT compilation (future)
+    Interpreter,   // Fall back to VM
+}
+
+pub enum OptLevel {
+    None,         // Fastest compile
+    Speed,        // Default for JIT
+    SpeedAndSize, // Default for AOT
+}
+```
+
+### Cranelift Integration
+- **IR Translation:** Each `IrOp` maps to Cranelift instructions or stub calls
+- **NaN-boxing:** All values are 64-bit, uniform representation
+- **Specialized ops:** `AddNum`, `SubNum`, etc. → inline FP instructions
+- **Dynamic ops:** `AddAny`, etc. → call runtime stubs (`tscl_*` functions)
+- **ARM64 Support:** Configured for non-PIC, colocated libcalls
+
+### JIT Runtime
+```rust
+pub struct JitRuntime {
+    codegen: CraneliftCodegen,
+    compiled_funcs: HashMap<String, *const u8>,
+}
+
+impl JitRuntime {
+    pub fn compile(&mut self, module: &IrModule) -> Result<(), BackendError>;
+    pub fn call_main(&self) -> Result<TsclValue, BackendError>;
+    pub fn call_func(&self, name: &str, args: &[TsclValue]) -> Result<TsclValue, BackendError>;
+}
+```
+
+### Memory Layout
+- **VALUE_SIZE:** 8 bytes (NaN-boxed)
+- **VALUE_ALIGN:** 8 bytes
+- **Struct layout:** Field offsets calculated with proper alignment
+- **Frame layout:** Stack slots for locals + spill area
+
+### CLI Command
+```bash
+# Run with JIT compilation
+./target/release/script jit <filename>
+```
+
+### Implemented Operations
+| Category | Operations |
+|----------|------------|
+| Constants | `Const` (numbers, booleans, null, undefined) |
+| Arithmetic | `AddNum`, `SubNum`, `MulNum`, `DivNum`, `ModNum`, `NegNum` |
+| Dynamic | `AddAny`, `SubAny`, `MulAny`, `DivAny`, `ModAny`, `NegAny` |
+| Comparison | `Lt`, `LtEq`, `Gt`, `GtEq`, `EqStrict`, `NeStrict` |
+| Logical | `Not`, `And`, `Or` |
+| Variables | `LoadLocal`, `StoreLocal`, `LoadGlobal`, `StoreGlobal` |
+| Objects | `NewObject`, `GetProp`, `SetProp`, `GetElement`, `SetElement` |
+| Arrays | `NewArray`, `ArrayLen`, `ArrayPush` |
+| Control | `Jump`, `Branch`, `Return` |
+| Borrow | `Borrow`, `BorrowMut`, `Deref`, `DerefStore`, `EndBorrow` |
+| Structs | `StructNew`, `StructGetField`, `StructSetField` |
+
+### Future Work (Phase 2B-Beta/Gamma)
+- [ ] Function calls (`Call`, `CallMethod`, `CallMono`)
+- [ ] Closure creation (`MakeClosure`)
+- [ ] Phi node handling for SSA merge points
+- [ ] String literal allocation
+- [ ] LLVM AOT backend
+- [ ] Performance benchmarks vs VM
 
 ---
 
@@ -324,7 +387,7 @@ Outputs:
 ## Test Results
 
 ```
-59 tests passed, 0 failed
+91 tests passed, 0 failed
 ```
 
 All tests cover:
@@ -340,16 +403,28 @@ All tests cover:
 - Original VM functionality
 - Borrow checker
 - Closures and async
+- **Backend:** Cranelift codegen creation
+- **Backend:** JIT runtime creation
+- **Backend:** Function compilation (constants, arithmetic)
+- **Backend:** Memory layout calculation
+- **Backend:** AOT target detection
 
 ---
 
 ## Next Steps
 
-### Phase 2: Native Backend
-- [ ] Integrate Cranelift as JIT backend
-- [ ] Implement register allocation
+### Phase 2B-Beta: Complete Native Backend
+- [x] Integrate Cranelift as JIT backend
+- [x] Implement basic codegen (constants, arithmetic, locals)
+- [ ] Implement function calls and closures
+- [ ] Implement phi node handling
 - [ ] Add tiered compilation (interpreter → JIT → optimizing JIT)
+- [ ] Performance benchmarks vs VM
+
+### Phase 2B-Gamma: AOT & Optimization
 - [ ] LLVM backend for AOT compilation
+- [ ] Link-time optimization (LTO)
+- [ ] Standalone binary generation
 
 ### Phase 3: Type Annotations
 - [ ] Optional type syntax: `let x: number = 42`

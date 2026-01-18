@@ -439,22 +439,24 @@ function ContinueStatement() {
 // Node-like fs API Wrapper
 // ============================================================================
 
-let fs = require("fs");
-
-// Sync file operations (node-like API)
+// Store fs module globally to avoid borrow checker issues
+// Access it directly in functions rather than capturing in closures
 let File = {
     // Read entire file as string
     readSync: function(path) {
+        let fs = require("fs");
         return fs.readFileSync(path);
     },
     
     // Write string to file
     writeSync: function(path, content) {
+        let fs = require("fs");
         return fs.writeFileSync(path, content);
     },
     
     // Write binary data to file
     writeBinarySync: function(path, byteStream) {
+        let fs = require("fs");
         return fs.writeBinaryFile(path, byteStream);
     }
 };

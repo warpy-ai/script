@@ -1,44 +1,618 @@
+//! Borrow Checker
+//!
+//! Performs ownership and borrowing analysis with type information.
+//! Integrates with the type system to determine:
+//! - Copy vs Move semantics based on type
+//! - Borrow tracking for Ref<T> and MutRef<T>
+//! - Lifetime analysis for references
+
 use std::collections::{HashMap, HashSet};
 use swc_ecma_ast::*;
 
+use crate::types::error::{BorrowKind, Span, TypeError, TypeErrors};
+use crate::types::registry::TypeRegistry;
+use crate::types::{Ownership, Type, TypeContext, VarType};
+
+/// Variable state in the borrow checker.
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum VarKind {
-    Primitive, // Numbers, Booleans (Copy semantics)
-    Heap,      // Objects, Arrays, Functions (Move semantics)
+    /// Numbers, Booleans (Copy semantics).
+    Primitive,
+    /// Objects, Arrays, Functions (Move semantics).
+    Heap,
+    /// Immutable borrow (Ref<T>).
+    Borrow,
+    /// Mutable borrow (MutRef<T>).
+    BorrowMut,
 }
 
+/// Ownership state.
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum VarState {
-    Owned,           // Currently valid and owned by this variable
-    Moved,           // Data has been transferred; variable is now a "tombstone"
-    CapturedByAsync, // Moved into an async closure (setTimeout callback, etc.)
+    /// Currently valid and owned.
+    Owned,
+    /// Data has been moved to another location.
+    Moved,
+    /// Captured by an async closure.
+    CapturedByAsync,
+    /// Borrowed immutably.
+    Borrowed,
+    /// Borrowed mutably.
+    BorrowedMut,
 }
 
+/// Variable information for borrow checking.
 #[derive(Clone, Debug)]
 pub struct VarInfo {
+    /// The type of the variable.
+    pub ty: Type,
+    /// Derived kind from type.
     pub kind: VarKind,
+    /// Current ownership state.
     pub state: VarState,
-    pub active_borrows: usize, // Number of active references to this data
+    /// Number of active immutable borrows.
+    pub immut_borrows: usize,
+    /// Whether there's an active mutable borrow.
+    pub mut_borrow: bool,
+    /// Location where the variable was defined.
+    pub def_span: Span,
+    /// Location where the variable was moved (if moved).
+    pub moved_span: Option<Span>,
 }
 
+impl VarInfo {
+    pub fn from_type(ty: Type, span: Span) -> Self {
+        let kind = Self::kind_from_type(&ty);
+        Self {
+            ty,
+            kind,
+            state: VarState::Owned,
+            immut_borrows: 0,
+            mut_borrow: false,
+            def_span: span,
+            moved_span: None,
+        }
+    }
+
+    fn kind_from_type(ty: &Type) -> VarKind {
+        match ty {
+            Type::Number | Type::Boolean | Type::Void => VarKind::Primitive,
+            Type::Ref(_) => VarKind::Borrow,
+            Type::MutRef(_) => VarKind::BorrowMut,
+            Type::String
+            | Type::Array(_)
+            | Type::Object(_)
+            | Type::Function(_)
+            | Type::Struct(_)
+            | Type::Enum(_) => VarKind::Heap,
+            Type::Any => VarKind::Heap, // Conservative: treat any as heap
+            _ => VarKind::Primitive,
+        }
+    }
+
+    /// Check if this variable can be copied (no ownership transfer).
+    pub fn is_copy(&self) -> bool {
+        self.kind == VarKind::Primitive
+    }
+
+    /// Check if this variable has move semantics.
+    pub fn is_move(&self) -> bool {
+        self.kind == VarKind::Heap
+    }
+}
+
+/// The borrow checker with type integration.
 pub struct BorrowChecker {
-    // Variable Name -> Metadata
+    /// Variable name to metadata mapping.
     symbols: HashMap<String, VarInfo>,
+    /// Type registry for looking up named types.
+    registry: Option<TypeRegistry>,
+    /// Accumulated errors.
+    errors: TypeErrors,
+    /// Current scope depth.
+    scope_depth: usize,
+    /// Scope stack for tracking variables at each scope level.
+    scope_stack: Vec<HashSet<String>>,
+}
+
+impl Default for BorrowChecker {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl BorrowChecker {
     pub fn new() -> Self {
         Self {
             symbols: HashMap::new(),
+            registry: None,
+            errors: TypeErrors::new(),
+            scope_depth: 0,
+            scope_stack: vec![HashSet::new()],
         }
     }
 
-    /// Collects identifiers used in an expression that might be captured from outer scope.
-    #[allow(dead_code)]
-    fn collect_captured_vars_expr(&self, expr: &Expr, params: &HashSet<String>) -> HashSet<String> {
+    /// Create a borrow checker with a type registry.
+    pub fn with_registry(registry: TypeRegistry) -> Self {
+        Self {
+            symbols: HashMap::new(),
+            registry: Some(registry),
+            errors: TypeErrors::new(),
+            scope_depth: 0,
+            scope_stack: vec![HashSet::new()],
+        }
+    }
+
+    /// Enter a new scope.
+    pub fn enter_scope(&mut self) {
+        self.scope_depth += 1;
+        self.scope_stack.push(HashSet::new());
+    }
+
+    /// Exit current scope, cleaning up variables.
+    pub fn exit_scope(&mut self) {
+        if let Some(vars) = self.scope_stack.pop() {
+            for name in vars {
+                self.symbols.remove(&name);
+            }
+        }
+        self.scope_depth = self.scope_depth.saturating_sub(1);
+    }
+
+    /// Define a new variable.
+    pub fn define(&mut self, name: String, ty: Type, span: Span) {
+        let info = VarInfo::from_type(ty, span);
+        self.symbols.insert(name.clone(), info);
+        if let Some(scope) = self.scope_stack.last_mut() {
+            scope.insert(name);
+        }
+    }
+
+    /// Look up a variable.
+    pub fn lookup(&self, name: &str) -> Option<&VarInfo> {
+        self.symbols.get(name)
+    }
+
+    /// Look up a variable mutably.
+    pub fn lookup_mut(&mut self, name: &str) -> Option<&mut VarInfo> {
+        self.symbols.get_mut(name)
+    }
+
+    /// Get all errors.
+    pub fn errors(&self) -> &TypeErrors {
+        &self.errors
+    }
+
+    /// Take all errors.
+    pub fn take_errors(&mut self) -> TypeErrors {
+        std::mem::take(&mut self.errors)
+    }
+
+    /// Check if there are any errors.
+    pub fn has_errors(&self) -> bool {
+        self.errors.has_errors()
+    }
+
+    // ========================================================================
+    // Statement Analysis
+    // ========================================================================
+
+    /// Analyze a statement.
+    pub fn analyze_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
+        match stmt {
+            Stmt::Decl(Decl::Var(var_decl)) => {
+                for decl in &var_decl.decls {
+                    self.analyze_var_decl(decl)?;
+                }
+            }
+            Stmt::Expr(expr_stmt) => {
+                self.analyze_expr(&expr_stmt.expr)?;
+            }
+            Stmt::Block(block) => {
+                self.enter_scope();
+                for s in &block.stmts {
+                    self.analyze_stmt(s)?;
+                }
+                self.exit_scope();
+            }
+            Stmt::If(if_stmt) => {
+                self.analyze_expr(&if_stmt.test)?;
+                self.analyze_stmt(&if_stmt.cons)?;
+                if let Some(alt) = &if_stmt.alt {
+                    self.analyze_stmt(alt)?;
+                }
+            }
+            Stmt::While(while_stmt) => {
+                self.analyze_expr(&while_stmt.test)?;
+                self.analyze_stmt(&while_stmt.body)?;
+            }
+            Stmt::For(for_stmt) => {
+                self.enter_scope();
+                if let Some(init) = &for_stmt.init {
+                    match init {
+                        VarDeclOrExpr::VarDecl(var_decl) => {
+                            for decl in &var_decl.decls {
+                                self.analyze_var_decl(decl)?;
+                            }
+                        }
+                        VarDeclOrExpr::Expr(expr) => {
+                            self.analyze_expr(expr)?;
+                        }
+                    }
+                }
+                if let Some(test) = &for_stmt.test {
+                    self.analyze_expr(test)?;
+                }
+                if let Some(update) = &for_stmt.update {
+                    self.analyze_expr(update)?;
+                }
+                self.analyze_stmt(&for_stmt.body)?;
+                self.exit_scope();
+            }
+            Stmt::Return(ret) => {
+                if let Some(arg) = &ret.arg {
+                    self.analyze_expr(arg)?;
+                }
+            }
+            Stmt::Throw(throw) => {
+                self.analyze_expr(&throw.arg)?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn analyze_var_decl(&mut self, decl: &VarDeclarator) -> Result<(), String> {
+        let name = match &decl.name {
+            Pat::Ident(ident) => ident.id.sym.to_string(),
+            _ => return Ok(()),
+        };
+
+        // Determine type from annotation or infer from initializer
+        let ty = self.determine_type(decl);
+
+        // Analyze initializer (might move values)
+        if let Some(init) = &decl.init {
+            self.analyze_expr(init)?;
+        }
+
+        // Register the variable
+        self.define(name, ty, Span::default());
+
+        Ok(())
+    }
+
+    fn determine_type(&self, decl: &VarDeclarator) -> Type {
+        // Try to get type from annotation
+        if let Pat::Ident(ident) = &decl.name {
+            if let Some(_ann) = &ident.type_ann {
+                // Would convert TsType to Type here if we had the converter
+                // For now, infer from initializer
+            }
+        }
+
+        // Infer from initializer
+        if let Some(init) = &decl.init {
+            return self.infer_type(init);
+        }
+
+        Type::Any
+    }
+
+    fn infer_type(&self, expr: &Expr) -> Type {
+        match expr {
+            Expr::Lit(Lit::Num(_)) => Type::Number,
+            Expr::Lit(Lit::Str(_)) => Type::String,
+            Expr::Lit(Lit::Bool(_)) => Type::Boolean,
+            Expr::Array(_) => Type::Array(Box::new(Type::Any)),
+            Expr::Object(_) => Type::Object(crate::types::ObjectType::default()),
+            Expr::Arrow(_) | Expr::Fn(_) => {
+                Type::Function(Box::new(crate::types::FunctionType::new(vec![], Type::Any)))
+            }
+            Expr::Ident(id) => {
+                let name = id.sym.to_string();
+                self.symbols
+                    .get(&name)
+                    .map(|info| info.ty.clone())
+                    .unwrap_or(Type::Any)
+            }
+            _ => Type::Any,
+        }
+    }
+
+    // ========================================================================
+    // Expression Analysis
+    // ========================================================================
+
+    fn analyze_expr(&mut self, expr: &Expr) -> Result<(), String> {
+        match expr {
+            Expr::Ident(id) => {
+                self.process_use(&id.sym.to_string())?;
+            }
+            Expr::Member(member) => {
+                // Member access is an implicit borrow
+                if let Expr::Ident(id) = member.obj.as_ref() {
+                    self.process_borrow(&id.sym.to_string(), false)?;
+                } else {
+                    self.analyze_expr(&member.obj)?;
+                }
+                if let MemberProp::Computed(c) = &member.prop {
+                    self.analyze_expr(&c.expr)?;
+                }
+            }
+            Expr::Assign(assign) => {
+                // Check if assigning to a borrowed variable
+                if let AssignTarget::Simple(SimpleAssignTarget::Ident(id)) = &assign.left {
+                    let name = id.id.sym.to_string();
+                    if let Some(info) = self.symbols.get(&name) {
+                        if info.immut_borrows > 0 {
+                            return Err(format!(
+                                "BORROW ERROR: Cannot assign to '{}' while it is borrowed",
+                                name
+                            ));
+                        }
+                    }
+                }
+                self.analyze_expr(&assign.right)?;
+            }
+            Expr::Bin(bin) => {
+                self.analyze_expr(&bin.left)?;
+                self.analyze_expr(&bin.right)?;
+            }
+            Expr::Unary(un) => {
+                self.analyze_expr(&un.arg)?;
+            }
+            Expr::Call(call) => {
+                // Function arguments are implicit borrows
+                for arg in &call.args {
+                    if let Expr::Ident(id) = arg.expr.as_ref() {
+                        self.process_borrow(&id.sym.to_string(), false)?;
+                    } else {
+                        self.analyze_expr(&arg.expr)?;
+                    }
+                }
+                if let Callee::Expr(callee_expr) = &call.callee {
+                    self.analyze_expr(callee_expr)?;
+                }
+            }
+            Expr::Array(arr) => {
+                for elem in &arr.elems {
+                    if let Some(elem) = elem {
+                        self.analyze_expr(&elem.expr)?;
+                    }
+                }
+            }
+            Expr::Object(obj) => {
+                for prop in &obj.props {
+                    if let PropOrSpread::Prop(p) = prop {
+                        if let Prop::KeyValue(kv) = p.as_ref() {
+                            self.analyze_expr(&kv.value)?;
+                        }
+                    }
+                }
+            }
+            Expr::Arrow(arrow) => {
+                self.analyze_closure(&arrow.params, &arrow.body)?;
+            }
+            Expr::Fn(fn_expr) => {
+                self.analyze_fn_closure(fn_expr)?;
+            }
+            Expr::Cond(cond) => {
+                self.analyze_expr(&cond.test)?;
+                self.analyze_expr(&cond.cons)?;
+                self.analyze_expr(&cond.alt)?;
+            }
+            Expr::Paren(paren) => {
+                self.analyze_expr(&paren.expr)?;
+            }
+            Expr::Update(update) => {
+                self.analyze_expr(&update.arg)?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    // ========================================================================
+    // Ownership Operations
+    // ========================================================================
+
+    /// Process a variable use (potential move or copy).
+    fn process_use(&mut self, name: &str) -> Result<(), String> {
+        if let Some(info) = self.symbols.get_mut(name) {
+            // Check for use-after-move
+            if info.state == VarState::Moved {
+                let moved_at = info.moved_span.unwrap_or_default();
+                self.errors.push(TypeError::UseAfterMove {
+                    var: name.to_string(),
+                    moved_at,
+                    used_at: Span::default(),
+                });
+                return Err(format!("BORROW ERROR: Use of moved variable '{}'", name));
+            }
+
+            if info.state == VarState::CapturedByAsync {
+                return Err(format!(
+                    "BORROW ERROR: '{}' was moved into an async closure! Cannot use after capture.",
+                    name
+                ));
+            }
+
+            // If it's a move type and not already borrowed, this is a move
+            if info.is_move() && info.immut_borrows == 0 && !info.mut_borrow {
+                info.state = VarState::Moved;
+                info.moved_span = Some(Span::default());
+            }
+        }
+        Ok(())
+    }
+
+    /// Process a borrow (immutable or mutable).
+    fn process_borrow(&mut self, name: &str, mutable: bool) -> Result<(), String> {
+        if let Some(info) = self.symbols.get_mut(name) {
+            // Check for use-after-move
+            if info.state == VarState::Moved {
+                return Err(format!(
+                    "BORROW ERROR: Cannot borrow moved variable '{}'",
+                    name
+                ));
+            }
+
+            if info.state == VarState::CapturedByAsync {
+                return Err(format!(
+                    "BORROW ERROR: Cannot borrow '{}' - it was captured by an async closure!",
+                    name
+                ));
+            }
+
+            if mutable {
+                // Mutable borrow: no other borrows allowed
+                if info.immut_borrows > 0 {
+                    self.errors.push(TypeError::BorrowConflict {
+                        var: name.to_string(),
+                        existing: BorrowKind::Immutable,
+                        new: BorrowKind::Mutable,
+                        span: Span::default(),
+                    });
+                    return Err(format!(
+                        "BORROW ERROR: Cannot borrow '{}' as mutable while it is already borrowed",
+                        name
+                    ));
+                }
+                if info.mut_borrow {
+                    self.errors.push(TypeError::BorrowConflict {
+                        var: name.to_string(),
+                        existing: BorrowKind::Mutable,
+                        new: BorrowKind::Mutable,
+                        span: Span::default(),
+                    });
+                    return Err(format!(
+                        "BORROW ERROR: Cannot borrow '{}' as mutable more than once",
+                        name
+                    ));
+                }
+                info.mut_borrow = true;
+            } else {
+                // Immutable borrow: no mutable borrows allowed
+                if info.mut_borrow {
+                    self.errors.push(TypeError::BorrowConflict {
+                        var: name.to_string(),
+                        existing: BorrowKind::Mutable,
+                        new: BorrowKind::Immutable,
+                        span: Span::default(),
+                    });
+                    return Err(format!(
+                        "BORROW ERROR: Cannot borrow '{}' as immutable while it is mutably borrowed",
+                        name
+                    ));
+                }
+                info.immut_borrows += 1;
+            }
+        }
+        Ok(())
+    }
+
+    /// Release a borrow.
+    pub fn release_borrow(&mut self, name: &str, mutable: bool) {
+        if let Some(info) = self.symbols.get_mut(name) {
+            if mutable {
+                info.mut_borrow = false;
+            } else {
+                info.immut_borrows = info.immut_borrows.saturating_sub(1);
+            }
+        }
+    }
+
+    // ========================================================================
+    // Closure Analysis
+    // ========================================================================
+
+    fn analyze_closure(&mut self, params: &[Pat], body: &BlockStmtOrExpr) -> Result<(), String> {
+        // Collect parameter names
+        let param_names: HashSet<String> = params
+            .iter()
+            .filter_map(|p| {
+                if let Pat::Ident(id) = p {
+                    Some(id.id.sym.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Find captured variables
         let mut captured = HashSet::new();
-        self.scan_expr_for_captures(expr, params, &mut captured);
-        captured
+        match body {
+            BlockStmtOrExpr::Expr(e) => {
+                self.scan_expr_for_captures(e, &param_names, &mut captured);
+            }
+            BlockStmtOrExpr::BlockStmt(block) => {
+                for stmt in &block.stmts {
+                    self.scan_stmt_for_captures(stmt, &param_names, &mut captured);
+                }
+            }
+        }
+
+        // Process captures (moves the values into the closure)
+        for var_name in &captured {
+            self.process_capture(var_name)?;
+        }
+
+        Ok(())
+    }
+
+    fn analyze_fn_closure(&mut self, fn_expr: &FnExpr) -> Result<(), String> {
+        let param_names: HashSet<String> = fn_expr
+            .function
+            .params
+            .iter()
+            .filter_map(|p| {
+                if let Pat::Ident(id) = &p.pat {
+                    Some(id.id.sym.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let mut captured = HashSet::new();
+        if let Some(body) = &fn_expr.function.body {
+            for stmt in &body.stmts {
+                self.scan_stmt_for_captures(stmt, &param_names, &mut captured);
+            }
+        }
+
+        for var_name in &captured {
+            self.process_capture(var_name)?;
+        }
+
+        Ok(())
+    }
+
+    fn process_capture(&mut self, name: &str) -> Result<(), String> {
+        if let Some(info) = self.symbols.get_mut(name) {
+            // Check if already moved
+            if info.state == VarState::Moved || info.state == VarState::CapturedByAsync {
+                return Err(format!(
+                    "BORROW ERROR: Variable '{}' was already moved or captured",
+                    name
+                ));
+            }
+
+            // Check for active borrows
+            if info.immut_borrows > 0 || info.mut_borrow {
+                return Err(format!(
+                    "LIFETIME ERROR: Cannot capture '{}' while it has active borrow(s)",
+                    name
+                ));
+            }
+
+            // Move into closure
+            if info.is_move() {
+                info.state = VarState::CapturedByAsync;
+            }
+        }
+        Ok(())
     }
 
     fn scan_expr_for_captures(
@@ -50,8 +624,6 @@ impl BorrowChecker {
         match expr {
             Expr::Ident(id) => {
                 let name = id.sym.to_string();
-                // If this identifier is NOT a parameter/local AND IS in our symbol table,
-                // it's being captured from outer scope
                 if !local_vars.contains(&name) && self.symbols.contains_key(&name) {
                     captured.insert(name);
                 }
@@ -83,8 +655,26 @@ impl BorrowChecker {
                     }
                 }
             }
+            Expr::Array(arr) => {
+                for elem in &arr.elems {
+                    if let Some(elem) = elem {
+                        self.scan_expr_for_captures(&elem.expr, local_vars, captured);
+                    }
+                }
+            }
             Expr::Assign(assign) => {
                 self.scan_expr_for_captures(&assign.right, local_vars, captured);
+            }
+            Expr::Unary(un) => {
+                self.scan_expr_for_captures(&un.arg, local_vars, captured);
+            }
+            Expr::Cond(cond) => {
+                self.scan_expr_for_captures(&cond.test, local_vars, captured);
+                self.scan_expr_for_captures(&cond.cons, local_vars, captured);
+                self.scan_expr_for_captures(&cond.alt, local_vars, captured);
+            }
+            Expr::Paren(paren) => {
+                self.scan_expr_for_captures(&paren.expr, local_vars, captured);
             }
             _ => {}
         }
@@ -111,325 +701,104 @@ impl BorrowChecker {
                 }
             }
             Stmt::Decl(Decl::Var(var_decl)) => {
-                for decl in var_decl.decls.iter().filter_map(|d| d.init.as_ref()) {
-                    self.scan_expr_for_captures(decl, local_vars, captured);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// Process a closure capture: mark the outer variable as MOVED.
-    /// This prevents use-after-capture bugs in async contexts.
-    fn process_closure_capture(&mut self, name: &str) -> Result<(), String> {
-        if let Some(info) = self.symbols.get_mut(name) {
-            // Check if already moved
-            if info.state == VarState::Moved || info.state == VarState::CapturedByAsync {
-                return Err(format!(
-                    "BORROW ERROR: Variable '{}' was already moved or captured",
-                    name
-                ));
-            }
-
-            // Check for active borrows
-            if info.active_borrows > 0 {
-                return Err(format!(
-                    "LIFETIME ERROR: Cannot capture '{}' while it has {} active borrow(s)",
-                    name, info.active_borrows
-                ));
-            }
-
-            // Mark as captured (moved into closure heap)
-            if info.kind == VarKind::Heap {
-                info.state = VarState::CapturedByAsync;
-                println!(
-                    "DEBUG: Variable '{}' CAPTURED and MOVED to closure heap. Original is now invalid.",
-                    name
-                );
-            }
-        }
-        Ok(())
-    }
-
-    /// Entry point for statement analysis
-    pub fn analyze_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
-        match stmt {
-            Stmt::Decl(Decl::Var(var_decl)) => {
-                for decl in &var_decl.decls {
-                    let name = decl.name.as_ident().unwrap().id.sym.to_string();
-
-                    // 1. Determine the "Kind" (Type) based on the initializer
-                    let kind = if let Some(init) = &decl.init {
-                        self.determine_kind(init)
-                    } else {
-                        VarKind::Primitive
-                    };
-
-                    // 2. If initializing from another variable (e.g., let a = b),
-                    // we must analyze the right-hand side first.
+                for decl in var_decl.decls.iter() {
                     if let Some(init) = &decl.init {
-                        self.analyze_expr(init)?;
+                        self.scan_expr_for_captures(init, local_vars, captured);
                     }
-
-                    // 3. Register the new variable
-                    self.symbols.insert(
-                        name,
-                        VarInfo {
-                            kind,
-                            state: VarState::Owned,
-                            active_borrows: 0,
-                        },
-                    );
-                }
-            }
-            Stmt::Expr(expr_stmt) => {
-                self.analyze_expr(&expr_stmt.expr)?;
-            }
-            Stmt::Block(block) => {
-                // Future optimization: Handle scope-clearing here
-                for s in &block.stmts {
-                    self.analyze_stmt(s)?;
                 }
             }
             Stmt::If(if_stmt) => {
-                self.analyze_expr(&if_stmt.test)?;
-                self.analyze_stmt(&if_stmt.cons)?;
+                self.scan_expr_for_captures(&if_stmt.test, local_vars, captured);
+                self.scan_stmt_for_captures(&if_stmt.cons, local_vars, captured);
                 if let Some(alt) = &if_stmt.alt {
-                    self.analyze_stmt(alt)?;
+                    self.scan_stmt_for_captures(alt, local_vars, captured);
                 }
+            }
+            Stmt::While(while_stmt) => {
+                self.scan_expr_for_captures(&while_stmt.test, local_vars, captured);
+                self.scan_stmt_for_captures(&while_stmt.body, local_vars, captured);
+            }
+            Stmt::For(for_stmt) => {
+                if let Some(init) = &for_stmt.init {
+                    match init {
+                        VarDeclOrExpr::VarDecl(var_decl) => {
+                            for decl in &var_decl.decls {
+                                if let Some(init) = &decl.init {
+                                    self.scan_expr_for_captures(init, local_vars, captured);
+                                }
+                            }
+                        }
+                        VarDeclOrExpr::Expr(expr) => {
+                            self.scan_expr_for_captures(expr, local_vars, captured);
+                        }
+                    }
+                }
+                if let Some(test) = &for_stmt.test {
+                    self.scan_expr_for_captures(test, local_vars, captured);
+                }
+                if let Some(update) = &for_stmt.update {
+                    self.scan_expr_for_captures(update, local_vars, captured);
+                }
+                self.scan_stmt_for_captures(&for_stmt.body, local_vars, captured);
             }
             _ => {}
         }
-        Ok(())
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_primitive_copy() {
+        let mut checker = BorrowChecker::new();
+        checker.define("x".to_string(), Type::Number, Span::default());
+
+        // Using a primitive should not move it
+        assert!(checker.process_use("x").is_ok());
+        assert!(checker.process_use("x").is_ok()); // Can use again
     }
 
-    /// Determines if an expression results in a Stack (Primitive) or Heap (Object) value
-    fn determine_kind(&self, expr: &Expr) -> VarKind {
-        match expr {
-            Expr::Object(_) | Expr::Array(_) | Expr::Fn(_) | Expr::Arrow(_) => VarKind::Heap,
-            Expr::Lit(Lit::Num(_)) | Expr::Lit(Lit::Bool(_)) | Expr::Lit(Lit::Str(_)) => {
-                VarKind::Primitive
-            }
-            Expr::Ident(id) => {
-                // Inherit kind from source variable
-                self.symbols
-                    .get(&id.sym.to_string())
-                    .map(|info| info.kind)
-                    .unwrap_or(VarKind::Primitive)
-            }
-            _ => VarKind::Primitive,
-        }
+    #[test]
+    fn test_heap_move() {
+        let mut checker = BorrowChecker::new();
+        checker.define(
+            "arr".to_string(),
+            Type::Array(Box::new(Type::Number)),
+            Span::default(),
+        );
+
+        // First use moves
+        assert!(checker.process_use("arr").is_ok());
+
+        // Second use should fail
+        assert!(checker.process_use("arr").is_err());
     }
 
-    /// Recursively checks expressions for ownership violations
-    fn analyze_expr(&mut self, expr: &Expr) -> Result<(), String> {
-        match expr {
-            // Context: Standalone identifier use (usually a Move/Transfer)
-            Expr::Ident(id) => {
-                self.process_move(&id.sym.to_string())?;
-            }
+    #[test]
+    fn test_borrow_conflict() {
+        let mut checker = BorrowChecker::new();
+        checker.define("x".to_string(), Type::String, Span::default());
 
-            // Context: Member Access (Implicit Borrow - safe)
-            Expr::Member(member) => {
-                if let Expr::Ident(id) = member.obj.as_ref() {
-                    self.process_implicit_borrow(&id.sym.to_string())?;
-                } else {
-                    self.analyze_expr(&member.obj)?;
-                }
-            }
+        // Immutable borrow OK
+        assert!(checker.process_borrow("x", false).is_ok());
 
-            // Context: Explicit Borrow using 'void' operator
-            Expr::Unary(un) if un.op == UnaryOp::Void => {
-                if let Expr::Ident(id) = un.arg.as_ref() {
-                    self.process_explicit_borrow(&id.sym.to_string())?;
-                }
-            }
-
-            // Context: Assignment (Target remains owned, Right side is moved)
-            Expr::Assign(assign) => {
-                self.analyze_expr(&assign.right)?;
-            }
-
-            // Context: Binary Math (Usually involves primitives)
-            Expr::Bin(bin) => {
-                self.analyze_expr(&bin.left)?;
-                self.analyze_expr(&bin.right)?;
-            }
-
-            // Context: Function Call (Arguments are Implicit Borrows in JS)
-            Expr::Call(call) => {
-                for arg in &call.args {
-                    if let Expr::Ident(id) = arg.expr.as_ref() {
-                        self.process_implicit_borrow(&id.sym.to_string())?;
-                    } else {
-                        self.analyze_expr(&arg.expr)?;
-                    }
-                }
-                if let Callee::Expr(callee_expr) = &call.callee {
-                    self.analyze_expr(callee_expr)?;
-                }
-            }
-
-            // Context: Object Literal
-            Expr::Object(obj) => {
-                for prop in &obj.props {
-                    if let PropOrSpread::Prop(p) = prop
-                        && let Prop::KeyValue(kv) = p.as_ref()
-                    {
-                        self.analyze_expr(&kv.value)?;
-                    }
-                }
-            }
-
-            // Context: Arrow Function (Closure)
-            // This is THE critical case for async safety!
-            Expr::Arrow(arrow) => {
-                // 1. Collect parameter names (these are local to the closure)
-                let params: HashSet<String> = arrow
-                    .params
-                    .iter()
-                    .filter_map(|p| {
-                        if let Pat::Ident(id) = p {
-                            Some((*id.id.sym).to_owned())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-
-                // 2. Scan the body for captured variables
-                let mut captured = HashSet::new();
-                match &*arrow.body {
-                    BlockStmtOrExpr::Expr(e) => {
-                        self.scan_expr_for_captures(e, &params, &mut captured);
-                    }
-                    BlockStmtOrExpr::BlockStmt(block) => {
-                        for stmt in &block.stmts {
-                            self.scan_stmt_for_captures(stmt, &params, &mut captured);
-                        }
-                    }
-                }
-
-                // 3. Mark all captured variables as MOVED
-                // This enforces Rust-like move semantics for closures!
-                for var_name in &captured {
-                    self.process_closure_capture(var_name)?;
-                }
-            }
-
-            // Context: Function Expression (also a closure)
-            Expr::Fn(fn_expr) => {
-                // Same logic as arrow functions
-                let params: HashSet<String> = fn_expr
-                    .function
-                    .params
-                    .iter()
-                    .filter_map(|p| {
-                        if let Pat::Ident(id) = &p.pat {
-                            Some((*id.id.sym).to_owned())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-
-                let mut captured = HashSet::new();
-                if let Some(body) = &fn_expr.function.body {
-                    for stmt in &body.stmts {
-                        self.scan_stmt_for_captures(stmt, &params, &mut captured);
-                    }
-                }
-
-                for var_name in &captured {
-                    self.process_closure_capture(var_name)?;
-                }
-            }
-
-            _ => {}
-        }
-        Ok(())
+        // Mutable borrow should fail (already borrowed)
+        assert!(checker.process_borrow("x", true).is_err());
     }
 
-    // --- Ownership Logic Core ---
+    #[test]
+    fn test_multiple_immutable_borrows() {
+        let mut checker = BorrowChecker::new();
+        checker.define("x".to_string(), Type::String, Span::default());
 
-    fn process_move(&mut self, name: &str) -> Result<(), String> {
-        if let Some(info) = self.symbols.get_mut(name) {
-            // 1. Check for Use-After-Move or Use-After-Capture
-            if info.state == VarState::Moved {
-                return Err(format!("BORROW ERROR: Use of moved variable '{}'", name));
-            }
-            if info.state == VarState::CapturedByAsync {
-                return Err(format!(
-                    "BORROW ERROR: '{}' was moved into an async closure! \
-                    Cannot use after capture - the callback might run later.",
-                    name
-                ));
-            }
-
-            // 2. Check for Lifetime Violation (Cannot move if borrowed)
-            if info.active_borrows > 0 {
-                return Err(format!(
-                    "LIFETIME ERROR: Cannot move '{}' while it has {} active borrow(s)",
-                    name, info.active_borrows
-                ));
-            }
-
-            // 3. Perform Move if it's a Heap type
-            if info.kind == VarKind::Heap {
-                info.state = VarState::Moved;
-                println!(
-                    "DEBUG: Heap Object '{}' MOVED (Ownership transferred)",
-                    name
-                );
-            } else {
-                println!("DEBUG: Primitive '{}' COPIED", name);
-            }
-        }
-        Ok(())
-    }
-
-    fn process_implicit_borrow(&mut self, name: &str) -> Result<(), String> {
-        if let Some(info) = self.symbols.get_mut(name) {
-            if info.state == VarState::Moved {
-                return Err(format!(
-                    "BORROW ERROR: Cannot access moved variable '{}'",
-                    name
-                ));
-            }
-            if info.state == VarState::CapturedByAsync {
-                return Err(format!(
-                    "BORROW ERROR: Cannot access '{}' - it was captured by an async closure! \
-                    The original variable is now invalid.",
-                    name
-                ));
-            }
-            // For now, implicit borrows (like obj.prop) increment borrow count
-            // but we'll assume they are returned after the statement ends.
-            println!("DEBUG: '{}' implicitly borrowed", name);
-        }
-        Ok(())
-    }
-
-    fn process_explicit_borrow(&mut self, name: &str) -> Result<(), String> {
-        if let Some(info) = self.symbols.get_mut(name) {
-            if info.state == VarState::Moved {
-                return Err(format!(
-                    "BORROW ERROR: Cannot borrow moved variable '{}'",
-                    name
-                ));
-            }
-            if info.state == VarState::CapturedByAsync {
-                return Err(format!(
-                    "BORROW ERROR: Cannot borrow '{}' - it was captured by an async closure!",
-                    name
-                ));
-            }
-            info.active_borrows += 1;
-            println!(
-                "DEBUG: '{}' EXPLICITLY BORROWED. Active loans: {}",
-                name, info.active_borrows
-            );
-        }
-        Ok(())
+        // Multiple immutable borrows are OK
+        assert!(checker.process_borrow("x", false).is_ok());
+        assert!(checker.process_borrow("x", false).is_ok());
     }
 }

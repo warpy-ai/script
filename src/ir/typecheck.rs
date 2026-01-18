@@ -29,8 +29,8 @@ impl<'a> TypeChecker<'a> {
         let mut types = HashMap::new();
         
         // Initialize types from function's value_types
-        for (&val, &ty) in &func.value_types {
-            types.insert(val, ty);
+        for (&val, ty) in &func.value_types {
+            types.insert(val, ty.clone());
         }
         
         Self {
@@ -57,7 +57,7 @@ impl<'a> TypeChecker<'a> {
 
         // Update function's value_types with inferred types
         for (val, ty) in &self.types {
-            self.func.value_types.insert(*val, *ty);
+            self.func.value_types.insert(*val, ty.clone());
         }
     }
 
@@ -88,7 +88,7 @@ impl<'a> TypeChecker<'a> {
 
     /// Get the type of a value.
     fn get_type(&self, val: ValueId) -> IrType {
-        self.types.get(&val).copied().unwrap_or(IrType::Any)
+        self.types.get(&val).cloned().unwrap_or(IrType::Any)
     }
 
     /// Set the type of a value, marking changed if different.
@@ -242,7 +242,7 @@ impl<'a> TypeChecker<'a> {
             IrOp::TypeGuard(dst, val, ty) => {
                 // TypeGuard narrows the type
                 let _ = self.get_type(*val); // Mark as used
-                self.set_type(*dst, *ty);
+                self.set_type(*dst, ty.clone());
             }
 
             IrOp::ToBool(dst, _) => {
@@ -279,7 +279,53 @@ impl<'a> TypeChecker<'a> {
             | IrOp::StoreGlobal(_, _)
             | IrOp::SetProp(_, _, _)
             | IrOp::SetElement(_, _, _)
-            | IrOp::ArrayPush(_, _) => {}
+            | IrOp::ArrayPush(_, _)
+            | IrOp::DerefStore(_, _)
+            | IrOp::EndBorrow(_)
+            | IrOp::StructSetField(_, _, _)
+            | IrOp::StructSetFieldNamed(_, _, _) => {}
+
+            // Borrow operations
+            IrOp::Borrow(dst, src) => {
+                let src_ty = self.get_type(*src);
+                self.set_type(*dst, IrType::Ref(Box::new(src_ty)));
+            }
+
+            IrOp::BorrowMut(dst, src) => {
+                let src_ty = self.get_type(*src);
+                self.set_type(*dst, IrType::MutRef(Box::new(src_ty)));
+            }
+
+            IrOp::Deref(dst, src) => {
+                let src_ty = self.get_type(*src);
+                // Unwrap the reference
+                let result_ty = match src_ty.deref_type() {
+                    Some(inner) => inner.clone(),
+                    None => IrType::Any,
+                };
+                self.set_type(*dst, result_ty);
+            }
+
+            // Struct operations
+            IrOp::StructNew(dst, struct_id) => {
+                self.set_type(*dst, IrType::Struct(*struct_id));
+            }
+
+            IrOp::StructGetField(dst, _, _) | IrOp::StructGetFieldNamed(dst, _, _) => {
+                // Would need struct type info to get field type
+                self.set_type(*dst, IrType::Any);
+            }
+
+            // Monomorphized calls
+            IrOp::CallMono(dst, _, _) => {
+                self.set_type(*dst, IrType::Any);
+            }
+
+            // Move/Clone preserve type
+            IrOp::Move(dst, src) | IrOp::Clone(dst, src) => {
+                let ty = self.get_type(*src);
+                self.set_type(*dst, ty);
+            }
         }
     }
 }
@@ -309,7 +355,7 @@ pub fn specialize_ops(func: &mut IrFunction) {
 
 /// Specialize a single operation.
 fn specialize_op(op: IrOp, types: &HashMap<ValueId, IrType>) -> IrOp {
-    let get_type = |v: ValueId| types.get(&v).copied().unwrap_or(IrType::Any);
+    let get_type = |v: ValueId| types.get(&v).cloned().unwrap_or(IrType::Any);
 
     match op {
         IrOp::AddAny(dst, a, b) => {

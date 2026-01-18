@@ -25,8 +25,38 @@ use std::fmt;
 // Type System
 // ============================================================================
 
-/// IR type for values. Used for type inference and specialization.
+/// Unique identifier for a struct type in IR.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct IrStructId(pub u32);
+
+impl fmt::Display for IrStructId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "struct#{}", self.0)
+    }
+}
+
+/// Unique identifier for a field in a struct.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FieldId(pub u32);
+
+impl fmt::Display for FieldId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "field#{}", self.0)
+    }
+}
+
+/// Unique identifier for a monomorphized function.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MonoFuncId(pub u32);
+
+impl fmt::Display for MonoFuncId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "mono#{}", self.0)
+    }
+}
+
+/// IR type for values. Used for type inference and specialization.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum IrType {
     /// IEEE 754 double-precision float
     Number,
@@ -38,8 +68,16 @@ pub enum IrType {
     Object,
     /// JavaScript-like array (heap-allocated)
     Array,
+    /// Typed array with element type
+    TypedArray(Box<IrType>),
     /// Function closure
     Function,
+    /// Named struct type (with known layout)
+    Struct(IrStructId),
+    /// Immutable reference (borrow): &T
+    Ref(Box<IrType>),
+    /// Mutable reference (borrow): &mut T
+    MutRef(Box<IrType>),
     /// Dynamic type - requires runtime dispatch
     Any,
     /// Unreachable / bottom type
@@ -50,18 +88,66 @@ pub enum IrType {
 
 impl IrType {
     /// Check if this type is a heap-allocated reference type.
-    pub fn is_reference(self) -> bool {
-        matches!(self, IrType::String | IrType::Object | IrType::Array | IrType::Function)
+    pub fn is_heap_type(&self) -> bool {
+        matches!(self, IrType::String | IrType::Object | IrType::Array | 
+                 IrType::TypedArray(_) | IrType::Function | IrType::Struct(_))
+    }
+
+    /// Alias for is_heap_type (legacy name).
+    pub fn is_reference(&self) -> bool {
+        self.is_heap_type()
     }
 
     /// Check if this type is a primitive (fits in a register).
-    pub fn is_primitive(self) -> bool {
+    pub fn is_primitive(&self) -> bool {
         matches!(self, IrType::Number | IrType::Boolean)
     }
 
     /// Check if this is a concrete type (not Any or Never).
-    pub fn is_concrete(self) -> bool {
+    pub fn is_concrete(&self) -> bool {
         !matches!(self, IrType::Any | IrType::Never)
+    }
+
+    /// Check if this type is a borrow (reference).
+    pub fn is_borrow(&self) -> bool {
+        matches!(self, IrType::Ref(_) | IrType::MutRef(_))
+    }
+
+    /// Check if this type has copy semantics (no ownership transfer).
+    pub fn is_copy(&self) -> bool {
+        matches!(self, IrType::Number | IrType::Boolean)
+    }
+
+    /// Check if this type has move semantics.
+    pub fn is_move(&self) -> bool {
+        self.is_heap_type()
+    }
+
+    /// Get the inner type for reference types.
+    pub fn deref_type(&self) -> Option<&IrType> {
+        match self {
+            IrType::Ref(inner) | IrType::MutRef(inner) => Some(inner),
+            _ => None,
+        }
+    }
+
+    /// Get the element type for array types.
+    pub fn element_type(&self) -> Option<&IrType> {
+        match self {
+            IrType::TypedArray(inner) => Some(inner),
+            IrType::Array => Some(&IrType::Any),
+            _ => None,
+        }
+    }
+
+    /// Create an immutable reference to this type.
+    pub fn as_ref(self) -> IrType {
+        IrType::Ref(Box::new(self))
+    }
+
+    /// Create a mutable reference to this type.
+    pub fn as_mut_ref(self) -> IrType {
+        IrType::MutRef(Box::new(self))
     }
 }
 
@@ -73,7 +159,11 @@ impl fmt::Display for IrType {
             IrType::Boolean => write!(f, "bool"),
             IrType::Object => write!(f, "obj"),
             IrType::Array => write!(f, "arr"),
+            IrType::TypedArray(elem) => write!(f, "{}[]", elem),
             IrType::Function => write!(f, "fn"),
+            IrType::Struct(id) => write!(f, "{}", id),
+            IrType::Ref(inner) => write!(f, "&{}", inner),
+            IrType::MutRef(inner) => write!(f, "&mut {}", inner),
             IrType::Any => write!(f, "any"),
             IrType::Never => write!(f, "!"),
             IrType::Void => write!(f, "void"),
@@ -394,6 +484,40 @@ pub enum IrOp {
     Copy(ValueId, ValueId),
     /// Load 'this' context
     LoadThis(ValueId),
+
+    // === Borrow Operations ===
+    /// Create immutable borrow: dst = &src
+    Borrow(ValueId, ValueId),
+    /// Create mutable borrow: dst = &mut src
+    BorrowMut(ValueId, ValueId),
+    /// Dereference: dst = *src
+    Deref(ValueId, ValueId),
+    /// Store through reference: *dst = src
+    DerefStore(ValueId, ValueId),
+    /// End a borrow's lifetime (for borrow checker)
+    EndBorrow(ValueId),
+
+    // === Struct Operations ===
+    /// Create new struct: dst = StructType {}
+    StructNew(ValueId, IrStructId),
+    /// Get struct field: dst = src.field
+    StructGetField(ValueId, ValueId, FieldId),
+    /// Set struct field: dst.field = src
+    StructSetField(ValueId, FieldId, ValueId),
+    /// Get struct field by name (for unresolved field access)
+    StructGetFieldNamed(ValueId, ValueId, String),
+    /// Set struct field by name
+    StructSetFieldNamed(ValueId, String, ValueId),
+
+    // === Monomorphized Calls ===
+    /// Call monomorphized function: dst = mono_func(args...)
+    CallMono(ValueId, MonoFuncId, Vec<ValueId>),
+
+    // === Move Operations ===
+    /// Move value: dst = move src (marks src as moved)
+    Move(ValueId, ValueId),
+    /// Clone value: dst = clone src (for explicit copies of heap types)
+    Clone(ValueId, ValueId),
 }
 
 impl IrOp {
@@ -438,13 +562,32 @@ impl IrOp {
             | IrOp::ToNum(d, _)
             | IrOp::Phi(d, _)
             | IrOp::Copy(d, _)
-            | IrOp::LoadThis(d) => Some(*d),
+            | IrOp::LoadThis(d)
+            // Borrow operations
+            | IrOp::Borrow(d, _)
+            | IrOp::BorrowMut(d, _)
+            | IrOp::Deref(d, _)
+            // Struct operations
+            | IrOp::StructNew(d, _)
+            | IrOp::StructGetField(d, _, _)
+            | IrOp::StructGetFieldNamed(d, _, _)
+            // Monomorphized calls
+            | IrOp::CallMono(d, _, _)
+            // Move operations
+            | IrOp::Move(d, _)
+            | IrOp::Clone(d, _) => Some(*d),
 
             IrOp::StoreLocal(_, _)
             | IrOp::StoreGlobal(_, _)
             | IrOp::SetProp(_, _, _)
             | IrOp::SetElement(_, _, _)
-            | IrOp::ArrayPush(_, _) => None,
+            | IrOp::ArrayPush(_, _)
+            // Borrow operations without dest
+            | IrOp::DerefStore(_, _)
+            | IrOp::EndBorrow(_)
+            // Struct operations without dest
+            | IrOp::StructSetField(_, _, _)
+            | IrOp::StructSetFieldNamed(_, _, _) => None,
         }
     }
 
@@ -469,7 +612,9 @@ impl IrOp {
             | IrOp::Gt(_, a, b)
             | IrOp::GtEq(_, a, b)
             | IrOp::And(_, a, b)
-            | IrOp::Or(_, a, b) => vec![*a, *b],
+            | IrOp::Or(_, a, b)
+            // Borrow store
+            | IrOp::DerefStore(a, b) => vec![*a, *b],
 
             IrOp::NegNum(_, a)
             | IrOp::NegAny(_, a)
@@ -479,17 +624,34 @@ impl IrOp {
             | IrOp::Copy(_, a)
             | IrOp::ArrayLen(_, a)
             | IrOp::TypeCheck(_, a, _)
-            | IrOp::TypeGuard(_, a, _) => vec![*a],
+            | IrOp::TypeGuard(_, a, _)
+            // Borrow operations
+            | IrOp::Borrow(_, a)
+            | IrOp::BorrowMut(_, a)
+            | IrOp::Deref(_, a)
+            | IrOp::EndBorrow(a)
+            // Move operations
+            | IrOp::Move(_, a)
+            | IrOp::Clone(_, a) => vec![*a],
 
             IrOp::LoadLocal(_, _) | IrOp::LoadGlobal(_, _) | IrOp::LoadThis(_) => vec![],
             IrOp::StoreLocal(_, v) | IrOp::StoreGlobal(_, v) => vec![*v],
 
             IrOp::NewObject(_) | IrOp::NewArray(_) => vec![],
+            // Struct new
+            IrOp::StructNew(_, _) => vec![],
+            
             IrOp::GetProp(_, obj, _) => vec![*obj],
             IrOp::SetProp(obj, _, val) => vec![*obj, *val],
             IrOp::GetElement(_, obj, key) => vec![*obj, *key],
             IrOp::SetElement(obj, key, val) => vec![*obj, *key, *val],
             IrOp::ArrayPush(arr, val) => vec![*arr, *val],
+
+            // Struct field operations
+            IrOp::StructGetField(_, src, _) => vec![*src],
+            IrOp::StructGetFieldNamed(_, src, _) => vec![*src],
+            IrOp::StructSetField(dst, _, val) => vec![*dst, *val],
+            IrOp::StructSetFieldNamed(dst, _, val) => vec![*dst, *val],
 
             IrOp::Call(_, func, args) => {
                 let mut uses = vec![*func];
@@ -501,6 +663,7 @@ impl IrOp {
                 uses.extend(args.iter().copied());
                 uses
             }
+            IrOp::CallMono(_, _, args) => args.clone(),
             IrOp::MakeClosure(_, _, env) => vec![*env],
 
             IrOp::Phi(_, entries) => entries.iter().map(|(_, v)| *v).collect(),
@@ -631,7 +794,7 @@ impl IrFunction {
     pub fn alloc_value(&mut self, ty: IrType) -> ValueId {
         let id = ValueId(self.next_value);
         self.next_value += 1;
-        self.value_types.insert(id, ty);
+        self.value_types.insert(id, ty.clone());
         self.value_info.insert(id, ValueInfo::new(ty));
         id
     }
@@ -640,7 +803,7 @@ impl IrFunction {
     pub fn alloc_value_with_info(&mut self, info: ValueInfo) -> ValueId {
         let id = ValueId(self.next_value);
         self.next_value += 1;
-        self.value_types.insert(id, info.ty);
+        self.value_types.insert(id, info.ty.clone());
         self.value_info.insert(id, info);
         id
     }
@@ -736,6 +899,106 @@ impl IrFunction {
 // Module (Top-Level)
 // ============================================================================
 
+/// A struct type definition with known layout.
+#[derive(Debug, Clone)]
+pub struct IrStructDef {
+    pub id: IrStructId,
+    pub name: String,
+    /// Fields in declaration order: (name, type, offset).
+    pub fields: Vec<(String, IrType, u32)>,
+    /// Total size in bytes.
+    pub size: u32,
+    /// Alignment requirement.
+    pub alignment: u32,
+}
+
+impl IrStructDef {
+    pub fn new(id: IrStructId, name: String) -> Self {
+        Self {
+            id,
+            name,
+            fields: Vec::new(),
+            size: 0,
+            alignment: 8, // Default to 8-byte alignment
+        }
+    }
+
+    /// Add a field and compute its offset.
+    pub fn add_field(&mut self, name: String, ty: IrType) -> FieldId {
+        let field_id = FieldId(self.fields.len() as u32);
+        let field_size = Self::type_size(&ty);
+        let field_align = Self::type_alignment(&ty);
+
+        // Align the current size to the field's alignment
+        let offset = (self.size + field_align - 1) & !(field_align - 1);
+        self.fields.push((name, ty, offset));
+
+        // Update total size
+        self.size = offset + field_size;
+
+        // Update alignment to max of all fields
+        self.alignment = self.alignment.max(field_align);
+
+        field_id
+    }
+
+    /// Get field by name.
+    pub fn get_field(&self, name: &str) -> Option<(FieldId, &IrType, u32)> {
+        self.fields
+            .iter()
+            .enumerate()
+            .find(|(_, (n, _, _))| n == name)
+            .map(|(i, (_, ty, offset))| (FieldId(i as u32), ty, *offset))
+    }
+
+    /// Get field by ID.
+    pub fn get_field_by_id(&self, id: FieldId) -> Option<(&str, &IrType, u32)> {
+        self.fields
+            .get(id.0 as usize)
+            .map(|(name, ty, offset)| (name.as_str(), ty, *offset))
+    }
+
+    /// Estimate size of a type in bytes.
+    fn type_size(ty: &IrType) -> u32 {
+        match ty {
+            IrType::Number => 8,
+            IrType::Boolean => 1,
+            IrType::Void => 0,
+            IrType::Never => 0,
+            // Reference types are pointers
+            IrType::String | IrType::Object | IrType::Array | 
+            IrType::TypedArray(_) | IrType::Function | IrType::Struct(_) |
+            IrType::Ref(_) | IrType::MutRef(_) => 8,
+            IrType::Any => 16, // Tagged value: tag + payload
+        }
+    }
+
+    /// Get alignment requirement for a type.
+    fn type_alignment(ty: &IrType) -> u32 {
+        match ty {
+            IrType::Number => 8,
+            IrType::Boolean => 1,
+            IrType::Void | IrType::Never => 1,
+            _ => 8, // All reference types and Any are 8-byte aligned
+        }
+    }
+
+    /// Finalize the struct (pad to alignment).
+    pub fn finalize(&mut self) {
+        self.size = (self.size + self.alignment - 1) & !(self.alignment - 1);
+    }
+}
+
+impl fmt::Display for IrStructDef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "struct {} {{ // size: {}, align: {}", self.name, self.size, self.alignment)?;
+        for (name, ty, offset) in &self.fields {
+            writeln!(f, "    {}: {} // offset: {}", name, ty, offset)?;
+        }
+        write!(f, "}}")
+    }
+}
+
 /// An IR module containing functions.
 #[derive(Debug)]
 pub struct IrModule {
@@ -743,6 +1006,14 @@ pub struct IrModule {
     pub functions: Vec<IrFunction>,
     /// Global variable names.
     pub globals: Vec<String>,
+    /// Struct definitions.
+    pub structs: HashMap<IrStructId, IrStructDef>,
+    /// Next struct ID to allocate.
+    next_struct_id: u32,
+    /// Monomorphization cache: (generic func id, type args) -> mono func id.
+    pub mono_cache: HashMap<(usize, Vec<IrType>), MonoFuncId>,
+    /// Next mono func ID.
+    next_mono_id: u32,
 }
 
 impl IrModule {
@@ -750,6 +1021,10 @@ impl IrModule {
         Self {
             functions: Vec::new(),
             globals: Vec::new(),
+            structs: HashMap::new(),
+            next_struct_id: 0,
+            mono_cache: HashMap::new(),
+            next_mono_id: 0,
         }
     }
 
@@ -758,6 +1033,36 @@ impl IrModule {
         let idx = self.functions.len();
         self.functions.push(func);
         idx
+    }
+
+    /// Define a new struct type.
+    pub fn define_struct(&mut self, name: String) -> IrStructId {
+        let id = IrStructId(self.next_struct_id);
+        self.next_struct_id += 1;
+        self.structs.insert(id, IrStructDef::new(id, name));
+        id
+    }
+
+    /// Get a struct definition by ID.
+    pub fn get_struct(&self, id: IrStructId) -> Option<&IrStructDef> {
+        self.structs.get(&id)
+    }
+
+    /// Get a mutable struct definition by ID.
+    pub fn get_struct_mut(&mut self, id: IrStructId) -> Option<&mut IrStructDef> {
+        self.structs.get_mut(&id)
+    }
+
+    /// Get or create a monomorphized function ID.
+    pub fn get_or_create_mono(&mut self, func_idx: usize, type_args: Vec<IrType>) -> MonoFuncId {
+        let key = (func_idx, type_args);
+        if let Some(&id) = self.mono_cache.get(&key) {
+            return id;
+        }
+        let id = MonoFuncId(self.next_mono_id);
+        self.next_mono_id += 1;
+        self.mono_cache.insert(key, id);
+        id
     }
 }
 
@@ -832,6 +1137,26 @@ impl fmt::Display for IrOp {
             }
             IrOp::Copy(d, s) => write!(f, "{} = copy {}", d, s),
             IrOp::LoadThis(d) => write!(f, "{} = load.this", d),
+            // Borrow operations
+            IrOp::Borrow(d, s) => write!(f, "{} = borrow {}", d, s),
+            IrOp::BorrowMut(d, s) => write!(f, "{} = borrow.mut {}", d, s),
+            IrOp::Deref(d, s) => write!(f, "{} = deref {}", d, s),
+            IrOp::DerefStore(dst, val) => write!(f, "deref.store {}, {}", dst, val),
+            IrOp::EndBorrow(v) => write!(f, "end.borrow {}", v),
+            // Struct operations
+            IrOp::StructNew(d, id) => write!(f, "{} = struct.new {}", d, id),
+            IrOp::StructGetField(d, src, field) => write!(f, "{} = struct.get {}, {}", d, src, field),
+            IrOp::StructSetField(dst, field, val) => write!(f, "struct.set {}, {}, {}", dst, field, val),
+            IrOp::StructGetFieldNamed(d, src, name) => write!(f, "{} = struct.get {}, .{}", d, src, name),
+            IrOp::StructSetFieldNamed(dst, name, val) => write!(f, "struct.set {}, .{}, {}", dst, name, val),
+            // Monomorphized calls
+            IrOp::CallMono(d, mono_id, args) => {
+                let args_str: Vec<_> = args.iter().map(|a| format!("{}", a)).collect();
+                write!(f, "{} = call.mono {}({})", d, mono_id, args_str.join(", "))
+            }
+            // Move operations
+            IrOp::Move(d, s) => write!(f, "{} = move {}", d, s),
+            IrOp::Clone(d, s) => write!(f, "{} = clone {}", d, s),
         }
     }
 }

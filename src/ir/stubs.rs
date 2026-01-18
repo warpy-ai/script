@@ -216,6 +216,27 @@ pub fn compile_strategy(op: &IrOp) -> CompileStrategy {
         IrOp::Phi(_, _) => CompileStrategy::NoOp, // Handled by register allocation
         IrOp::Copy(_, _) => CompileStrategy::Inline(InlineOp::Copy),
         IrOp::LoadThis(_) => CompileStrategy::Inline(InlineOp::LoadLocal),
+
+        // Borrow operations - handled by register allocation or inline
+        IrOp::Borrow(_, _) => CompileStrategy::Inline(InlineOp::Copy), // Just copy ptr
+        IrOp::BorrowMut(_, _) => CompileStrategy::Inline(InlineOp::Copy),
+        IrOp::Deref(_, _) => CompileStrategy::Inline(InlineOp::LoadLocal), // Load through ptr
+        IrOp::DerefStore(_, _) => CompileStrategy::Inline(InlineOp::StoreLocal), // Store through ptr
+        IrOp::EndBorrow(_) => CompileStrategy::NoOp, // Compile-time only
+
+        // Struct operations - will need stubs when implemented
+        IrOp::StructNew(_, _) => CompileStrategy::StubCall(stubs::ALLOC_OBJECT),
+        IrOp::StructGetField(_, _, _) => CompileStrategy::Inline(InlineOp::LoadLocal),
+        IrOp::StructSetField(_, _, _) => CompileStrategy::Inline(InlineOp::StoreLocal),
+        IrOp::StructGetFieldNamed(_, _, _) => CompileStrategy::StubCall(stubs::GET_PROP),
+        IrOp::StructSetFieldNamed(_, _, _) => CompileStrategy::StubCall(stubs::SET_PROP),
+
+        // Monomorphized calls
+        IrOp::CallMono(_, _, _) => CompileStrategy::StubCall(stubs::CALL),
+
+        // Move/Clone operations
+        IrOp::Move(_, _) => CompileStrategy::Inline(InlineOp::Copy), // Move is just ownership transfer
+        IrOp::Clone(_, _) => CompileStrategy::StubCall(stubs::ALLOC_OBJECT), // Clone needs allocation
     }
 }
 

@@ -1,10 +1,14 @@
+mod backend;
 mod compiler;
 use compiler::Compiler;
 mod ir;
 mod loader;
 mod runtime;
 mod stdlib;
+pub mod types;
 mod vm;
+
+use swc_ecma_parser::Syntax;
 
 use crate::loader::BytecodeDecoder;
 use crate::vm::VM;
@@ -32,8 +36,19 @@ fn load_and_run_script(
     append: bool,
 ) -> Result<(), String> {
     let source = fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {}", path, e))?;
+
+    // Determine syntax based on file extension
+    let syntax = if path.ends_with(".ts") || path.ends_with(".tsx") {
+        Some(Syntax::Typescript(Default::default()))
+    } else if path.ends_with(".js") || path.ends_with(".jsx") {
+        Some(Syntax::Es(Default::default()))
+    } else {
+        // Default to TypeScript for .tscl files
+        Some(Syntax::Typescript(Default::default()))
+    };
+
     let bytecode = compiler
-        .compile(&source)
+        .compile_with_syntax(&source, syntax)
         .map_err(|e| format!("Failed to compile {}: {}", path, e))?;
     let bytecode_len = bytecode.len();
 
@@ -89,7 +104,8 @@ fn main() {
         eprintln!("Commands:");
         eprintln!("  check <filename>     Check a .tscl file for errors (for LSP)");
         eprintln!("  ir <filename>        Dump SSA IR for a .tscl file");
-        eprintln!("  <filename>           Run a .tscl file");
+        eprintln!("  jit <filename>       Run a .tscl file with JIT compilation");
+        eprintln!("  <filename>           Run a .tscl file (VM interpreter)");
         eprintln!("  --run-binary <file>  Run a bytecode file (.bc)");
         return;
     }
@@ -115,6 +131,17 @@ fn main() {
         }
         let filename = &args[2];
         dump_ir(filename);
+        return;
+    }
+
+    // Handle "jit" command for JIT compilation
+    if command == "jit" {
+        if args.len() < 3 {
+            eprintln!("Usage: {} jit <filename>", args[0]);
+            std::process::exit(1);
+        }
+        let filename = &args[2];
+        run_jit(filename);
         return;
     }
 
@@ -177,7 +204,17 @@ fn main() {
         }
     };
 
-    match compiler.compile(&main_source) {
+    // Determine syntax based on file extension
+    let syntax = if filename.ends_with(".ts") || filename.ends_with(".tsx") {
+        Some(Syntax::Typescript(Default::default()))
+    } else if filename.ends_with(".js") || filename.ends_with(".jsx") {
+        Some(Syntax::Es(Default::default()))
+    } else {
+        // Default to TypeScript for .tscl files
+        Some(Syntax::Typescript(Default::default()))
+    };
+
+    match compiler.compile_with_syntax(&main_source, syntax) {
         Ok(main_bytecode) => {
             let offset = vm.append_program(main_bytecode);
             println!("Running from offset {}...", offset);
@@ -199,8 +236,18 @@ fn dump_ir(filename: &str) {
         }
     };
 
+    // Determine syntax based on file extension
+    let syntax = if filename.ends_with(".ts") || filename.ends_with(".tsx") {
+        Some(Syntax::Typescript(Default::default()))
+    } else if filename.ends_with(".js") || filename.ends_with(".jsx") {
+        Some(Syntax::Es(Default::default()))
+    } else {
+        // Default to TypeScript for .tscl files
+        Some(Syntax::Typescript(Default::default()))
+    };
+
     let mut compiler = Compiler::new();
-    let bytecode = match compiler.compile(&source) {
+    let bytecode = match compiler.compile_with_syntax(&source, syntax) {
         Ok(bc) => bc,
         Err(e) => {
             eprintln!("Compilation failed: {}", e);
@@ -247,8 +294,18 @@ fn check_file(filename: &str) {
         }
     };
 
+    // Determine syntax based on file extension
+    let syntax = if filename.ends_with(".ts") || filename.ends_with(".tsx") {
+        Some(Syntax::Typescript(Default::default()))
+    } else if filename.ends_with(".js") || filename.ends_with(".jsx") {
+        Some(Syntax::Es(Default::default()))
+    } else {
+        // Default to TypeScript for .tscl files
+        Some(Syntax::Typescript(Default::default()))
+    };
+
     let mut compiler = Compiler::new();
-    match compiler.compile(&source) {
+    match compiler.compile_with_syntax(&source, syntax) {
         Ok(_) => {
             // Success - no errors
             std::process::exit(0);
@@ -278,6 +335,99 @@ fn check_file(filename: &str) {
 
             // Output in format: filename:line:col: message
             eprintln!("{}:{}:{}: {}", filename, line_num, col_num, e);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Run a file using JIT compilation
+fn run_jit(filename: &str) {
+    use crate::backend::{BackendConfig, jit::JitRuntime};
+
+    let source = match fs::read_to_string(filename) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to read {}: {}", filename, e);
+            std::process::exit(1);
+        }
+    };
+
+    // Determine syntax based on file extension
+    let syntax = if filename.ends_with(".ts") || filename.ends_with(".tsx") {
+        Some(Syntax::Typescript(Default::default()))
+    } else if filename.ends_with(".js") || filename.ends_with(".jsx") {
+        Some(Syntax::Es(Default::default()))
+    } else {
+        // Default to TypeScript for .tscl files
+        Some(Syntax::Typescript(Default::default()))
+    };
+
+    // Compile to bytecode
+    let mut compiler = Compiler::new();
+    let bytecode = match compiler.compile_with_syntax(&source, syntax) {
+        Ok(bc) => bc,
+        Err(e) => {
+            eprintln!("Compilation failed: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    println!("=== Bytecode ({} instructions) ===", bytecode.len());
+    for (i, op) in bytecode.iter().enumerate() {
+        println!("[{:3}] {:?}", i, op);
+    }
+
+    // Lower to SSA IR
+    let lowerer = ir::lower::Lowerer::new("main".to_string());
+    match lowerer.lower(&bytecode) {
+        Ok(mut func) => {
+            // Create module
+            let mut module = ir::IrModule::new();
+            module.add_function(func);
+
+            // Run type inference
+            ir::typecheck::typecheck_module(&mut module);
+
+            // Run optimizations
+            ir::opt::optimize_module(&mut module);
+
+            println!("\n=== SSA IR (optimized) ===");
+            println!("{}", module);
+
+            // JIT compile
+            println!("\n=== JIT Compilation ===");
+            let config = BackendConfig::default();
+            let mut runtime = match JitRuntime::new(&config) {
+                Ok(rt) => rt,
+                Err(e) => {
+                    eprintln!("Failed to create JIT runtime: {}", e);
+                    std::process::exit(1);
+                }
+            };
+
+            match runtime.compile(&module) {
+                Ok(()) => {
+                    println!("JIT compilation successful!");
+
+                    // Try to call main
+                    println!("\n=== Execution ===");
+                    match runtime.call_main() {
+                        Ok(result) => {
+                            println!("Result: {:?}", result);
+                        }
+                        Err(e) => {
+                            eprintln!("Execution failed: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("JIT compilation failed: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("IR lowering failed: {}", e);
             std::process::exit(1);
         }
     }
