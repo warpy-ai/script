@@ -790,9 +790,6 @@ fn translate_op(
             // Try to resolve the function address for a direct call
             let func_addr = resolve_function_address(ctx, *func_val);
 
-            eprintln!("DEBUG: Call resolution for func_val={:?}", func_val);
-            eprintln!("  constants map: {:?}", ctx.constants);
-            eprintln!("  resolved_addr: {:?}", func_addr);
             if let Some(addr) = func_addr {
                 // Look up the function by bytecode address
                 let func_name = format!("func_{}", addr);
@@ -801,35 +798,18 @@ fn translate_op(
                     // Make a direct call to the compiled function
                     let func_ref = module.declare_func_in_func(func_id, builder.func);
 
-                    eprintln!(
-                        "DEBUG: Making direct call to {} with {} args",
-                        func_name,
-                        arg_values.len()
-                    );
-
                     let call = builder.ins().call(func_ref, &arg_values);
                     let results = builder.inst_results(call);
-
-                    eprintln!("DEBUG: Call returned {} results", results.len());
 
                     if results.is_empty() {
                         // Function returns void, use undefined
                         let undefined = translate_literal(builder, &Literal::Undefined);
                         ctx.values.insert(*dst, undefined);
-                        eprintln!(
-                            "DEBUG: Call returned void, using undefined for dst={:?}",
-                            dst
-                        );
                     } else {
                         ctx.values.insert(*dst, results[0]);
-                        eprintln!(
-                            "DEBUG: Stored result to dst={:?}, result value type: {:?}",
-                            dst, results[0]
-                        );
                     }
                 } else {
                     // Function not found - use runtime stub
-                    eprintln!("DEBUG: Function {} not found in module_func_ids", func_name);
                     let func_ptr = get_value(ctx, *func_val)?;
                     let result =
                         call_indirect_function(builder, module, ctx, func_ptr, &arg_values)?;
@@ -837,10 +817,6 @@ fn translate_op(
                 }
             } else {
                 // Dynamic call - use runtime stub
-                eprintln!(
-                    "DEBUG: Could not resolve function address for {:?}",
-                    func_val
-                );
                 let func_ptr = get_value(ctx, *func_val)?;
                 let result = call_indirect_function(builder, module, ctx, func_ptr, &arg_values)?;
                 ctx.values.insert(*dst, result);
@@ -959,18 +935,8 @@ fn translate_terminator(
 
         Terminator::Return(val) => {
             let ret_val = match val {
-                Some(v) => {
-                    eprintln!("DEBUG: Returning value {:?}", v);
-                    // Check if it's a constant
-                    if let Some(lit) = ctx.constants.get(v) {
-                        eprintln!("DEBUG: Return value is constant: {:?}", lit);
-                    }
-                    get_value(ctx, *v)?
-                }
-                None => {
-                    eprintln!("DEBUG: Returning undefined (no value)");
-                    translate_literal(builder, &Literal::Undefined)
-                }
+                Some(v) => get_value(ctx, *v)?,
+                None => translate_literal(builder, &Literal::Undefined),
             };
             builder.ins().return_(&[ret_val]);
         }
