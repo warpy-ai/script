@@ -1,15 +1,16 @@
-pub mod opcodes;
-pub mod value;
-
 /// Maximum call stack depth to prevent stack overflow in deeply recursive code
 const MAX_CALL_STACK_DEPTH: usize = 1000;
+
+pub mod opcodes;
+pub mod value;
 
 use crate::stdlib::{
     native_byte_stream_length, native_byte_stream_patch_u32, native_byte_stream_to_array,
     native_byte_stream_write_f64, native_byte_stream_write_string, native_byte_stream_write_u8,
     native_byte_stream_write_u32, native_byte_stream_write_varint, native_create_byte_stream,
-    native_log, native_read_file, native_require, native_set_timeout, native_string_from_char_code,
-    native_write_binary_file, native_write_file,
+    native_log, native_promise_all, native_promise_catch, native_promise_reject,
+    native_promise_resolve, native_promise_then, native_read_file, native_require,
+    native_set_timeout, native_string_from_char_code, native_write_binary_file, native_write_file,
 };
 use crate::vm::opcodes::OpCode;
 use crate::vm::value::HeapData;
@@ -17,6 +18,8 @@ use crate::vm::value::HeapObject;
 use crate::vm::value::JsValue;
 use crate::vm::value::NativeFn;
 use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub struct Frame {
@@ -29,6 +32,8 @@ pub struct Frame {
     /// Tracks whether super() has been called in a derived class constructor
     /// JavaScript requires super() to be called before accessing `this`
     pub super_called: bool,
+    /// For async functions: where to resume after await
+    pub resume_ip: Option<usize>,
 }
 
 pub struct Task {
@@ -63,16 +68,12 @@ pub struct VM {
     timers: Vec<TimerTask>,
     pub program: Vec<OpCode>,
     pub modules: HashMap<String, JsValue>,
-    pub ip: usize, // Instruction Pointer
-    /// Execution counters for each function (address -> call count).
-    /// Used for tiered compilation to identify hot functions.
+    pub ip: usize,
     pub function_call_counts: HashMap<usize, u64>,
-    /// Total number of instructions executed (for profiling).
     pub total_instructions: u64,
-    /// Stack of exception handlers for try/catch blocks
     pub exception_handlers: Vec<ExceptionHandler>,
-    /// Current exception being handled (for rethrow in finally)
     pub current_exception: Option<JsValue>,
+    pub current_module_path: Option<PathBuf>,
 }
 
 impl VM {
@@ -105,6 +106,7 @@ impl VM {
             total_instructions: 0,
             exception_handlers: Vec::new(),
             current_exception: None,
+            current_module_path: None,
         }
     }
 
@@ -254,6 +256,39 @@ impl VM {
         self.call_stack[0]
             .locals
             .insert("String".into(), JsValue::Object(string_ptr));
+
+        // Promise = { resolve, reject, all, then, catch }
+        let promise_resolve_idx = self.register_native(native_promise_resolve);
+        let promise_reject_idx = self.register_native(native_promise_reject);
+        let promise_then_idx = self.register_native(native_promise_then);
+        let promise_catch_idx = self.register_native(native_promise_catch);
+        let promise_all_idx = self.register_native(native_promise_all);
+
+        let promise_ptr = self.heap.len();
+        let mut promise_props = HashMap::new();
+        promise_props.insert(
+            "resolve".to_string(),
+            JsValue::NativeFunction(promise_resolve_idx),
+        );
+        promise_props.insert(
+            "reject".to_string(),
+            JsValue::NativeFunction(promise_reject_idx),
+        );
+        promise_props.insert(
+            "then".to_string(),
+            JsValue::NativeFunction(promise_then_idx),
+        );
+        promise_props.insert(
+            "catch".to_string(),
+            JsValue::NativeFunction(promise_catch_idx),
+        );
+        promise_props.insert("all".to_string(), JsValue::NativeFunction(promise_all_idx));
+        self.heap.push(HeapObject {
+            data: HeapData::Object(promise_props),
+        });
+        self.call_stack[0]
+            .locals
+            .insert("Promise".into(), JsValue::Object(promise_ptr));
     }
 
     pub fn register_native(&mut self, func: NativeFn) -> usize {
@@ -468,6 +503,7 @@ impl VM {
                     this_context: JsValue::Undefined,
                     new_target: None,
                     super_called: false,
+                    resume_ip: None,
                 };
 
                 // CLOSURE MAGIC: If this function has captured variables (env),
@@ -575,6 +611,7 @@ impl VM {
                             this_context,
                             new_target: None,
                             super_called: false,
+                            resume_ip: None,
                         };
 
                         if let Some(HeapObject {
@@ -623,6 +660,7 @@ impl VM {
                                             this_context,
                                             new_target: None,
                                             super_called: false,
+                                            resume_ip: None,
                                         };
 
                                         if let Some(HeapObject {
@@ -760,6 +798,7 @@ impl VM {
                             this_context: JsValue::Undefined,
                             new_target: None,
                             super_called: false,
+                            resume_ip: None,
                         };
 
                         // CLOSURE CONTEXT SWITCH: Load captured variables from
@@ -1300,6 +1339,7 @@ impl VM {
                     this_context: this_obj.clone(),
                     new_target: Some(new_target_val),
                     super_called: false,
+                    resume_ip: None,
                 };
 
                 // Load captured environment if present
@@ -1683,6 +1723,7 @@ impl VM {
                                 this_context: JsValue::Object(ptr),
                                 new_target: None,
                                 super_called: false,
+                                resume_ip: None,
                             };
 
                             // Load captured variables from environment
@@ -1908,6 +1949,7 @@ impl VM {
                         this_context,
                         new_target: None,
                         super_called: false,
+                        resume_ip: None,
                     };
 
                     // Load captured variables from closure environment
@@ -2202,6 +2244,7 @@ impl VM {
                             this_context: target_for_frame.clone(),
                             new_target: Some(target_for_frame),
                             super_called: false,
+                            resume_ip: None,
                         };
 
                         // Load captured variables from environment
@@ -2223,6 +2266,160 @@ impl VM {
                         self.stack.push(target);
                     }
                 }
+            }
+
+            // === ES Modules ===
+            OpCode::ImportAsync(specifier) => {
+                use std::fs;
+
+                let specifier_str = match self.stack.pop() {
+                    Some(JsValue::String(s)) => s,
+                    Some(_) => {
+                        eprintln!("Error: ImportAsync expected string specifier");
+                        self.stack.push(JsValue::Undefined);
+                        return ExecResult::Continue;
+                    }
+                    None => {
+                        eprintln!("Error: ImportAsync missing specifier on stack");
+                        self.stack.push(JsValue::Undefined);
+                        return ExecResult::Continue;
+                    }
+                };
+
+                let importer_path = self.current_module_path.clone();
+
+                let resolved_path = {
+                    let importer_dir = importer_path
+                        .as_ref()
+                        .and_then(|p| if p.is_file() { p.parent() } else { Some(p) })
+                        .unwrap_or(std::path::Path::new("."));
+
+                    let mut path = importer_dir.to_path_buf();
+
+                    for component in specifier_str.split('/') {
+                        match component {
+                            "." => {}
+                            ".." => {
+                                if !path.as_os_str().is_empty() {
+                                    path.pop();
+                                }
+                            }
+                            "" if specifier_str.starts_with("./") => {}
+                            "" if specifier_str.starts_with("../") => {}
+                            _ => path.push(component),
+                        };
+                    }
+
+                    let extensions = [".tscl", ".ts", ".js"];
+                    if path.as_os_str().is_empty() || specifier_str.ends_with('/') {
+                        for ext in extensions {
+                            let index_path = path.join("index").with_extension(&ext[1..]);
+                            if index_path.exists() {
+                                path = index_path;
+                                break;
+                            }
+                        }
+                    } else if !path.exists() {
+                        for ext in extensions {
+                            let with_ext = path.with_extension(ext);
+                            if with_ext.exists() {
+                                path = with_ext;
+                                break;
+                            }
+                        }
+                    }
+
+                    path
+                };
+
+                if !resolved_path.exists() {
+                    eprintln!("Error: Module not found: {}", specifier_str);
+                    self.stack.push(JsValue::Undefined);
+                    return ExecResult::Continue;
+                }
+
+                let result = fs::read_to_string(&resolved_path)
+                    .map_err(|e| format!("Failed to read module: {}", e));
+
+                match result {
+                    Ok(source) => {
+                        let namespace_ptr = self.heap.len();
+                        let mut namespace_props = HashMap::new();
+
+                        namespace_props.insert(
+                            "__path__".to_string(),
+                            JsValue::String(resolved_path.to_string_lossy().into_owned()),
+                        );
+                        namespace_props.insert("__source__".to_string(), JsValue::String(source));
+
+                        self.heap.push(HeapObject {
+                            data: HeapData::Object(namespace_props),
+                        });
+
+                        self.stack.push(JsValue::Object(namespace_ptr));
+                    }
+                    Err(e) => {
+                        eprintln!("Error loading module '{}': {}", specifier_str, e);
+                        self.stack.push(JsValue::Undefined);
+                    }
+                }
+            }
+
+            OpCode::Await => {
+                // Stack: [promise] -> [result]
+                let _promise = self.stack.pop().unwrap_or(JsValue::Undefined);
+                eprintln!("Warning: Await not yet fully implemented in JIT");
+                self.stack.push(JsValue::Undefined);
+            }
+
+            OpCode::GetExport {
+                name,
+                is_default: _,
+            } => {
+                let namespace = match self.stack.pop() {
+                    Some(JsValue::Object(ptr)) => {
+                        if let Some(HeapObject {
+                            data: HeapData::Object(props),
+                            ..
+                        }) = self.heap.get(ptr)
+                        {
+                            props.clone()
+                        } else {
+                            HashMap::new()
+                        }
+                    }
+                    Some(_) => {
+                        eprintln!("Warning: GetExport expected namespace object");
+                        self.stack.push(JsValue::Undefined);
+                        return ExecResult::Continue;
+                    }
+                    None => {
+                        eprintln!("Warning: GetExport missing namespace on stack");
+                        self.stack.push(JsValue::Undefined);
+                        return ExecResult::Continue;
+                    }
+                };
+
+                let export_value = namespace.get(&name).cloned().unwrap_or(JsValue::Undefined);
+                self.stack.push(export_value);
+            }
+
+            OpCode::ModuleResolutionError {
+                message,
+                specifier,
+                importer,
+                dependency_chain: _,
+            } => {
+                let _specifier = self.stack.pop().unwrap_or(JsValue::Undefined);
+                let _importer = self.stack.pop().unwrap_or(JsValue::Undefined);
+                eprintln!(
+                    "Error: Module resolution error: {} (trying to import {} from {})",
+                    message, specifier, importer
+                );
+                self.stack.push(JsValue::String(format!(
+                    "ModuleResolutionError: {} (importing {} from {})",
+                    message, specifier, importer
+                )));
             }
         }
 

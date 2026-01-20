@@ -28,6 +28,10 @@ cranelift-native = "0.113"
 cranelift-codegen = "0.113"
 target-lexicon = "0.12"
 
+# Module loading
+sha2 = "0.10"
+hex = "0.4"
+
 # LLVM AOT backend
 # NOTE: Requires LLVM 18 to be installed on the system.
 # Install via: brew install llvm@18

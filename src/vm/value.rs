@@ -1,10 +1,11 @@
 // Memory representation. We will use a enum to implement ownership,
 // and we track wheter a value is "Owned" or a "reference" in the low-level representation
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 pub type NativeFn = fn(&mut crate::vm::VM, Vec<JsValue>) -> JsValue;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum JsValue {
     Number(f64),
     String(String),
@@ -25,6 +26,70 @@ pub enum JsValue {
     /// Accessor descriptor for getters/setters
     /// First element is getter function, second is setter function
     Accessor(Option<Box<JsValue>>, Option<Box<JsValue>>),
+    /// Promise for ES modules and async operations
+    Promise(Promise),
+}
+
+impl PartialEq for JsValue {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (JsValue::Number(a), JsValue::Number(b)) => a == b,
+            (JsValue::String(a), JsValue::String(b)) => a == b,
+            (JsValue::Boolean(a), JsValue::Boolean(b)) => a == b,
+            (JsValue::Object(a), JsValue::Object(b)) => a == b,
+            (
+                JsValue::Function {
+                    address: a,
+                    env: ae,
+                },
+                JsValue::Function {
+                    address: b,
+                    env: be,
+                },
+            ) => a == b && ae == be,
+            (JsValue::NativeFunction(a), JsValue::NativeFunction(b)) => a == b,
+            (JsValue::Null, JsValue::Null) => true,
+            (JsValue::Undefined, JsValue::Undefined) => true,
+            (JsValue::Accessor(a_get, a_set), JsValue::Accessor(b_get, b_set)) => {
+                a_get == b_get && a_set == b_set
+            }
+            (JsValue::Promise(a), JsValue::Promise(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for JsValue {}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum PromiseState {
+    Pending,
+    Fulfilled,
+    Rejected,
+}
+
+#[derive(Debug, Clone)]
+pub struct Promise {
+    pub state: Arc<Mutex<PromiseInternal>>,
+}
+
+impl PartialEq for Promise {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.state, &other.state)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PromiseInternal {
+    pub state: PromiseState,
+    pub value: Option<JsValue>,
+    pub handlers: Vec<PromiseHandler>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PromiseHandler {
+    pub on_fulfilled: Option<Box<JsValue>>,
+    pub on_rejected: Option<Box<JsValue>>,
 }
 
 #[derive(Debug, Clone)]

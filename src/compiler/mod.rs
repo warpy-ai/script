@@ -1,4 +1,5 @@
 use crate::vm::opcodes::OpCode;
+use std::borrow::Cow;
 use std::collections::HashSet;
 use swc_ecma_ast::*;
 pub mod borrow_ck;
@@ -95,6 +96,8 @@ pub struct Codegen {
     private_field_indices: std::collections::HashMap<String, usize>,
     /// Maps private method names to their indices for the current class
     private_method_indices: std::collections::HashMap<String, usize>,
+    /// Warnings collected during compilation
+    pub warnings: Vec<String>,
 }
 
 impl Codegen {
@@ -107,6 +110,7 @@ impl Codegen {
             loop_stack: Vec::new(),
             private_field_indices: std::collections::HashMap::new(),
             private_method_indices: std::collections::HashMap::new(),
+            warnings: Vec::new(),
         }
     }
 
@@ -284,9 +288,187 @@ impl Codegen {
                 }
                 _ => {}
             },
-            ModuleDecl::Import(_) => {}
-            ModuleDecl::ExportNamed(_) => {}
-            ModuleDecl::ExportAll(_) => {}
+            ModuleDecl::Import(import) => {
+                let src = import.src.value.to_string_lossy().into_owned();
+
+                for spec in &import.specifiers {
+                    match spec {
+                        ImportSpecifier::Named(named) => {
+                            let local = named.local.sym.to_string();
+                            let imported = named
+                                .imported
+                                .as_ref()
+                                .map(|i| {
+                                    let atom = i.atom();
+                                    let s: &str = &*atom;
+                                    s.to_string()
+                                })
+                                .unwrap_or_else(|| local.clone());
+
+                            self.instructions
+                                .push(OpCode::Push(JsValue::String(src.clone())));
+                            self.instructions.push(OpCode::ImportAsync(src.clone()));
+                            self.instructions.push(OpCode::GetExport {
+                                name: imported.clone(),
+                                is_default: false,
+                            });
+                            self.instructions.push(OpCode::Let(local));
+                        }
+                        ImportSpecifier::Default(default) => {
+                            let local = default.local.sym.to_string();
+
+                            self.instructions
+                                .push(OpCode::Push(JsValue::String(src.clone())));
+                            self.instructions.push(OpCode::ImportAsync(src.clone()));
+                            self.instructions.push(OpCode::GetExport {
+                                name: "default".to_string(),
+                                is_default: true,
+                            });
+                            self.instructions.push(OpCode::Let(local));
+                        }
+                        ImportSpecifier::Namespace(ns) => {
+                            let local = ns.local.sym.to_string();
+
+                            self.instructions
+                                .push(OpCode::Push(JsValue::String(src.clone())));
+                            self.instructions.push(OpCode::ImportAsync(src.clone()));
+                            self.instructions.push(OpCode::Let(local));
+                        }
+                    }
+                }
+
+                if import.specifiers.is_empty() {
+                    self.instructions
+                        .push(OpCode::Push(JsValue::String(src.clone())));
+                    self.instructions.push(OpCode::ImportAsync(src.clone()));
+                    self.instructions.push(OpCode::Pop);
+                }
+
+                if let Some(with) = &import.with {
+                    self.warnings.push(format!(
+                        "Warning: Import assertions for '{}' are not fully supported",
+                        import.src.value.to_string_lossy()
+                    ));
+                }
+            }
+            ModuleDecl::ExportNamed(named) => {
+                if let Some(src) = &named.src {
+                    let src_str = src.value.to_string_lossy().into_owned();
+                    for spec in &named.specifiers {
+                        match spec {
+                            ExportSpecifier::Named(named) => {
+                                let export_name = named
+                                    .exported
+                                    .as_ref()
+                                    .map(|e| {
+                                        let atom = e.atom();
+                                        let s: &str = &*atom;
+                                        s.to_string()
+                                    })
+                                    .unwrap_or_else(|| {
+                                        let atom = named.orig.atom();
+                                        let s: &str = &*atom;
+                                        s.to_string()
+                                    });
+                                let local_name = {
+                                    let atom = named.orig.atom();
+                                    let s: &str = &*atom;
+                                    s.to_string()
+                                };
+
+                                self.instructions
+                                    .push(OpCode::Push(JsValue::String(src_str.clone())));
+                                self.instructions.push(OpCode::ImportAsync(src_str.clone()));
+                                self.instructions.push(OpCode::GetExport {
+                                    name: export_name.clone(),
+                                    is_default: false,
+                                });
+                                self.instructions.push(OpCode::Let(export_name.clone()));
+                                self.instructions.push(OpCode::Load(export_name.clone()));
+                                self.instructions.push(OpCode::Store(export_name));
+                            }
+                            ExportSpecifier::Default(_) => {
+                                self.instructions
+                                    .push(OpCode::Push(JsValue::String(src_str.clone())));
+                                self.instructions.push(OpCode::ImportAsync(src_str.clone()));
+                                self.instructions.push(OpCode::GetExport {
+                                    name: "default".to_string(),
+                                    is_default: true,
+                                });
+                                self.instructions.push(OpCode::Let("default".to_string()));
+                                self.instructions.push(OpCode::Load("default".to_string()));
+                                self.instructions.push(OpCode::Store("default".to_string()));
+                            }
+                            ExportSpecifier::Namespace(ns) => {
+                                let name = {
+                                    let atom = ns.name.atom();
+                                    let s: &str = &*atom;
+                                    s.to_string()
+                                };
+                                self.instructions
+                                    .push(OpCode::Push(JsValue::String(src_str.clone())));
+                                self.instructions.push(OpCode::ImportAsync(src_str.clone()));
+                                self.instructions.push(OpCode::Let(name.clone()));
+                            }
+                        }
+                    }
+                } else {
+                    for spec in &named.specifiers {
+                        match spec {
+                            ExportSpecifier::Named(named) => {
+                                let export_name = named
+                                    .exported
+                                    .as_ref()
+                                    .map(|e| {
+                                        let atom = e.atom();
+                                        let s: &str = &*atom;
+                                        s.to_string()
+                                    })
+                                    .unwrap_or_else(|| {
+                                        let atom = named.orig.atom();
+                                        let s: &str = &*atom;
+                                        s.to_string()
+                                    });
+                                let local_name = {
+                                    let atom = named.orig.atom();
+                                    let s: &str = &*atom;
+                                    s.to_string()
+                                };
+
+                                self.instructions.push(OpCode::Load(local_name));
+                                self.instructions.push(OpCode::Dup);
+                                self.instructions.push(OpCode::Store(export_name));
+                            }
+                            ExportSpecifier::Default(_) => {
+                                self.instructions.push(OpCode::Load("default".to_string()));
+                                self.instructions.push(OpCode::Dup);
+                                self.instructions.push(OpCode::Store("default".to_string()));
+                            }
+                            ExportSpecifier::Namespace(ns) => {
+                                let name = {
+                                    let atom = ns.name.atom();
+                                    let s: &str = &*atom;
+                                    s.to_string()
+                                };
+                                self.instructions.push(OpCode::Load(name.clone()));
+                                self.instructions.push(OpCode::Dup);
+                                self.instructions.push(OpCode::Store(name));
+                            }
+                        }
+                    }
+                }
+            }
+            ModuleDecl::ExportAll(all) => {
+                let src_str = all.src.value.to_string_lossy().into_owned();
+                self.warnings.push(format!(
+                    "Warning: 'export * from' is not yet fully implemented for '{}'",
+                    src_str
+                ));
+                self.instructions
+                    .push(OpCode::Push(JsValue::String(src_str.clone())));
+                self.instructions.push(OpCode::ImportAsync(src_str.clone()));
+                self.instructions.push(OpCode::Pop);
+            }
             ModuleDecl::TsImportEquals(_) => {}
             ModuleDecl::TsExportAssignment(_) => {}
             ModuleDecl::TsNamespaceExport(_) => {}

@@ -830,6 +830,44 @@ impl Lowerer {
                 self.emit(IrOp::Const(val, Literal::Undefined));
                 self.push(val);
             }
+
+            // === ES Modules ===
+            // ES modules require async loading which isn't supported in AOT yet
+            // These opcodes will work in JIT mode but emit stubs for AOT
+            OpCode::ImportAsync(_specifier) => {
+                // Pop the module specifier URL
+                let _url = self.pop()?;
+                // Emit undefined as a placeholder for the promise
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::Const(dst, Literal::Undefined));
+                self.push(dst);
+            }
+
+            OpCode::Await => {
+                // Await requires async runtime support - emit undefined for now
+                let _promise = self.pop()?;
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::Const(dst, Literal::Undefined));
+                self.push(dst);
+            }
+
+            OpCode::GetExport {
+                name: _,
+                is_default: _,
+            } => {
+                // Get export from module namespace - emit undefined for now
+                let _namespace = self.pop()?;
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::Const(dst, Literal::Undefined));
+                self.push(dst);
+            }
+
+            OpCode::ModuleResolutionError { .. } => {
+                // Module resolution error - pop and ignore for AOT
+                let _specifier = self.pop()?;
+                let _importer = self.pop()?;
+                let _chain = self.pop()?;
+            }
         }
 
         Ok(())
@@ -849,6 +887,7 @@ impl Lowerer {
             }
             JsValue::NativeFunction(_) => (Literal::Null, IrType::Function),
             JsValue::Accessor(_, _) => (Literal::Null, IrType::Any),
+            JsValue::Promise(_) => (Literal::Null, IrType::Any),
         }
     }
 }

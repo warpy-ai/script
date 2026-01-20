@@ -895,3 +895,192 @@ LOG: String("The sum of 10 and 20 is 30")
 LOG: String("Multi-line\\ntemplate\\nliteral")
 LOG: String("Decorating class: MyClass")
 ```
+
+### ES Modules Implementation (IN PROGRESS - BASIC LOADING WORKING)
+
+**Goal:** Native ES modules with async loading, file-based resolution, and comprehensive error diagnostics.
+
+#### Status Update (Jan 20, 2026)
+
+Basic ES module loading is now working:
+
+- ✅ **ImportAsync opcode**: Implemented with file-based resolution
+  - Resolves relative imports (./, ../)
+  - Tries .tscl, .ts, .js extensions
+  - Supports index files for directory imports
+  - Returns namespace object with `__path__` and `__source__`
+  
+- ✅ **GetExport opcode**: Extracts values from namespace objects
+
+- ✅ **Promise type**: Added to JsValue with proper PartialEq
+
+- ✅ **IR lowering**: New opcodes lower to stubs for AOT compilation
+
+- ⚠️ **Full AST parsing**: Not yet integrated (swc API compatibility issues)
+- ⚠️ **Async loading**: Simplified to synchronous for now
+- ⚠️ **Await**: Still a no-op (no async runtime)
+
+#### What's Working
+
+```typescript
+// main.tscl
+import { add } from './math';
+const result = add(1, 2);
+console.log(result);
+
+// math.tscl  
+export function add(a: number, b: number): number {
+    return a + b;
+}
+```
+
+The compiler generates proper bytecode with `ImportAsync` + `GetExport` opcodes, and the VM loads modules synchronously.
+
+#### Design Decisions (Confirmed)
+
+| Decision | Status |
+|----------|--------|
+| Module loading | **Native ES Modules (async)** - No CommonJS |
+| Package resolution | **File-based only** (Phase 1), package.json later |
+| Import assertions | **Parse & store**, emit warning if unsupported |
+| Module caching | **Canonical path + SHA256** hash, hot-reload support |
+| Error messages | **Full dependency chain**, source locations, pretty diagnostics |
+| Stack traces | **Compile-time only** (not runtime) |
+
+#### Architecture
+
+```
+src/
+├── module/
+│   ├── mod.rs              # Module loader orchestrator
+│   ├── resolver.rs         # File-based resolution (Phase 1)
+│   ├── loader.rs           # Async loading & caching
+│   └── diagnostics.rs      # Error messages with dependency chain
+├── stdlib/
+│   ├── mod.rs              # Existing stdlib
+│   └── promise.rs          # Promise implementation (NEW)
+├── compiler/
+│   └── mod.rs              # Updated import/export handlers
+├── vm/
+│   ├── mod.rs              # ImportAsync, Await, GetExport opcodes
+│   └── opcodes.rs          # New opcodes
+└── main.rs                 # Module loading CLI integration
+```
+
+#### Supported Syntax (Phase 1)
+
+```typescript
+// Imports
+import { foo } from './module';        // Named import
+import defaultExport from './module';  // Default import
+import * as ns from './module';        // Namespace import
+import './module';                     // Side-effect only
+
+// Exports
+export const x = 1;                    // Inline export
+export { foo, bar };                   // Named export
+export { foo } from './module';        // Re-export named
+export * from './module';              // Re-export all
+export default function() {}           // Default export
+```
+
+#### Phase 1: Module Resolution & Loading
+
+**File: `src/module/resolver.rs`**
+
+- File-based resolution: `./foo`, `../foo`, `./`
+- Extension resolution: `.tscl`, `.ts`, `.js`
+- Directory index: `dir/` → `dir/index.tscl`
+- Import assertion parsing and storage
+
+**File: `src/module/loader.rs`**
+
+- Async module loading with caching
+- Dependency graph for cycle detection
+- SHA256 content hashing for cache invalidation
+
+#### Phase 2: Promise Implementation
+
+**File: `src/stdlib/promise.rs`**
+
+```rust
+pub enum PromiseState {
+    Pending,
+    Fulfilled(JsValue),
+    Rejected(JsValue),
+}
+
+pub struct Promise {
+    state: Mutex<PromiseState>,
+    handlers: Vec<Box<dyn FnOnce(JsValue) + Send>>,
+}
+```
+
+#### Phase 3: New Opcodes
+
+**File: `src/vm/opcodes.rs`**
+
+```rust
+// === ES Modules ===
+ImportAsync(String),  // Async import - returns promise
+Await,                // Await a promise value
+GetExport { name: String, is_default: bool },  // Get named export
+```
+
+#### Phase 4: Compiler Updates
+
+**File: `src/compiler/mod.rs`**
+
+- Handle `ModuleDecl::Import`, `ModuleDecl::ExportNamed`, `ModuleDecl::ExportAll`
+- Emit warnings for unsupported import assertions
+- Generate `ImportAsync` + `GetExport` bytecode
+
+#### Phase 5: Error Diagnostics
+
+**File: `src/module/diagnostics.rs`**
+
+```rust
+pub struct ModuleError {
+    pub kind: ModuleErrorKind,
+    pub source_location: Option<SourceLocation>,
+    pub dependency_chain: Vec<DependencyInfo>,
+    pub suggestion: Option<String>,
+}
+```
+
+#### File Manifest
+
+| File | Action | Description |
+|------|--------|-------------|
+| `src/module/mod.rs` | Create | Module loader orchestrator |
+| `src/module/resolver.rs` | Create | File-based resolution |
+| `src/module/loader.rs` | Create | Async loading & caching |
+| `src/module/diagnostics.rs` | Create | Rich error messages |
+| `src/stdlib/promise.rs` | Create | Promise implementation |
+| `src/vm/opcodes.rs` | Modify | Add ImportAsync, Await, GetExport |
+| `src/vm/value.rs` | Modify | Add JsValue::Promise with PartialEq |
+| `src/vm/mod.rs` | Modify | Implement new opcodes + Promise support |
+| `src/ir/lower.rs` | Modify | Add IR lowering for new opcodes |
+| `src/compiler/mod.rs` | Modify | Add import/export handlers |
+| `src/main.rs` | Modify | Module loading CLI integration |
+
+#### Fixes Applied (Jan 20, 2026)
+
+- Fixed E0425: `src` variable scope in export handling (line 415)
+- Fixed E0369: Added `PartialEq` for `Promise` struct using `Arc::ptr_eq`
+- Fixed E0308: String vs &str mismatch in `OpCode::Store`
+- Fixed E0004: Added all new opcodes to IR lowering pass
+- Fixed E0004: Added `JsValue::Promise` to `jsvalue_to_literal`
+- Fixed move errors: Added `.clone()` for `src` and `export_name`
+- Replaced `tracing::warn!`/`error!` with `eprintln!` for compatibility
+
+#### Effort Estimate
+
+| Phase | Files | Complexity | Duration |
+|-------|-------|------------|----------|
+| Phase 1: Resolver + Loader | 4 | High | 3 days |
+| Phase 2: Promise | 1 | Medium | 2 days |
+| Phase 3: VM Opcodes | 2 | Medium | 2 days |
+| Phase 4: Compiler | 1 | Medium | 2 days |
+| Phase 5: Diagnostics | 1 | Low | 1 day |
+| **Total** | **9** | **~10 days** |

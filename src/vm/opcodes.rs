@@ -106,4 +106,27 @@ pub enum OpCode {
     /// Stack: [target, decorator] -> [decorated_target]
     /// The decorator is called with the target and returns the decorated result
     ApplyDecorator,
+
+    // === ES Modules ===
+    /// ImportAsync: Asynchronously load a module
+    /// Stack: [module_url] -> [promise]
+    /// The promise resolves to the module namespace object
+    ImportAsync(String),
+    /// Await: Await a promise value (must be in async context)
+    /// Stack: [promise] -> [result]
+    /// Suspends execution until promise resolves
+    Await,
+    /// GetExport: Get named export from module namespace
+    /// Stack: [namespace] -> [export_value]
+    GetExport {
+        name: String,
+        is_default: bool,
+    },
+    /// ModuleResolutionError: Error with source location and dependency chain
+    ModuleResolutionError {
+        message: String,
+        specifier: String,
+        importer: String,
+        dependency_chain: Vec<String>,
+    },
 }
