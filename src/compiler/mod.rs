@@ -1386,6 +1386,26 @@ impl Codegen {
                     }
                 }
             }
+            Expr::Await(await_expr) => {
+                // await expression: await <promise>
+                // Compilation strategy:
+                // 1. Compile the promise expression
+                // 2. Emit Await opcode to suspend and wait for resolution
+
+                // Check if we're in an async function
+                if !self.in_async_function {
+                    // await outside async function - just compile the inner expression
+                    // This is technically a syntax error in strict mode, but we allow it
+                    self.gen_expr(&await_expr.arg);
+                } else {
+                    // Compile the promise expression
+                    self.gen_expr(&await_expr.arg);
+                    // Stack: [promise]
+                    // Emit Await opcode which will poll the promise
+                    self.instructions.push(OpCode::Await);
+                    // Stack: [result]
+                }
+            }
             _ => {}
         }
     }

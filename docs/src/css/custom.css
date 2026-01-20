@@ -160,6 +160,57 @@ body {
   font-family: var(--font-sans);
 }
 
+/* CTA button styling similar to Bun */
+.navbar__item--cta .navbar__link {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-radius: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.navbar__item--cta .navbar__link:hover {
+  background: color-mix(in oklch, var(--primary) 90%, black 10%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px oklch(0.2 0 0 / 0.3);
+}
+
+[data-theme='dark'] .navbar__item--cta .navbar__link {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+[data-theme='dark'] .navbar__item--cta .navbar__link:hover {
+  background: color-mix(in oklch, var(--primary) 95%, white 5%);
+}
+
+/* Search bar styling */
+.navbar__search {
+  margin-left: 1rem;
+  margin-right: 1rem;
+}
+
+.navbar__search-input {
+  background: var(--input);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.9rem;
+  transition: all 0.2s ease;
+}
+
+.navbar__search-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px oklch(0.5 0.1 0 / 0.1);
+}
+
+/* Navbar item spacing */
+.navbar__item {
+  margin: 0 0.25rem;
+}
+
 .footer {
   border-top: 1px solid var(--border);
   background: color-mix(in oklch, var(--sidebar) 92%, black 8%);

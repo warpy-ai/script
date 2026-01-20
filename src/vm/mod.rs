@@ -7,11 +7,12 @@ pub mod value;
 use crate::compiler::Compiler;
 use crate::stdlib::{
     native_byte_stream_length, native_byte_stream_patch_u32, native_byte_stream_to_array,
-    native_byte_stream_write_f64, native_byte_stream_write_string, native_byte_stream_write_u8,
+    native_byte_stream_write_f64, native_byte_stream_write_u8,
     native_byte_stream_write_u32, native_byte_stream_write_varint, native_create_byte_stream,
-    native_log, native_promise_all, native_promise_catch, native_promise_reject,
-    native_promise_resolve, native_promise_then, native_read_file, native_require,
-    native_set_timeout, native_string_from_char_code, native_write_binary_file, native_write_file,
+    native_log, native_promise_all, native_promise_constructor, native_promise_catch,
+    native_promise_reject, native_promise_resolve, native_promise_then, native_read_file,
+    native_require, native_set_timeout, native_string_from_char_code, native_write_binary_file,
+    native_write_file,
 };
 use crate::vm::opcodes::OpCode;
 use crate::vm::value::HeapData;
@@ -20,6 +21,8 @@ use crate::vm::value::JsValue;
 use crate::vm::value::NativeFn;
 use crate::vm::value::Promise;
 use crate::vm::value::PromiseState;
+use crate::vm::value::AsyncContext;
+use crate::vm::value::ContinuationCallback;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -349,6 +352,7 @@ fn parse_module_exports(source: &str, file_name: &str) -> HashMap<String, JsValu
     exports
 }
 
+#[derive(Clone, Debug)]
 pub struct Frame {
     pub return_address: usize,
     pub locals: HashMap<String, JsValue>,
@@ -405,6 +409,12 @@ pub struct VM {
     pub async_task_tx: Option<mpsc::Sender<JsValue>>,
     pub module_cache: ModuleCache,
     pub compiler: Compiler,
+    /// Async/await continuation state
+    pub async_context: Option<AsyncContext>,
+    /// Queue for resolved promise values to be processed
+    pub resolved_queue: Vec<(ContinuationCallback, JsValue)>,
+    /// Current promise being constructed (for resolve/reject callbacks)
+    pub current_promise: Option<Promise>,
 }
 
 impl VM {
@@ -444,6 +454,9 @@ impl VM {
             async_task_tx: Some(tx),
             module_cache: ModuleCache::new(),
             compiler: Compiler::new(),
+            async_context: None,
+            resolved_queue: Vec::new(),
+            current_promise: None,
         }
     }
 
@@ -617,6 +630,82 @@ impl VM {
         Ok(exports)
     }
 
+    /// Poll a promise until it's resolved (synchronous wait)
+    /// Returns the resolved value or undefined if timeout/error
+    pub fn poll_promise(&mut self, promise: &Promise, timeout_ms: u64) -> JsValue {
+        let start = std::time::Instant::now();
+        let sleep_duration = std::time::Duration::from_millis(1);
+
+        loop {
+            match promise.get_state() {
+                PromiseState::Fulfilled => {
+                    let value = promise.get_value().unwrap_or(JsValue::Undefined);
+                    eprintln!("DEBUG poll_promise: fulfilled, value = {:?}", value);
+                    return value;
+                }
+                PromiseState::Rejected => {
+                    let value = promise.get_value().unwrap_or(JsValue::Undefined);
+                    eprintln!("DEBUG poll_promise: rejected, value = {:?}", value);
+                    return value;
+                }
+                PromiseState::Pending => {
+                    let elapsed = start.elapsed().as_millis();
+                    if elapsed > timeout_ms as u128 {
+                        eprintln!("DEBUG poll_promise: timeout after {}ms", elapsed);
+                        return JsValue::Undefined;
+                    }
+                    // Brief sleep to avoid busy-waiting
+                    std::thread::sleep(sleep_duration);
+                }
+            }
+        }
+    }
+
+    /// Register a callback to be invoked when a promise resolves
+    pub fn register_promise_callback(
+        &mut self,
+        promise: &Promise,
+        callback: Box<dyn FnOnce(JsValue) + Send>,
+    ) {
+        let promise = promise.clone();
+        // Spawn a thread to wait for the promise
+        std::thread::spawn(move || {
+            let sleep_duration = std::time::Duration::from_millis(1);
+            loop {
+                match promise.get_state() {
+                    PromiseState::Fulfilled => {
+                        let value = promise.get_value().unwrap_or(JsValue::Undefined);
+                        callback(value);
+                        break;
+                    }
+                    PromiseState::Rejected => {
+                        let value = promise.get_value().unwrap_or(JsValue::Undefined);
+                        callback(value);
+                        break;
+                    }
+                    PromiseState::Pending => {
+                        std::thread::sleep(sleep_duration);
+                    }
+                }
+            }
+        });
+    }
+
+    /// Check if we're currently in an async context (has saved continuation)
+    pub fn is_in_async_context(&self) -> bool {
+        self.async_context.is_some()
+    }
+
+    /// Get the current async context if any
+    pub fn get_async_context(&self) -> Option<&AsyncContext> {
+        self.async_context.as_ref()
+    }
+
+    /// Set the async context (for awaiting)
+    pub fn set_async_context(&mut self, context: Option<AsyncContext>) {
+        self.async_context = context;
+    }
+
     pub fn setup_stdlib(&mut self) {
         // Register native functions
         let log_idx = self.register_native(native_log);
@@ -629,7 +718,6 @@ impl VM {
         let create_byte_stream_idx = self.register_native(native_create_byte_stream);
         let write_u8_idx = self.register_native(native_byte_stream_write_u8);
         let write_varint_idx = self.register_native(native_byte_stream_write_varint);
-        let write_string_idx = self.register_native(native_byte_stream_write_string);
         let write_u32_idx = self.register_native(native_byte_stream_write_u32);
         let write_f64_idx = self.register_native(native_byte_stream_write_f64);
         let patch_u32_idx = self.register_native(native_byte_stream_patch_u32);
@@ -678,10 +766,6 @@ impl VM {
         byte_stream_props.insert(
             "writeVarint".to_string(),
             JsValue::NativeFunction(write_varint_idx),
-        );
-        byte_stream_props.insert(
-            "writeString".to_string(),
-            JsValue::NativeFunction(write_string_idx),
         );
         byte_stream_props.insert(
             "writeU32".to_string(),
@@ -737,14 +821,24 @@ impl VM {
             .insert("String".into(), JsValue::Object(string_ptr));
 
         // Promise = { resolve, reject, all, then, catch }
+        let promise_constructor_idx = self.register_native(native_promise_constructor);
         let promise_resolve_idx = self.register_native(native_promise_resolve);
         let promise_reject_idx = self.register_native(native_promise_reject);
         let promise_then_idx = self.register_native(native_promise_then);
         let promise_catch_idx = self.register_native(native_promise_catch);
         let promise_all_idx = self.register_native(native_promise_all);
 
+        // Create Promise as a function object with a constructor property
+        // This allows `new Promise(...)` to work
         let promise_ptr = self.heap.len();
         let mut promise_props = HashMap::new();
+
+        // The Promise "class" itself is a function at address 0 (native constructor)
+        // But we need to set it up as an object with constructor property for ES6 semantics
+        promise_props.insert(
+            "constructor".to_string(),
+            JsValue::NativeFunction(promise_constructor_idx),
+        );
         promise_props.insert(
             "resolve".to_string(),
             JsValue::NativeFunction(promise_resolve_idx),
@@ -1778,18 +1872,29 @@ impl VM {
                                 Some(JsValue::Function { address, env }) => {
                                     // In ES6 JavaScript, new.target is the class itself (the constructor function)
                                     // The class wrapper has a 'constructor' property pointing to the constructor
-                                    // So we need to use the wrapper as new.target, not the extracted constructor
+                                    // So we need to use the wrapper as new-target, not the extracted constructor
                                     (address, env.clone(), proto, constructor_val.clone())
                                 }
                                 Some(JsValue::Object(ptr)) => {
                                     // Constructor might be wrapped in another object
                                     (0usize, None, proto, constructor_val.clone())
                                 }
+                                Some(JsValue::NativeFunction(native_idx)) => {
+                                    // Native function constructor - use index 0 as placeholder
+                                    // The native function will handle construction itself
+                                    (0usize, None, proto, constructor_val.clone())
+                                }
                                 Some(other) => {
                                     panic!("Constructor is not a Function, it's {:?}", other);
                                 }
                                 None => {
-                                    panic!("Class object missing constructor property");
+                                    // No constructor property - this is a "constructor object" like Promise
+                                    // For Promise-like objects, we treat the object itself as the constructor
+                                    // and call a special constructor handler
+                                    // For now, we'll panic with a helpful message
+                                    eprintln!("Warning: 'new' on object without constructor - treating as constructor object");
+                                    // Create a placeholder that will be handled specially
+                                    (0usize, None, proto, constructor_val.clone())
                                 }
                             }
                         } else {
@@ -1828,7 +1933,7 @@ impl VM {
                     locals: HashMap::new(),
                     indexed_locals: Vec::new(),
                     this_context: this_obj.clone(),
-                    new_target: Some(new_target_val),
+                    new_target: Some(new_target_val.clone()),
                     super_called: false,
                     resume_ip: None,
                 };
@@ -1843,12 +1948,132 @@ impl VM {
                     }
                 }
 
-                // Push the this object for return value
-                self.stack.push(this_obj);
+                // Check if this is a native function constructor
+                if address == 0 {
+                    // Native constructor - check if it's Promise
+                    let is_promise = if let JsValue::Object(ptr) = &new_target_val {
+                        if let Some(heap_obj) = self.heap.get(*ptr) {
+                            if let HeapData::Object(props) = &heap_obj.data {
+                                // Check for Promise-specific properties
+                                props.contains_key("then") && props.contains_key("catch")
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
 
-                self.call_stack.push(frame);
-                self.ip = address;
-                return ExecResult::ContinueNoIpInc;
+                    if is_promise {
+                        // Handle Promise construction specially
+                        // new Promise((resolve, reject) => { ... })
+                        eprintln!("DEBUG: Construct - Promise detected");
+
+                        // The executor should be the first argument
+                        let executor = args.get(0).cloned().unwrap_or(JsValue::Undefined);
+                        eprintln!("DEBUG: Construct - executor = {:?}", executor);
+
+                        // Create a new pending promise
+                        let promise = Promise::new();
+                        eprintln!("DEBUG: Construct - created promise");
+
+                        // If we have an executor function, call it synchronously
+                        if let JsValue::Function { address: exec_addr, env } = executor {
+                            eprintln!("DEBUG: Construct - calling executor at {}", exec_addr);
+
+                            // Set the current promise so resolve/reject can access it
+                            self.current_promise = Some(promise.clone());
+
+                            // Create resolve function
+                            let resolve_idx = self.register_native(|vm, args| {
+                                let value = args.get(0).cloned().unwrap_or(JsValue::Undefined);
+                                eprintln!("DEBUG: Construct resolve called with {:?}", value);
+                                if let Some(p) = vm.current_promise.take() {
+                                    p.set_value(value, true);
+                                }
+                                JsValue::Undefined
+                            });
+
+                            // Create reject function
+                            let reject_idx = self.register_native(|vm, args| {
+                                let reason = args.get(0).cloned().unwrap_or(JsValue::Undefined);
+                                eprintln!("DEBUG: Construct reject called with {:?}", reason);
+                                if let Some(p) = vm.current_promise.take() {
+                                    p.set_value(reason, false);
+                                }
+                                JsValue::Undefined
+                            });
+
+                            // Create a frame for the executor
+                            let mut exec_frame = Frame {
+                                return_address: self.ip + 1,
+                                locals: HashMap::new(),
+                                indexed_locals: Vec::new(),
+                                this_context: JsValue::Undefined,
+                                new_target: Some(executor.clone()),
+                                super_called: false,
+                                resume_ip: None,
+                            };
+
+                            // Set up locals: resolve and reject
+                            exec_frame.locals.insert("resolve".to_string(), JsValue::NativeFunction(resolve_idx));
+                            exec_frame.locals.insert("reject".to_string(), JsValue::NativeFunction(reject_idx));
+
+                            // Load captured environment
+                            if let Some(env_ptr) = env {
+                                if let Some(HeapObject {
+                                    data: HeapData::Object(props),
+                                }) = self.heap.get(env_ptr)
+                                {
+                                    for (name, value) in props {
+                                        exec_frame.locals.insert(name.clone(), value.clone());
+                                    }
+                                }
+                            }
+
+                            // Push the frame and jump to executor
+                            self.call_stack.push(exec_frame);
+                            self.ip = exec_addr;
+                            return ExecResult::ContinueNoIpInc;
+                        }
+
+                        // If no executor or invalid executor, just return the Promise
+                        self.stack.push(JsValue::Promise(promise));
+                    } else {
+                        // Regular native constructor
+                        let native_result = if let JsValue::Object(ptr) = &new_target_val {
+                            if let Some(heap_obj) = self.heap.get(*ptr) {
+                                if let HeapData::Object(props) = &heap_obj.data {
+                                    if let Some(JsValue::NativeFunction(native_idx)) =
+                                        props.get("constructor")
+                                    {
+                                        let func = self.native_functions[*native_idx];
+                                        func(self, args.clone())
+                                    } else {
+                                        JsValue::Undefined
+                                    }
+                                } else {
+                                    JsValue::Undefined
+                                }
+                            } else {
+                                JsValue::Undefined
+                            }
+                        } else {
+                            JsValue::Undefined
+                        };
+
+                        // Push result and continue
+                        self.stack.push(native_result);
+                    }
+                } else {
+                    // Regular function - push this and call
+                    self.stack.push(this_obj);
+                    self.call_stack.push(frame);
+                    self.ip = address;
+                    return ExecResult::ContinueNoIpInc;
+                }
             }
 
             OpCode::Require => {
@@ -2958,9 +3183,43 @@ impl VM {
 
             OpCode::Await => {
                 // Stack: [promise] -> [result]
-                let _promise = self.stack.pop().unwrap_or(JsValue::Undefined);
-                eprintln!("Warning: Await not yet fully implemented in JIT");
-                self.stack.push(JsValue::Undefined);
+                let promise = match self.stack.pop() {
+                    Some(JsValue::Promise(p)) => p,
+                    Some(other) => {
+                        // Non-promise values are passed through (thenable check simplified)
+                        self.stack.push(other);
+                        self.stack.push(JsValue::Undefined);
+                        return ExecResult::Continue;
+                    }
+                    None => {
+                        self.stack.push(JsValue::Undefined);
+                        return ExecResult::Continue;
+                    }
+                };
+
+                // Poll the promise synchronously (simplified implementation)
+                let state = promise.get_state();
+                eprintln!("DEBUG Await: promise state = {:?}", state);
+                
+                match state {
+                    PromiseState::Fulfilled => {
+                        let value = promise.get_value().unwrap_or(JsValue::Undefined);
+                        eprintln!("DEBUG Await: fulfilled with value = {:?}", value);
+                        self.stack.push(value);
+                    }
+                    PromiseState::Rejected => {
+                        let value = promise.get_value().unwrap_or(JsValue::Undefined);
+                        eprintln!("DEBUG Await: rejected with value = {:?}", value);
+                        self.stack.push(value);
+                    }
+                    PromiseState::Pending => {
+                        eprintln!("DEBUG Await: still pending, polling...");
+                        // Poll until resolved (with timeout)
+                        let result = self.poll_promise(&promise, 1000);
+                        eprintln!("DEBUG Await: poll result = {:?}", result);
+                        self.stack.push(result);
+                    }
+                }
             }
 
             OpCode::GetExport {

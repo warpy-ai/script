@@ -22,7 +22,6 @@ const sidebars: SidebarsConfig = {
     'ssa-ir',
     'standard-library',
     'development-status',
-    'performance',
     'contributing',
   ],
 };

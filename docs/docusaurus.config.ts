@@ -7,7 +7,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 const config: Config = {
   title: 'Script Language',
   tagline: 'Write fast. Run faster.',
-  favicon: 'img/icon.png',
+  favicon: 'img/owl.svg',
 
   // Future flags, see https://docusaurus.io/docs/api/docusaurus-config#future
   future: {
@@ -70,7 +70,7 @@ const config: Config = {
 
   themeConfig: {
     // Project social / open-graph card
-    image: 'img/logo.png',
+    image: 'img/owl.svg',
     colorMode: {
       respectPrefersColorScheme: true,
     },
@@ -78,9 +78,10 @@ const config: Config = {
       title: 'Script',
       logo: {
         alt: 'Script Logo',
-        src: 'img/logo.png',
-        srcDark: 'img/logo_bg.png',
+        src: 'img/owl.svg',
+        srcDark: 'img/owl-light.svg',
       },
+      hideOnScroll: false,
       items: [
         {
           type: 'docSidebar',
@@ -88,7 +89,31 @@ const config: Config = {
           position: 'left',
           label: 'Docs',
         },
-        {to: '/blog', label: 'Blog', position: 'left'},
+        {
+          to: '/docs/getting-started',
+          label: 'Guides',
+          position: 'left',
+        },
+        {
+          to: '/docs/standard-library',
+          label: 'Reference',
+          position: 'left',
+        },
+        {
+          to: '/blog',
+          label: 'Blog',
+          position: 'left',
+        },
+        {
+          type: 'search',
+          position: 'right',
+        },
+        {
+          to: '/docs/getting-started',
+          label: 'Get Started',
+          position: 'right',
+          className: 'navbar__item--cta',
+        },
         {
           href: 'https://github.com/your-username/script',
           label: 'GitHub',
@@ -122,10 +147,6 @@ const config: Config = {
             {
               label: 'Development Status',
               to: '/docs/development-status',
-            },
-            {
-              label: 'Performance',
-              to: '/docs/performance',
             },
             {
               label: 'Contributing',

@@ -155,6 +155,7 @@ impl Promise {
                 internal.handlers.push(PromiseHandler {
                     on_fulfilled: on_fulfilled.map(Box::new),
                     on_rejected: None,
+                    continuation: None,
                 });
                 self.clone()
             }
@@ -179,6 +180,7 @@ impl Promise {
                 internal.handlers.push(PromiseHandler {
                     on_fulfilled: None,
                     on_rejected: on_rejected.map(Box::new),
+                    continuation: None,
                 });
                 self.clone()
             }
@@ -191,6 +193,29 @@ impl Promise {
                 } else {
                     Promise::with_value(internal.value.clone().unwrap_or(JsValue::Undefined))
                 }
+            }
+        }
+    }
+
+    /// Register a continuation for async/await
+    pub fn then_await(&self, on_fulfilled: Option<JsValue>, continuation: Continuation) -> Self {
+        let mut internal = self.state.lock().unwrap();
+
+        match internal.state {
+            PromiseState::Pending => {
+                internal.handlers.push(PromiseHandler {
+                    on_fulfilled: on_fulfilled.map(Box::new),
+                    on_rejected: None,
+                    continuation: Some(continuation),
+                });
+                self.clone()
+            }
+            PromiseState::Fulfilled => {
+                // Already fulfilled, create resolved promise with value
+                Promise::with_value(internal.value.clone().unwrap_or(JsValue::Undefined))
+            }
+            PromiseState::Rejected => {
+                Promise::with_value(internal.value.clone().unwrap_or(JsValue::Undefined))
             }
         }
     }
@@ -207,6 +232,31 @@ pub struct PromiseInternal {
 pub struct PromiseHandler {
     pub on_fulfilled: Option<Box<JsValue>>,
     pub on_rejected: Option<Box<JsValue>>,
+    /// Continuation for async/await - stores resume IP when awaiting
+    /// Uses Arc<Frame> to avoid import cycles
+    pub continuation: Option<Continuation>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Continuation {
+    pub resume_ip: usize,
+    /// Stores the frame state for resuming async function
+    /// We store locals separately to avoid import cycle
+    pub locals: HashMap<String, JsValue>,
+    pub this_context: JsValue,
+}
+
+/// Continuation callback type for async operations
+pub type ContinuationCallback = Box<dyn FnOnce(JsValue) + Send>;
+
+/// Context for async/await continuations
+#[derive(Debug, Clone)]
+pub struct AsyncContext {
+    pub resume_ip: usize,
+    /// Stores the frame state for resuming async function
+    pub locals: HashMap<String, JsValue>,
+    pub this_context: JsValue,
+    pub promise: Promise,
 }
 
 #[derive(Debug, Clone)]

@@ -1,79 +1,102 @@
-//! Standard Library - Native functions for the WarpyScript VM
-
-use crate::vm::VM;
 use crate::vm::value::{HeapData, HeapObject, JsValue, Promise};
+use crate::vm::Frame;
+use crate::vm::VM;
 
-/// console.log implementation
-pub fn native_log(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-    let output: Vec<String> = args.iter().map(|arg| format!("{:?}", arg)).collect();
-    println!("LOG: {}", output.join(" "));
+pub fn native_log(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    for arg in args {
+        match arg {
+            JsValue::String(s) => print!("{}", s),
+            JsValue::Number(n) => print!("{}", n),
+            JsValue::Boolean(b) => print!("{}", b),
+            JsValue::Null => print!("null"),
+            JsValue::Undefined => print!("undefined"),
+            JsValue::Object(ptr) => print!("Object({})", ptr),
+            JsValue::Function { address, env: _ } => print!("Function({})", address),
+            JsValue::NativeFunction(idx) => print!("NativeFunction({})", idx),
+            JsValue::Promise(_) => print!("Promise"),
+            JsValue::Accessor(_, _) => print!("Accessor"),
+        }
+    }
+    println!();
     JsValue::Undefined
 }
 
-/// setTimeout implementation
+pub fn native_require(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    if let Some(JsValue::String(module_name)) = args.first() {
+        if let Some(module) = vm.modules.get(module_name) {
+            return module.clone();
+        } else {
+            eprintln!("Module '{}' not found", module_name);
+        }
+    }
+    JsValue::Undefined
+}
+
 pub fn native_set_timeout(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-    if !args.is_empty() {
-        let callback = args[0].clone();
-        let delay_ms = args
-            .get(1)
-            .and_then(|v| match v {
-                JsValue::Number(n) => Some(*n as u64),
-                _ => None,
-            })
-            .unwrap_or(0);
-
-        vm.schedule_timer(callback, delay_ms);
+    if let (Some(JsValue::Number(ms)), Some(callback)) = (args.first(), args.get(1)) {
+        let ms = *ms as u64;
+        let callback = callback.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(ms));
+        });
     }
     JsValue::Undefined
 }
 
-pub fn native_read_file(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-    if let Some(JsValue::String(path)) = args.get(0) {
-        match std::fs::read_to_string(path) {
-            Ok(content) => JsValue::String(content),
-            Err(e) => JsValue::String(format!("Error reading file: {}", e)),
+pub fn native_read_file(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    if let Some(JsValue::String(filename)) = args.first() {
+        match std::fs::read_to_string(filename) {
+            Ok(contents) => JsValue::String(contents),
+            Err(e) => {
+                eprintln!("Error reading file '{}': {}", filename, e);
+                JsValue::Undefined
+            }
         }
     } else {
         JsValue::Undefined
     }
 }
 
-pub fn native_write_file(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-    if let Some(JsValue::String(path)) = args.get(0) {
-        let content = args
-            .get(1)
-            .and_then(|v| match v {
-                JsValue::String(s) => Some(s.clone()),
-                _ => None,
-            })
-            .unwrap_or_default();
-        match std::fs::write(path, content) {
-            Ok(_) => JsValue::Undefined,
-            Err(e) => JsValue::String(format!("Error writing file: {}", e)),
+pub fn native_write_file(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    if let (Some(JsValue::String(filename)), Some(JsValue::String(contents))) =
+        (args.first(), args.get(1))
+    {
+        match std::fs::write(filename, contents) {
+            Ok(()) => JsValue::Boolean(true),
+            Err(e) => {
+                eprintln!("Error writing file '{}': {}", filename, e);
+                JsValue::Boolean(false)
+            }
         }
     } else {
         JsValue::Undefined
     }
 }
 
-pub fn native_require(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-    if let Some(JsValue::String(module_name)) = args.get(0) {
-        let module = _vm
-            .modules
-            .get(module_name)
-            .cloned()
-            .unwrap_or(JsValue::Undefined);
-        return module;
+pub fn native_write_binary_file(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    if let (Some(JsValue::String(filename)), Some(JsValue::Object(ptr))) =
+        (args.first(), args.get(1))
+    {
+        if let Some(HeapObject {
+            data: HeapData::ByteStream(bytes),
+        }) = vm.heap.get(*ptr)
+        {
+            match std::fs::write(filename, bytes) {
+                Ok(()) => JsValue::Boolean(true),
+                Err(e) => {
+                    eprintln!("Error writing file '{}': {}", filename, e);
+                    JsValue::Boolean(false)
+                }
+            }
+        } else {
+            JsValue::Undefined
+        }
+    } else {
+        JsValue::Undefined
     }
-    JsValue::Undefined
 }
 
-// ============================================================================
-// ByteStream Native Functions for Binary Bytecode Generation
-// ============================================================================
-
-/// Create a new ByteStream buffer on the heap
-pub fn native_create_byte_stream(vm: &mut VM, _args: Vec<JsValue>) -> JsValue {
+pub fn native_create_byte_stream(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     let ptr = vm.heap.len();
     vm.heap.push(HeapObject {
         data: HeapData::ByteStream(Vec::new()),
@@ -81,81 +104,78 @@ pub fn native_create_byte_stream(vm: &mut VM, _args: Vec<JsValue>) -> JsValue {
     JsValue::Object(ptr)
 }
 
-/// Write a single byte (u8) to a ByteStream
 pub fn native_byte_stream_write_u8(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-    if let (Some(JsValue::Object(ptr)), Some(JsValue::Number(byte))) = (args.get(0), args.get(1)) {
+    if let (Some(JsValue::Object(ptr)), Some(JsValue::Number(value))) = (args.first(), args.get(1))
+    {
         if let Some(HeapObject {
             data: HeapData::ByteStream(bytes),
         }) = vm.heap.get_mut(*ptr)
         {
-            bytes.push(*byte as u8);
+            let value_u8 = *value as u8;
+            bytes.push(value_u8);
             return JsValue::Undefined;
         }
     }
     JsValue::Undefined
 }
 
-/// Write a variable-length integer (varint) to a ByteStream
-/// Uses LEB128-style encoding: 7 bits per byte, high bit indicates continuation
+pub fn native_byte_stream_write_u32(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    if let (Some(JsValue::Object(ptr)), Some(JsValue::Number(value))) = (args.first(), args.get(1))
+    {
+        if let Some(HeapObject {
+            data: HeapData::ByteStream(bytes),
+        }) = vm.heap.get_mut(*ptr)
+        {
+            let value_u32 = *value as u32;
+            bytes.extend_from_slice(&value_u32.to_le_bytes());
+            return JsValue::Undefined;
+        }
+    }
+    JsValue::Undefined
+}
+
 pub fn native_byte_stream_write_varint(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-    if let (Some(JsValue::Object(ptr)), Some(JsValue::Number(value))) = (args.get(0), args.get(1)) {
+    if let (Some(JsValue::Object(ptr)), Some(JsValue::Number(value))) = (args.first(), args.get(1))
+    {
         if let Some(HeapObject {
             data: HeapData::ByteStream(bytes),
         }) = vm.heap.get_mut(*ptr)
         {
-            let mut n = *value as u64;
+            let mut value = *value as u64;
             loop {
-                let mut byte = (n & 0x7F) as u8;
-                n >>= 7;
-                if n != 0 {
-                    byte |= 0x80; // Set continuation bit
-                }
-                bytes.push(byte);
-                if n == 0 {
-                    break;
-                }
-            }
-            return JsValue::Undefined;
-        }
-    }
-    JsValue::Undefined
-}
-
-/// Write a length-prefixed UTF-8 string to a ByteStream
-pub fn native_byte_stream_write_string(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-    if let (Some(JsValue::Object(ptr)), Some(JsValue::String(s))) = (args.get(0), args.get(1)) {
-        if let Some(HeapObject {
-            data: HeapData::ByteStream(bytes),
-        }) = vm.heap.get_mut(*ptr)
-        {
-            let str_bytes = s.as_bytes();
-            let len = str_bytes.len();
-
-            // Write length as varint
-            let mut n = len as u64;
-            loop {
-                let mut byte = (n & 0x7F) as u8;
-                n >>= 7;
-                if n != 0 {
+                let mut byte = (value & 0x7F) as u8;
+                value >>= 7;
+                if value != 0 {
                     byte |= 0x80;
                 }
                 bytes.push(byte);
-                if n == 0 {
+                if value == 0 {
                     break;
                 }
             }
-
-            // Write UTF-8 bytes
-            bytes.extend_from_slice(str_bytes);
             return JsValue::Undefined;
         }
     }
     JsValue::Undefined
 }
 
-/// Get the current length of a ByteStream
+pub fn native_byte_stream_write_f64(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    if let (Some(JsValue::Object(ptr)), Some(JsValue::Number(value))) = (args.first(), args.get(1))
+    {
+        if let Some(HeapObject {
+            data: HeapData::ByteStream(bytes),
+        }) = vm.heap.get_mut(*ptr)
+        {
+            let float_bytes = value.to_le_bytes();
+            bytes.extend_from_slice(&float_bytes);
+            return JsValue::Undefined;
+        }
+    }
+    JsValue::Undefined
+}
+
 pub fn native_byte_stream_length(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-    if let Some(JsValue::Object(ptr)) = args.get(0) {
+    if let Some(JsValue::Object(ptr)) = args.first() {
         if let Some(HeapObject {
             data: HeapData::ByteStream(bytes),
         }) = vm.heap.get(*ptr)
@@ -166,94 +186,43 @@ pub fn native_byte_stream_length(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     JsValue::Number(0.0)
 }
 
-/// Convert ByteStream to a JsValue array of numbers (for debugging/inspection)
-pub fn native_byte_stream_to_array(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-    if let Some(JsValue::Object(ptr)) = args.get(0) {
-        if let Some(HeapObject {
-            data: HeapData::ByteStream(bytes),
-        }) = vm.heap.get(*ptr)
-        {
-            let elements: Vec<JsValue> = bytes.iter().map(|b| JsValue::Number(*b as f64)).collect();
-            let arr_ptr = vm.heap.len();
-            vm.heap.push(HeapObject {
-                data: HeapData::Array(elements),
-            });
-            return JsValue::Object(arr_ptr);
-        }
-    }
-    JsValue::Undefined
-}
-
-/// Write ByteStream contents to a binary file
-pub fn native_write_binary_file(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-    if let (Some(JsValue::String(path)), Some(JsValue::Object(ptr))) = (args.get(0), args.get(1)) {
-        if let Some(HeapObject {
-            data: HeapData::ByteStream(bytes),
-        }) = vm.heap.get(*ptr)
-        {
-            match std::fs::write(path, bytes) {
-                Ok(_) => return JsValue::Boolean(true),
-                Err(e) => return JsValue::String(format!("Error writing file: {}", e)),
-            }
-        }
-    }
-    JsValue::Boolean(false)
-}
-
-/// Patch a 32-bit value at a specific offset in a ByteStream (for backpatching jumps)
 pub fn native_byte_stream_patch_u32(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     if let (
         Some(JsValue::Object(ptr)),
         Some(JsValue::Number(offset)),
         Some(JsValue::Number(value)),
-    ) = (args.get(0), args.get(1), args.get(2))
+    ) = (args.first(), args.get(1), args.get(2))
     {
         if let Some(HeapObject {
             data: HeapData::ByteStream(bytes),
         }) = vm.heap.get_mut(*ptr)
         {
-            let off = *offset as usize;
-            let val = *value as u32;
-            if off + 4 <= bytes.len() {
-                bytes[off] = (val & 0xFF) as u8;
-                bytes[off + 1] = ((val >> 8) & 0xFF) as u8;
-                bytes[off + 2] = ((val >> 16) & 0xFF) as u8;
-                bytes[off + 3] = ((val >> 24) & 0xFF) as u8;
-                return JsValue::Boolean(true);
+            let offset_usize = *offset as usize;
+            let value_u32 = *value as u32;
+            let bytes_slice = value_u32.to_le_bytes();
+            if offset_usize + 4 <= bytes.len() {
+                for (i, b) in bytes_slice.iter().enumerate() {
+                    bytes[offset_usize + i] = *b;
+                }
+                return JsValue::Undefined;
             }
-        }
-    }
-    JsValue::Boolean(false)
-}
-
-/// Write a 32-bit unsigned integer (little-endian) to a ByteStream
-pub fn native_byte_stream_write_u32(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-    if let (Some(JsValue::Object(ptr)), Some(JsValue::Number(value))) = (args.get(0), args.get(1)) {
-        if let Some(HeapObject {
-            data: HeapData::ByteStream(bytes),
-        }) = vm.heap.get_mut(*ptr)
-        {
-            let val = *value as u32;
-            bytes.push((val & 0xFF) as u8);
-            bytes.push(((val >> 8) & 0xFF) as u8);
-            bytes.push(((val >> 16) & 0xFF) as u8);
-            bytes.push(((val >> 24) & 0xFF) as u8);
-            return JsValue::Undefined;
         }
     }
     JsValue::Undefined
 }
 
-/// Write an IEEE 754 double (f64) to a ByteStream (8 bytes, little-endian)
-pub fn native_byte_stream_write_f64(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-    if let (Some(JsValue::Object(ptr)), Some(JsValue::Number(value))) = (args.get(0), args.get(1)) {
+pub fn native_byte_stream_to_array(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    if let Some(JsValue::Object(ptr)) = args.first() {
         if let Some(HeapObject {
             data: HeapData::ByteStream(bytes),
-        }) = vm.heap.get_mut(*ptr)
+        }) = vm.heap.get(*ptr)
         {
-            let float_bytes = value.to_le_bytes();
-            bytes.extend_from_slice(&float_bytes);
-            return JsValue::Undefined;
+            let array: Vec<JsValue> = bytes.iter().map(|b| JsValue::Number(*b as f64)).collect();
+            let arr_ptr = vm.heap.len();
+            vm.heap.push(HeapObject {
+                data: HeapData::Array(array),
+            });
+            return JsValue::Object(arr_ptr);
         }
     }
     JsValue::Undefined
@@ -277,6 +246,21 @@ pub fn native_string_from_char_code(vm: &mut VM, args: Vec<JsValue>) -> JsValue 
 // ============================================================================
 // Promise Native Functions
 // ============================================================================
+
+pub fn native_promise_constructor(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    // new Promise((resolve, reject) => { ... })
+    // For synchronous Promise, we just create and return a pending promise
+    // The executor is expected to be called synchronously before this returns
+    eprintln!(
+        "DEBUG: native_promise_constructor called with {} args",
+        args.len()
+    );
+
+    let promise = Promise::new();
+    eprintln!("DEBUG: created pending promise");
+
+    JsValue::Promise(promise)
+}
 
 pub fn native_promise_resolve(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     let value = args.get(0).cloned().unwrap_or(JsValue::Undefined);
