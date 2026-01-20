@@ -1,0 +1,248 @@
+/**
+ * Global theme overrides for Docusaurus (Infima).
+ * This applies a custom OKLCH-based dark theme and font stack.
+ */
+
+:root {
+  /* Base design tokens (from user spec) */
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.145 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.145 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.985 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.396 0.141 25.723);
+  --destructive-foreground: oklch(0.637 0.237 25.331);
+  --border: oklch(0.269 0 0);
+  --input: oklch(0.269 0 0);
+  --ring: oklch(0.439 0 0);
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(0.269 0 0);
+  --sidebar-ring: oklch(0.439 0 0);
+  --font-sans: 'Geist', 'Geist Fallback', system-ui, -apple-system,
+    BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-serif: 'Instrument Serif', 'Georgia', serif;
+  --font-mono: 'Geist Mono', 'Geist Mono Fallback', ui-monospace, SFMono-Regular,
+    Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  --color-coral: oklch(0.65 0.2 25);
+
+  /* Map design tokens to Infima/Docusaurus variables */
+  color-scheme: dark;
+  --ifm-font-family-base: var(--font-sans);
+  --ifm-font-family-monospace: var(--font-mono);
+
+  --ifm-background-color: var(--background);
+  --ifm-background-surface-color: var(--card);
+  --ifm-color-content: var(--foreground);
+
+  --ifm-color-primary: var(--primary);
+  --ifm-color-primary-dark: var(--secondary);
+  --ifm-color-primary-darker: var(--secondary);
+  --ifm-color-primary-darkest: var(--secondary);
+  --ifm-color-primary-light: var(--primary);
+  --ifm-color-primary-lighter: var(--primary);
+  --ifm-color-primary-lightest: var(--primary);
+
+  --ifm-border-color: var(--border);
+  --ifm-toc-border-color: var(--border);
+  --ifm-menu-color-background-active: var(--sidebar-accent);
+  --ifm-navbar-background-color: var(--sidebar);
+  --ifm-footer-background-color: var(--sidebar);
+
+  --ifm-code-font-size: 95%;
+  --docusaurus-highlighted-code-line-bg: oklch(0.2 0 0 / 0.7);
+}
+
+/* Keep dark mode consistent with the same palette */
+[data-theme='dark'] {
+  color-scheme: dark;
+  --ifm-background-color: var(--background);
+  --ifm-background-surface-color: var(--card);
+  --ifm-color-content: var(--foreground);
+  --ifm-color-primary: var(--primary);
+  --docusaurus-highlighted-code-line-bg: oklch(0.2 0 0 / 0.9);
+}
+
+/* Global shell layout similar to Bun docs */
+html,
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+body {
+  font-family: var(--font-sans);
+}
+
+.main-wrapper {
+  background: radial-gradient(circle at top left, oklch(0.2 0 0 / 0.8), transparent 55%),
+    radial-gradient(circle at top right, oklch(0.2 0 0 / 0.7), transparent 50%),
+    var(--background);
+  min-height: 100vh;
+}
+
+.navbar.navbar--fixed-top {
+  box-shadow: 0 1px 0 var(--border);
+  backdrop-filter: blur(12px);
+  background: color-mix(in oklch, var(--sidebar) 90%, black 10%);
+}
+
+.navbar__inner {
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.navbar__brand {
+  font-family: var(--font-serif);
+}
+
+.navbar__link,
+.navbar__item .navbar__link {
+  font-family: var(--font-sans);
+}
+
+.footer {
+  border-top: 1px solid var(--border);
+  background: color-mix(in oklch, var(--sidebar) 92%, black 8%);
+}
+
+/* Script typography */
+h1,
+h2,
+.hero__title {
+  font-family: var(--font-serif);
+}
+
+body,
+p,
+li {
+  font-family: var(--font-sans);
+}
+
+code,
+pre {
+  font-family: var(--font-mono);
+}
+
+/* Constrain content similar to Bun’s central column */
+.container {
+  max-width: 1120px;
+}
+
+.container--fluid {
+  max-width: 1280px;
+}
+
+/* Docs layout: sidebar + content shell */
+.docPage {
+  background: transparent;
+}
+
+.docSidebarContainer {
+  background: var(--sidebar);
+  border-right: 1px solid var(--sidebar-border);
+}
+
+.docSidebarContainer,
+.docMainContainer {
+  padding-top: 1.25rem;
+  padding-bottom: 1.25rem;
+}
+
+.docMainContainer {
+  background: transparent;
+}
+
+.theme-doc-markdown {
+  background: var(--card);
+  border-radius: 1.25rem;
+  border: 1px solid var(--border);
+  padding: 2.25rem 2.5rem;
+  box-shadow: 0 18px 45px oklch(0.12 0 0 / 0.8);
+}
+
+@media screen and (max-width: 996px) {
+  .theme-doc-markdown {
+    border-radius: 1.25rem 1.25rem 0 0;
+    padding: 1.75rem 1.5rem;
+    box-shadow: none;
+  }
+}
+
+/* Blog cards / list alignment */
+.blog-list-page .col--8 {
+  max-width: 48rem;
+}
+
+.blog-list-page article,
+.blog-post-page article {
+  background: var(--card);
+  border-radius: 1.25rem;
+  border: 1px solid var(--border);
+  padding: 1.75rem 1.9rem;
+  box-shadow: 0 18px 45px oklch(0.12 0 0 / 0.7);
+}
+
+.blog-post-page .theme-doc-markdown {
+  box-shadow: none;
+  border-radius: 1.25rem;
+}
+
+/* Sidebar menu styling like Bun */
+.theme-doc-sidebar-menu {
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+}
+
+.menu__link {
+  border-radius: 999px;
+  padding-inline: 0.9rem;
+  padding-block: 0.4rem;
+  color: var(--sidebar-foreground);
+  font-size: 0.9rem;
+}
+
+.menu__link:hover {
+  background: color-mix(in oklch, var(--sidebar-accent) 70%, black 30%);
+  color: var(--sidebar-accent-foreground);
+}
+
+.menu__link--active {
+  background: var(--sidebar-accent);
+  color: var(--sidebar-accent-foreground);
+  box-shadow: 0 0 0 1px var(--sidebar-ring);
+}
+
+.menu__list-item:not(:last-child) {
+  margin-bottom: 0.1rem;
+}
+
+.theme-doc-sidebar-item-category-level-1 > .menu__list-item-collapsible {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted-foreground);
+}
+
+/* Mobile sidebar overlay */
+.theme-doc-sidebar-menu.menu--responsive {
+  background: var(--sidebar);
+}
