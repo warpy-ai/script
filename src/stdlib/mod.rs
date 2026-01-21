@@ -7,6 +7,7 @@ pub mod date;
 pub mod fs;
 pub mod json;
 pub mod math;
+pub mod path;
 pub mod string;
 
 pub fn native_log(vm: &mut VM, args: Vec<JsValue>) -> JsValue {

@@ -684,19 +684,99 @@ Refactored `src/vm/mod.rs` to improve separation of concerns:
 
 **Lines Reduced:** ~3,070 → ~2,840 (-230 lines, 7.5% reduction)
 
-### 7.9 Standard Library Surface
+### 7.9 Standard Library Surface ✅ (UPDATED Jan 2026)
 
-Implemented:
-- `console.log`
-- `setTimeout`
-- `require` (basic)
-- `fs.readFileSync`
-- `fs.writeFileSync`
-- `fs.writeBinaryFile`
-- `ByteStream`
+#### Fully Implemented Modules
 
-Planned:
-- Rich `fs`, `net`, `http`, `crypto`, `process`, `os` modules
+| Module | Status | Methods/Features |
+|--------|--------|------------------|
+| `console.log` | ✅ | Basic logging |
+| `setTimeout` | ✅ | Timer-based callback execution |
+| `require` | ✅ | Module loading with caching |
+| `fs` | ✅ | 18 methods: readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, readdirSync, unlink, rmdir, statSync, copyFileSync, rename, readFileSyncBytes, writeFileSyncBytes, plus async variants |
+| `ByteStream` | ✅ | Binary data manipulation: create, writeU8, writeVarint, writeU32, writeF64, patchU32, length, toArray |
+| `JSON` | ✅ | `parse()`, `stringify()` |
+| `Math` | ✅ | 35+ methods: abs, floor, ceil, round, trunc, max, min, pow, sqrt, cbrt, random, sin, cos, tan, asin, acos, atan, atan2, exp, expm1, log, log10, log1p, log2, sign, hypot, imul, fround, clz32, sinh, cosh, tanh, asinh, acosh, atanh + 8 constants (PI, E, LN2, LN10, LOG2E, LOG10E, SQRT1_2, SQRT2) |
+| `Date` | ✅ | Constructor, now(), parse(), UTC(), plus 22 instance methods |
+| `Promise` | ✅ | Constructor, resolve, reject, then, catch, all |
+| `String` | ✅ | 20+ methods: length, trim, trimStart, trimEnd, toUpperCase, toLowerCase, slice, substring, indexOf, lastIndexOf, includes, startsWith, endsWith, charAt, charCodeAt, split, repeat, concat, replace |
+| `Array` | ✅ | 9+ methods: push, pop, shift, unshift, splice, map, filter, forEach, indexOf |
+| `String` (static) | ✅ | `String.fromCharCode()` |
+| **`path`** | ✅ **NEW** | `join()`, `resolve()`, `dirname()`, `basename()`, `extname()`, `parse()`, `format()`, `isAbsolute()`, `relative()`, `toNamespacedPath()` |
+
+#### Recommended Next Additions (Priority)
+
+| Priority | Module | Justification |
+|----------|--------|---------------|
+| **High** | `path` | Used by every web app for file paths, URL handling |
+| **High** | `crypto` (basic) | SHA256 hashing for cache verification, HMAC |
+| **Medium** | `os` | Platform detection, CPU count, memory info |
+| **Medium** | `process` | Environment variables (`process.env`), argv |
+| **Low** | `buffer` | Binary data handling (complements ByteStream) |
+| **Low** | `url` | URL parsing and manipulation |
+
+#### Implementation Plan
+
+**1. `path` module** (~150 lines)
+```typescript
+// Essential functions:
+path.join(...parts: string[]): string
+path.resolve(...parts: string[]): string
+path.dirname(p: string): string
+path.basename(p: string, ext?: string): string
+path.extname(p: string): string
+path.parse(p: string): { dir, root, base, ext, name }
+path.format(parts: { dir?, root?, base?, ext?, name? }): string
+```
+
+**2. `crypto` module** (~100 lines)
+```typescript
+// Hash functions:
+crypto.createHash(algorithm: string): Hash
+// Supported: "sha256", "sha512"
+Hash.update(data: string): Hash
+Hash.digest(encoding?: string): string
+
+// Convenience:
+crypto.sha256(data: string): string
+crypto.sha512(data: string): string
+crypto.hmac(algorithm: string, key: string, data: string): string
+```
+
+**3. `os` module** (~80 lines)
+```typescript
+os.platform(): string  // "darwin", "linux", "win32"
+os.arch(): string      // "x64", "arm64"
+os.cpus(): number      // CPU core count
+os.freemem(): number   // Free memory in bytes
+os.totalmem(): number  // Total memory in bytes
+os.homedir(): string   // User's home directory
+os.tmpdir(): string    // Temp directory
+os.EOL: string         // End-of-line character
+```
+
+**4. `process` module** (~80 lines)
+```typescript
+process.env: Record<string, string>
+process.argv: string[]
+process.cwd(): string
+process.exit(code?: number): void
+process.pid: number
+process.platform: string
+process.arch: string
+process.version: string
+process.on(event: string, handler: Function): void  // "exit", "uncaughtException"
+```
+
+#### Files to Create
+
+| File | Lines | Description |
+|------|-------|-------------|
+| `src/stdlib/path.rs` | ~150 | Path manipulation functions |
+| `src/stdlib/crypto.rs` | ~100 | Hash functions (SHA256/512), HMAC |
+| `src/stdlib/os.rs` | ~80 | OS info and utilities |
+| `src/stdlib/process.rs` | ~80 | Process info and env vars |
+| `src/vm/stdlib_setup.rs` | +30 | Register new stdlib modules |
 
 ---
 

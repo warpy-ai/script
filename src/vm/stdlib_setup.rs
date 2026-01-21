@@ -10,6 +10,7 @@ pub fn setup_stdlib(vm: &mut VM) {
     setup_bytestream(vm);
     setup_string(vm);
     setup_promise(vm);
+    setup_path(vm);
     setup_globals(vm);
 }
 
@@ -524,6 +525,68 @@ fn setup_promise(vm: &mut VM) {
     vm.call_stack[0]
         .locals
         .insert("Promise".into(), JsValue::Object(promise_ptr));
+}
+
+fn setup_path(vm: &mut VM) {
+    use crate::stdlib::path::{
+        native_path_basename, native_path_dirname, native_path_extname, native_path_format,
+        native_path_is_absolute, native_path_join, native_path_parse, native_path_relative,
+        native_path_resolve, native_path_to_namespaced_path,
+    };
+
+    let path_join_idx = vm.register_native(native_path_join);
+    let path_resolve_idx = vm.register_native(native_path_resolve);
+    let path_dirname_idx = vm.register_native(native_path_dirname);
+    let path_basename_idx = vm.register_native(native_path_basename);
+    let path_extname_idx = vm.register_native(native_path_extname);
+    let path_parse_idx = vm.register_native(native_path_parse);
+    let path_format_idx = vm.register_native(native_path_format);
+    let path_is_absolute_idx = vm.register_native(native_path_is_absolute);
+    let path_relative_idx = vm.register_native(native_path_relative);
+    let path_to_namespaced_path_idx = vm.register_native(native_path_to_namespaced_path);
+
+    let path_ptr = vm.heap.len();
+    let mut path_props = std::collections::HashMap::new();
+    path_props.insert("join".to_string(), JsValue::NativeFunction(path_join_idx));
+    path_props.insert(
+        "resolve".to_string(),
+        JsValue::NativeFunction(path_resolve_idx),
+    );
+    path_props.insert(
+        "dirname".to_string(),
+        JsValue::NativeFunction(path_dirname_idx),
+    );
+    path_props.insert(
+        "basename".to_string(),
+        JsValue::NativeFunction(path_basename_idx),
+    );
+    path_props.insert(
+        "extname".to_string(),
+        JsValue::NativeFunction(path_extname_idx),
+    );
+    path_props.insert("parse".to_string(), JsValue::NativeFunction(path_parse_idx));
+    path_props.insert(
+        "format".to_string(),
+        JsValue::NativeFunction(path_format_idx),
+    );
+    path_props.insert(
+        "isAbsolute".to_string(),
+        JsValue::NativeFunction(path_is_absolute_idx),
+    );
+    path_props.insert(
+        "relative".to_string(),
+        JsValue::NativeFunction(path_relative_idx),
+    );
+    path_props.insert(
+        "toNamespacedPath".to_string(),
+        JsValue::NativeFunction(path_to_namespaced_path_idx),
+    );
+    vm.heap.push(HeapObject {
+        data: HeapData::Object(path_props),
+    });
+    vm.call_stack[0]
+        .locals
+        .insert("path".into(), JsValue::Object(path_ptr));
 }
 
 fn setup_globals(vm: &mut VM) {
