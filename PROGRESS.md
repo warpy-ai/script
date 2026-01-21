@@ -49,7 +49,7 @@ tscl source → Compiler → SSA IR → Native backend (Cranelift/LLVM) → CPU
 - **Phase 1 – SSA IR System** ✅
 - **Phase 2 – Native Backend (Cranelift JIT + LLVM AOT + LTO)** ✅
 - **Phase 3 – Language Completion / JS Compatibility Layer** ✅ COMPLETE
-- **Phase 4 – Self-Hosting Compiler** 🚧 (design + migration)
+- **Phase 4 – Self-Hosting Compiler** 🚧 IN PROGRESS
 - **Phase 5 – Runtime & Server (HTTP, async runtime)** 🚧
 - **Phase 6 – Tooling (fmt, lint, LSP, profiler)** 🚧
 - **Phase 7 – Distribution (packages, installers, binaries)** 🚧
@@ -894,41 +894,391 @@ JIT vs VM:
 
 ## 10. Future Phases
 
-### 10.1 Phase 4 – Self-Hosting Compiler 🚧
+### 10.1 Phase 4 – Compiler Hardening & Self-Hosting 🚧
 
-**Goal:** `tscl` compiles `tscl` → native → `tscl`.
+**Goal:** Transform tscl from a Rust-VM-based system to a fully self-hosted native compiler.
 
-Current state:
+> **The Only Real Risk:** Phase 4 is where most languages die — not from complexity, but from ABI instability, IR drift, non-deterministic builds, and bootstrap fragility.
 
-```text
-tscl(tscl) → bytecode → Rust VM
+#### 10.1.1 Current State
+
+```
+tscl source → Rust compiler → Bytecode → Rust VM → CPU
 ```
 
-Target:
+**Problem:** The VM is required at runtime, and the compiler is written in Rust.
 
-```text
-tscl(tscl) → SSA → LLVM → native
+#### 10.1.2 Target State
+
+```
+tscl source → self-hosted compiler (compiler.tscl) → SSA IR → LLVM → native binary
 ```
 
-Tasks:
-- Stable IR format + deterministic lowering
-- Emit SSA IR from bootstrap compiler instead of VM bytecode
-- Replace VM backend with Cranelift/LLVM
-- Compile compiler as a tscl program and link native binary
-- Remove VM dependency from compiler path (or keep as dev-only tool)
+**Result:** No VM in production; compiler written in tscl.
 
-Self-hosting loop:
+#### 10.1.3 Bootstrap Chain
 
-```text
-tscl₀ (Rust) compiles tscl₁
-tscl₁ compiles tscl₂
-tscl₂ must equal tscl₁ (bit-for-bit)
+```
+                    ┌─────────────────────────────────────────┐
+                    │           Bootstrap Chain              │
+                    └─────────────────────────────────────────┘
+
+tscl₀ (Rust) ──compile──> tscl₁ (tscl-compiled binary)
+     │                      │
+     │                      └──compile──> tscl₂ (tscl₁-compiled)
+     │                                         │
+     │                                         └──verify──> ✓
+     │
+     └──validate hash(tscl₁) == hash(tscl₂)
+
+Success condition: hash(tscl₁) == hash(tscl₂) (bit-for-bit identical)
 ```
 
-Requires:
-- ABI freeze
-- Reproducible builds + bit-for-bit output checks
-- Bootstrap test suite
+---
+
+#### 10.1.4 Phase 4 Breakdown
+
+##### 4.1 Freeze the ABI ✅ (Foundation)
+
+**Goal:** Create a stable, versioned interface between compiled code and runtime.
+
+**Files to Create/Modify:**
+
+| File | Action | Description |
+|------|--------|-------------|
+| `src/runtime/abi_version.rs` | Create | `pub const ABI_VERSION: u32 = 1;` |
+| `src/runtime/stubs.rs` | Modify | Add `ABI_VERSION` export |
+| All stdlib modules | Modify | Embed `ABI_VERSION` check |
+| Binary headers | Modify | Embed ABI version in compiled output |
+
+**ABI Surface (frozen):**
+
+```rust
+extern "C" {
+    fn tscl_add_any(a: u64, b: u64) -> u64;
+    fn tscl_alloc_object() -> u64;
+    fn tscl_get_prop(obj: u64, key: u64) -> u64;
+    fn tscl_set_prop(obj: u64, key: u64, val: u64) -> u64;
+    fn tscl_get_element(obj: u64, idx: u64) -> u64;
+    fn tscl_set_element(obj: u64, idx: u64, val: u64) -> u64;
+    fn tscl_eq_strict(a: u64, b: u64) -> u64;
+    fn tscl_lt(a: u64, b: u64) -> u64;
+    fn tscl_call(func: u64, args: u64, arg_count: u32) -> u64;
+    fn tscl_alloc_string(ptr: *const u8, len: usize) -> u64;
+    fn tscl_abort(msg: *const u8, len: usize) -> !;
+}
+```
+
+**Rules:**
+- No signature changes
+- No NaN-box encoding changes (64-bit NaN-boxed words)
+- No layout changes to `TsclValue`, heap objects
+- Version bump required for any breaking change
+
+##### 4.2 Freeze the IR
+
+**Goal:** Define a canonical, deterministic IR format with stable serialization.
+
+**Files to Create/Modify:**
+
+| File | Action | Description |
+|------|--------|-------------|
+| `src/ir/format.rs` | Create | IR serialization/deserialization |
+| `src/ir/mod.rs` | Modify | Add IR versioning, canonical ordering |
+| `src/ir/verify.rs` | Extend | Add IR validation pass |
+| CLI | Modify | Add `--emit-ir`, `--verify-ir` |
+
+**IR Requirements:**
+
+1. **Deterministic Register Numbering**
+   - Registers allocated in definition order
+   - No renumbering after initial allocation
+
+2. **Deterministic Block Ordering**
+   - Blocks ordered by first reference
+   - Entry block first, then by function order
+
+3. **Deterministic Function Ordering**
+   - Functions ordered by source position (or declaration order)
+
+4. **Stable Serialization**
+   ```bash
+   tscl ir --emit file.ir      # Serialize IR
+   tscl ir --verify file.ir    # Validate IR
+   tscl compile --from-ir file.ir  # Compile from IR
+   ```
+
+**IR Schema (v1):**
+
+```typescript
+interface IrModule {
+    version: 1;
+    functions: IrFunction[];
+    abi_version: number;
+    source_map?: SourceMap;
+}
+
+interface IrFunction {
+    name: string;
+    params: IrType[];
+    return_type: IrType;
+    blocks: IrBlock[];
+}
+
+interface IrBlock {
+    label: number;
+    params: IrValue[];
+    ops: IrOp[];
+}
+
+type IrOp =
+    | { kind: 'const', value: number | string | boolean }
+    | { kind: 'add', lhs: IrValue, rhs: IrValue }
+    | { kind: 'sub', lhs: IrValue, rhs: IrValue }
+    | { kind: 'mul', lhs: IrValue, rhs: IrValue }
+    | { kind: 'call', func: IrValue, args: IrValue[] }
+    | { kind: 'load', slot: IrValue }
+    | { kind: 'store', slot: IrValue, value: IrValue }
+    | { kind: 'jump', target: number }
+    | { kind: 'branch', cond: IrValue, then: number, else: number }
+    | { kind: 'return', value: IrValue }
+    | { kind: 'phi', incoming: { value: IrValue, block: number }[] }
+```
+
+##### 4.3 Deterministic Compilation
+
+**Goal:** Bit-for-bit reproducible builds.
+
+**Files to Create/Modify:**
+
+| File | Action | Description |
+|------|--------|-------------|
+| `src/build/deterministic.rs` | Create | Determinism verification |
+| `src/backend/llvm/linker.rs` | Modify | Stable linker flags |
+| CLI | Modify | Add `--dist` with full determinism |
+
+**Requirements:**
+
+| Component | Determinism Fix |
+|-----------|-----------------|
+| Symbol ordering | Sort symbols before emission |
+| Hash seeds | Fix random seed for `FnvHashMap` |
+| Linker flags | Stable flags: `-no-undefined`, `-z,nodlopen` |
+| LTO pipeline | Fixed thinlto flags |
+| Timestamps | Embed build timestamp only in metadata section |
+
+**Verification Command:**
+
+```bash
+./target/release/tscl build compiler.tscl --dist -o tscl1
+./target/release/tscl build compiler.tscl --dist -o tscl2
+diff <(sha256sum tscl1) <(sha256sum tscl2)
+# Must be identical
+```
+
+##### 4.4 Create compiler.tscl
+
+**Goal:** Port the compiler from Rust to tscl.
+
+**Strategy:** Port incrementally, keep Rust as reference.
+
+**Module Porting Order:**
+
+| Module | Lines (est) | Dependencies | Priority |
+|--------|-------------|--------------|----------|
+| `lexer.tscl` | ~400 | None | 1 |
+| `token.tscl` | ~200 | lexer | 1 |
+| `ast.tscl` | ~500 | token | 1 |
+| `parser.tscl` | ~1200 | ast, token | 2 |
+| `emitter.tscl` | ~800 | parser | 2 |
+| `ir.tscl` | ~600 | ast | 3 |
+| `ir_builder.tscl` | ~400 | ir | 3 |
+| `codegen.tscl` | ~1000 | ir, emitter | 4 |
+| `main.tscl` | ~200 | all above | 4 |
+
+**Code Structure:**
+
+```
+compiler/
+├── main.tscl              # Entry point, CLI parsing
+├── lexer/
+│   ├── mod.tscl
+│   ├── token.tscl
+│   └── error.tscl
+├── parser/
+│   ├── mod.tscl
+│   ├── expr.tscl
+│   ├── stmt.tscl
+│   └── error.tscl
+├── ast/
+│   ├── mod.tscl
+│   └── types.tscl
+├── ir/
+│   ├── mod.tscl           # IR data structures
+│   ├── builder.tscl       # IR construction
+│   ├── verify.tscl        # IR validation
+│   └── serialize.tscl     # IR serialization
+├── codegen/
+│   ├── mod.tscl
+│   ├── llvm.tscl
+│   └── cranelift.tscl
+└── stdlib/
+    └── builtins.tscl      # Built-in functions in tscl
+```
+
+##### 4.5 Bootstrap Tests
+
+**Goal:** Verify self-hosting loop produces identical binaries.
+
+**Files to Create/Modify:**
+
+| File | Action | Description |
+|------|--------|-------------|
+| `tests/bootstrap/loop.tscl` | Create | Bootstrap verification |
+| `tests/bootstrap/determinism.tscl` | Create | Determinism tests |
+| `tests/bootstrap/features.tscl` | Create | Feature parity tests |
+
+**Test Suite:**
+
+```typescript
+// tests/bootstrap/loop.tscl
+export function testBootstrapLoop(): void {
+    // Step 1: Compile compiler with Rust tscl
+    const tscl1 = runRustTscl("build compiler.tscl --dist -o /tmp/tscl1");
+    assert(tscl1.exitCode === 0, "tscl₁ compilation failed");
+
+    // Step 2: Compile compiler with tscl₁
+    const tscl2 = runTscl("/tmp/tscl1", "build compiler.tscl --dist -o /tmp/tscl2");
+    assert(tscl2.exitCode === 0, "tscl₂ compilation failed");
+
+    // Step 3: Verify bit-for-bit match
+    assert(hash("/tmp/tscl1") === hash("/tmp/tscl2"), "Bootstrap not deterministic");
+}
+
+export function testCompilerFeatures(): void {
+    // Compile a complex tscl program
+    const result = runTscl("/tmp/tscl1", "build complex_program.tscl -o /tmp/prog");
+    assert(result.exitCode === 0, "Complex program compilation failed");
+}
+```
+
+##### 4.6 Kill the VM from Compiler Path
+
+**Goal:** Production `tscl` binary has no VM dependency.
+
+| Mode | VM Present | Use Case |
+|------|------------|----------|
+| `--dev` / `--debug` | ✅ | Development, REPL, testing |
+| `--release` / `--dist` | ❌ | Production builds |
+| `tscl repl` | ✅ | Interactive console |
+| `tscl test` | ✅ | Test runner |
+
+**Files to Create/Modify:**
+
+| File | Action | Description |
+|------|--------|-------------|
+| `src/main.rs` | Modify | Conditional VM initialization |
+| `src/native/mod.rs` | Create | VM-free native entry point |
+| `src/cli.rs` | Modify | Mode-based routing |
+
+**Architecture After Phase 4:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        tscl CLI                             │
+└─────────────────────────────────────────────────────────────┘
+                              │
+              ┌───────────────┴───────────────┐
+              ▼                               ▼
+    ┌─────────────────┐             ┌─────────────────┐
+    │  Debug Mode     │             │  Release Mode   │
+    │  (--dev, repl)  │             │  (--dist)       │
+    └─────────────────┘             └─────────────────┘
+              │                               │
+              ▼                               ▼
+    ┌─────────────────┐             ┌─────────────────┐
+    │  VM + Runtime   │             │  Native Binary  │
+    │  (full JS compat)             │  (no VM)        │
+    └─────────────────┘             └─────────────────┘
+```
+
+---
+
+#### 10.1.5 Files to Create/Modify Summary
+
+**New Files:**
+
+| File | Purpose | Lines (est) |
+|------|---------|-------------|
+| `src/runtime/abi_version.rs` | ABI versioning | 50 |
+| `src/ir/format.rs` | IR serialization | 300 |
+| `src/build/deterministic.rs` | Determinism verification | 200 |
+| `src/native/mod.rs` | VM-free native entry | 150 |
+| `compiler/main.tscl` | Self-hosted compiler entry | 200 |
+| `compiler/lexer/mod.tscl` | Lexer in tscl | 400 |
+| `compiler/parser/mod.tscl` | Parser in tscl | 1200 |
+| `compiler/ir/mod.tscl` | IR in tscl | 600 |
+| `compiler/codegen/mod.tscl` | Code generator in tscl | 1000 |
+| `tests/bootstrap/loop.tscl` | Bootstrap tests | 300 |
+| `docs/ABI.md` | ABI documentation | 500 |
+
+**Modified Files:**
+
+| File | Change | Priority |
+|------|--------|----------|
+| `src/runtime/stubs.rs` | Add ABI_VERSION export | High |
+| `src/main.rs` | Conditional VM init | High |
+| `src/cli.rs` | Add --emit-* flags | High |
+| `src/ir/mod.rs` | Add IR versioning | High |
+| `src/ir/verify.rs` | Extend validation | Medium |
+| `PROGRESS.md` | Update Phase 4 status | Medium |
+
+---
+
+#### 10.1.6 Effort Estimate
+
+| Step | Duration | Complexity |
+|------|----------|------------|
+| Step 1: Stabilize Output | 1 week | Medium |
+| Step 2: Lock ABI | 1 week | Low |
+| Step 3: compiler.tscl | 4-6 weeks | High |
+| Step 4: Bootstrap Tests | 1 week | Medium |
+| **Total** | **7-9 weeks** | — |
+
+---
+
+#### 10.1.7 Success Criteria
+
+1. **ABI Freeze:**
+   - `ABI_VERSION = 1` exposed
+   - No signature changes in 6 months
+   - ABI tests pass
+
+2. **IR Freeze:**
+   - `--emit-ir` produces deterministic output
+   - `--verify-ir` validates all IR invariants
+   - Round-trip (emit → parse → emit) is identical
+
+3. **Determinism:**
+   - `tscl build --dist` produces bit-for-bit identical output
+   - SHA256 hashes match across 10 consecutive builds
+
+4. **Self-Hosting:**
+   - `tscl₁` (Rust-compiled) and `tscl₂` (tscl₁-compiled) are identical
+   - All compiler tests pass in both
+   - No Rust runtime in production binaries
+
+---
+
+#### 10.1.8 Risks & Mitigations
+
+| Risk | Likelihood | Mitigation |
+|------|------------|------------|
+| IR drift during porting | High | Keep Rust as reference, test incrementally |
+| Non-determinism in LLVM | Medium | Fixed flags, deterministic symbol ordering |
+| Bootstrap infinite loop | Medium | Verify hash match at each step |
+| Performance regression | Low | Benchmark suite, performance budgets |
+| Missing features in tscl compiler | Medium | Fall back to Rust for missing features |
 
 ### 10.2 Phase 5 – Runtime & Server 🚧
 
@@ -978,26 +1328,39 @@ Phase 3: Language Completion – COMPLETE ✅
 → ✅ Classes with proper prototype chain, inheritance, super(), decorators
 → ✅ Type system + borrow checker + generics + NaN-boxed runtime
 → ✅ Cranelift JIT + LLVM AOT + LTO, standalone binaries
-→ ✅ Modules (`import`/`export`) – FULLY WORKING Jan 2026
+→ ✅ Modules (import/export) – FULLY WORKING Jan 2026
 → ✅ Async/await + Promise runtime
 → ✅ String methods (ALL JavaScript methods implemented)
 → ✅ VM modularization (module_cache.rs, stdlib_setup.rs, property.rs extracted)
-→ 🚧 Rich stdlib and server/runtime stack
+→ ✅ path module (10 methods)
+Phase 4: Compiler Hardening & Self-Hosting – IN PROGRESS 🚧
+→ 🔄 ABI freezing (src/runtime/abi_version.rs)
+→ ⏳ IR serialization and deterministic lowering
+→ ⏳ compiler.tscl (self-hosted compiler)
+→ ⏳ Bootstrap loop verification
 ```
 
-**Next concrete steps:**
+**Next concrete steps (Phase 4):**
 
-1. Strengthen class semantics:
-   - Private field enforcement
-   - Getter/setter auto-calling in VM/JIT/AOT
-   - Consistent `instanceof` across VM and native backends
-2. Rich stdlib:
-   - `JSON` object (`parse`, `stringify`)
-   - `Math` object (all static methods)
-   - `Date` object
-   - `RegExp` support
-3. Start Phase 4:
-   - Emit SSA IR from tscl compiler, move toward self-hosted native compiler
+1. **Stabilize Compiler Output (Week 1)**
+   - Create `src/runtime/abi_version.rs` with `ABI_VERSION = 1`
+   - Add CLI flags: `--emit-ir`, `--emit-llvm`, `--emit-obj`
+   - Add `--verify-ir` for IR validation
+
+2. **Lock Runtime ABI (Week 2)**
+   - Freeze all `extern "C"` function signatures
+   - Document ABI in `docs/ABI.md`
+   - Add ABI compatibility tests
+
+3. **Create compiler.tscl (Weeks 3-8)**
+   - Port lexer, parser, AST, IR, codegen to tscl
+   - Keep Rust as reference implementation
+   - Test incrementally at each step
+
+4. **Bootstrap Tests (Week 9)**
+   - Verify `hash(tscl₁) == hash(tscl₂)`
+   - Feature parity tests
+   - Performance regression tests
 
 
 ### Fix Applied: ApplyDecorator Stack Order
