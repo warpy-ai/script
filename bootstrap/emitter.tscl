@@ -168,55 +168,100 @@ function emit(emitter, node) {
 
     if (type == "Program") {
         emitProgram(emitter, node);
-    } else if (type == "VariableDeclaration") {
-        emitVariableDeclaration(emitter, node);
-    } else if (type == "FunctionDeclaration") {
-        emitFunctionDeclaration(emitter, node);
-    } else if (type == "ReturnStatement") {
-        emitReturnStatement(emitter, node);
-    } else if (type == "IfStatement") {
-        emitIfStatement(emitter, node);
-    } else if (type == "WhileStatement") {
-        emitWhileStatement(emitter, node);
-    } else if (type == "BlockStatement") {
-        emitBlockStatement(emitter, node);
-    } else if (type == "ExpressionStatement") {
-        emitExpressionStatement(emitter, node);
-    } else if (type == "BinaryExpression") {
-        emitBinaryExpression(emitter, node);
-    } else if (type == "UnaryExpression") {
-        emitUnaryExpression(emitter, node);
-    } else if (type == "AssignmentExpression") {
-        emitAssignmentExpression(emitter, node);
-    } else if (type == "CallExpression") {
-        emitCallExpression(emitter, node);
-    } else if (type == "MemberExpression") {
-        emitMemberExpression(emitter, node);
-    } else if (type == "Identifier") {
-        emitIdentifier(emitter, node);
-    } else if (type == "Literal") {
-        emitLiteral(emitter, node);
-    } else if (type == "ArrayExpression") {
-        emitArrayExpression(emitter, node);
-    } else if (type == "ObjectExpression") {
-        emitObjectExpression(emitter, node);
-    } else if (type == "NewExpression") {
-        emitNewExpression(emitter, node);
-    } else if (type == "ThisExpression") {
-        emitThisExpression(emitter, node);
-    } else if (type == "ArrowFunctionExpression" || type == "FunctionExpression") {
-        emitFunctionExpression(emitter, node);
-    } else if (type == "BreakStatement") {
-        emitBreakStatement(emitter, node);
-    } else if (type == "ContinueStatement") {
-        emitContinueStatement(emitter, node);
-    } else if (type == "EmptyStatement") {
-        // Do nothing
-    } else if (type == "ForStatement") {
-        emitForStatement(emitter, node);
-    } else {
-        console.log("Unknown node type:", type);
+        return;
     }
+    if (type == "VariableDeclaration") {
+        emitVariableDeclaration(emitter, node);
+        return;
+    }
+    if (type == "FunctionDeclaration") {
+        emitFunctionDeclaration(emitter, node);
+        return;
+    }
+    if (type == "ReturnStatement") {
+        emitReturnStatement(emitter, node);
+        return;
+    }
+    if (type == "IfStatement") {
+        emitIfStatement(emitter, node);
+        return;
+    }
+    if (type == "WhileStatement") {
+        emitWhileStatement(emitter, node);
+        return;
+    }
+    if (type == "BlockStatement") {
+        emitBlockStatement(emitter, node);
+        return;
+    }
+    if (type == "ExpressionStatement") {
+        emitExpressionStatement(emitter, node);
+        return;
+    }
+    if (type == "BinaryExpression") {
+        emitBinaryExpression(emitter, node);
+        return;
+    }
+    if (type == "UnaryExpression") {
+        emitUnaryExpression(emitter, node);
+        return;
+    }
+    if (type == "AssignmentExpression") {
+        emitAssignmentExpression(emitter, node);
+        return;
+    }
+    if (type == "CallExpression") {
+        emitCallExpression(emitter, node);
+        return;
+    }
+    if (type == "MemberExpression") {
+        emitMemberExpression(emitter, node);
+        return;
+    }
+    if (type == "Identifier") {
+        emitIdentifier(emitter, node);
+        return;
+    }
+    if (type == "Literal") {
+        emitLiteral(emitter, node);
+        return;
+    }
+    if (type == "ArrayExpression") {
+        emitArrayExpression(emitter, node);
+        return;
+    }
+    if (type == "ObjectExpression") {
+        emitObjectExpression(emitter, node);
+        return;
+    }
+    if (type == "NewExpression") {
+        emitNewExpression(emitter, node);
+        return;
+    }
+    if (type == "ThisExpression") {
+        emitThisExpression(emitter, node);
+        return;
+    }
+    if (type == "ArrowFunctionExpression" || type == "FunctionExpression") {
+        emitFunctionExpression(emitter, node);
+        return;
+    }
+    if (type == "BreakStatement") {
+        emitBreakStatement(emitter, node);
+        return;
+    }
+    if (type == "ContinueStatement") {
+        emitContinueStatement(emitter, node);
+        return;
+    }
+    if (type == "EmptyStatement") {
+        return;
+    }
+    if (type == "ForStatement") {
+        emitForStatement(emitter, node);
+        return;
+    }
+    console.log("Unknown node type:", type);
 }
 
 // ============================================================================
@@ -443,6 +488,7 @@ function emitBinaryExpression(emitter, node) {
         return;
     }
     emitU8(emitter, opcode);
+    return;
 }
 
 function emitUnaryExpression(emitter, node) {
@@ -457,6 +503,7 @@ function emitUnaryExpression(emitter, node) {
         return;
     }
     emitU8(emitter, opcode);
+    return;
 }
 
 function emitAssignmentExpression(emitter, node) {
@@ -501,6 +548,7 @@ function emitAssignmentExpression(emitter, node) {
     } else {
         console.log("Invalid assignment target:", left.type);
     }
+    return;
 }
 
 function emitCallExpression(emitter, node) {
@@ -533,6 +581,7 @@ function emitCallExpression(emitter, node) {
         emitU8(emitter, OP.CALL);
         emitU8(emitter, arguments.length);
     }
+    return;
 }
 
 function emitMemberExpression(emitter, node) {
@@ -549,6 +598,7 @@ function emitMemberExpression(emitter, node) {
         }
         emitString(emitter, propName);
     }
+    return;
 }
 
 function emitIdentifier(emitter, node) {
@@ -568,6 +618,7 @@ function emitIdentifier(emitter, node) {
         emitU8(emitter, OP.LOAD);
         emitString(emitter, node.name);
     }
+    return;
 }
 
 function emitLiteral(emitter, node) {
@@ -595,6 +646,7 @@ function emitLiteral(emitter, node) {
         emitU8(emitter, TYPE.STRING);
         emitString(emitter, value);
     }
+    return;
 }
 
 function emitArrayExpression(emitter, node) {
@@ -613,6 +665,7 @@ function emitArrayExpression(emitter, node) {
         emitU8(emitter, OP.STORE_ELEMENT);
         i = i + 1;
     }
+    return;
 }
 
 function emitObjectExpression(emitter, node) {
@@ -633,6 +686,7 @@ function emitObjectExpression(emitter, node) {
         emitString(emitter, keyName);
         i = i + 1;
     }
+    return;
 }
 
 function emitNewExpression(emitter, node) {
@@ -644,10 +698,12 @@ function emitNewExpression(emitter, node) {
     emit(emitter, node.callee);
     emitU8(emitter, OP.CONSTRUCT);
     emitU8(emitter, node.arguments.length);
+    return;
 }
 
 function emitThisExpression(emitter, node) {
     emitU8(emitter, OP.LOAD_THIS);
+    return;
 }
 
 function emitFunctionExpression(emitter, node) {
@@ -700,6 +756,7 @@ function emitFunctionExpression(emitter, node) {
         emitString(emitter, funcNode.params[i]);
         i = i + 1;
     }
+    return;
 }
 
 // ============================================================================
@@ -735,6 +792,6 @@ function compileToFile(source, outputPath) {
     if (bytecode == null) {
         return false;
     }
-    File.writeBinarySync(outputPath, bytecode);
+    fs.writeBinaryFile(outputPath, bytecode);
     return true;
 }

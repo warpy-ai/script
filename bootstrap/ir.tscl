@@ -1,0 +1,617 @@
+// ============================================================================
+// IR Types for Self-Hosting Compiler
+// ============================================================================
+
+// IR Value representation (NaN-boxed 64-bit word)
+type IrValue = number;
+
+// IR Types
+enum IrType {
+    NUMBER = 0,
+    STRING = 1,
+    BOOLEAN = 2,
+    OBJECT = 3,
+    ARRAY = 4,
+    FUNCTION = 5,
+    ANY = 6,
+    NEVER = 7,
+    VOID = 8
+}
+
+// SSA Operation codes
+enum IrOpCode {
+    CONST = 0,
+    ADD = 1,
+    SUB = 2,
+    MUL = 3,
+    DIV = 4,
+    MOD = 5,
+    NEG = 6,
+    NOT = 7,
+    EQ = 8,
+    NE = 9,
+    LT = 10,
+    GT = 11,
+    LE = 12,
+    GE = 13,
+    AND = 14,
+    OR = 15,
+    LOAD = 16,
+    STORE = 17,
+    LOAD_LOCAL = 18,
+    STORE_LOCAL = 19,
+    LOAD_PROP = 20,
+    STORE_PROP = 21,
+    LOAD_ELEMENT = 22,
+    STORE_ELEMENT = 23,
+    JUMP = 24,
+    JUMP_IF_FALSE = 25,
+    CALL = 26,
+    CALL_METHOD = 27,
+    RETURN = 28,
+    PHI = 29,
+    NEW_OBJECT = 30,
+    NEW_ARRAY = 31,
+    LENGTH = 32,
+    TO_NUMBER = 33,
+    TO_STRING = 34,
+    TO_BOOLEAN = 35
+}
+
+// Basic block structure
+type IrBlock = {
+    label: string,
+    ops: IrInstruction[],
+    predecessors: IrBlock[],
+    successors: IrBlock[]
+};
+
+// SSA Instruction
+type IrInstruction = {
+    opcode: IrOpCode,
+    dest: number | null,        // Destination register (-1 for void)
+    args: number[],             // Source registers
+    immediate: IrValue | null,   // Immediate value if any
+    label: string | null        // For jump targets
+};
+
+// Function definition in IR
+type IrFunction = {
+    name: string,
+    params: string[],
+    return_type: IrType,
+    locals: { index: number, name: string, type: IrType }[],
+    blocks: IrBlock[],
+    entry_block: IrBlock
+};
+
+// IR Module (compilation unit)
+type IrModule = {
+    version: number,
+    abi_version: number,
+    functions: IrFunction[]
+};
+
+// Register allocator
+type RegisterAllocator = {
+    next_reg: number,
+    max_regs: number
+};
+
+// ============================================================================
+// IR Construction
+// ============================================================================
+
+function createRegisterAllocator(): RegisterAllocator {
+    return {
+        next_reg: 0,
+        max_regs: 0
+    };
+}
+
+function allocateRegister(ra: RegisterAllocator): number {
+    let reg = ra.next_reg;
+    ra.next_reg = ra.next_reg + 1;
+    if (ra.next_reg > ra.max_regs) {
+        ra.max_regs = ra.next_reg;
+    }
+    return reg;
+}
+
+function resetRegisterAllocator(ra: RegisterAllocator): void {
+    ra.next_reg = 0;
+    ra.max_regs = 0;
+}
+
+function getMaxRegisters(ra: RegisterAllocator): number {
+    return ra.max_regs;
+}
+
+// Create a new basic block
+function createIrBlock(label: string): IrBlock {
+    return {
+        label: label,
+        ops: [],
+        predecessors: [],
+        successors: []
+    };
+}
+
+// Add instruction to block
+function emitIrOp(block: IrBlock, opcode: IrOpCode, dest: number | null, args: number[], immediate: IrValue | null): void {
+    let inst: IrInstruction = {
+        opcode: opcode,
+        dest: dest,
+        args: args,
+        immediate: immediate,
+        label: null
+    };
+    block.ops.push(inst);
+}
+
+function emitJump(block: IrBlock, target: IrBlock): void {
+    emitIrOp(block, IrOpCode.JUMP, null, [], null);
+    target.predecessors.push(block);
+}
+
+function emitJumpIfFalse(block: IrBlock, cond: number, target: IrBlock): void {
+    emitIrOp(block, IrOpCode.JUMP_IF_FALSE, null, [cond], null);
+    target.predecessors.push(block);
+}
+
+function emitReturn(block: IrBlock, value: number | null): void {
+    if (value != null) {
+        emitIrOp(block, IrOpCode.RETURN, null, [value], null);
+    } else {
+        emitIrOp(block, IrOpCode.RETURN, null, [], null);
+    }
+}
+
+function emitConst(block: IrBlock, dest: number, value: IrValue): void {
+    emitIrOp(block, IrOpCode.CONST, dest, [], value);
+}
+
+function emitBinaryOp(block: IrBlock, opcode: IrOpCode, dest: number, left: number, right: number): void {
+    emitIrOp(block, opcode, dest, [left, right], null);
+}
+
+function emitLoadLocal(block: IrBlock, dest: number, slot: number): void {
+    emitIrOp(block, IrOpCode.LOAD_LOCAL, dest, [slot], null);
+}
+
+function emitStoreLocal(block: IrBlock, slot: number, value: number): void {
+    emitIrOp(block, IrOpCode.STORE_LOCAL, null, [slot, value], null);
+}
+
+function emitCall(block: IrBlock, dest: number, func: number, argc: number): void {
+    emitIrOp(block, IrOpCode.CALL, dest, [func, argc], null);
+}
+
+function emitCallMethod(block: IrBlock, dest: number, obj: number, method: string, argc: number): void {
+    // For method calls, we'll use a special encoding
+    // The actual method name string will be emitted separately
+    emitIrOp(block, IrOpCode.CALL_METHOD, dest, [obj, argc], null as any);
+}
+
+// ============================================================================
+// AST to IR Lowering
+// ============================================================================
+
+function lowerProgramToIr(ast: any): IrModule {
+    let module: IrModule = {
+        version: 1,
+        abi_version: 1,
+        functions: []
+    };
+
+    let ra = createRegisterAllocator();
+    let entry = createIrBlock("entry");
+    
+    // Process top-level statements
+    let i = 0;
+    while (i < ast.body.length) {
+        let stmt = ast.body[i];
+        if (stmt.type == "VariableDeclaration") {
+            lowerVariableDeclaration(entry, stmt, ra);
+        } else if (stmt.type == "FunctionDeclaration") {
+            let func = lowerFunctionDeclaration(stmt, ra);
+            module.functions.push(func);
+        } else if (stmt.type == "ExpressionStatement") {
+            lowerExpression(entry, stmt.expression, ra, null);
+        }
+        i = i + 1;
+    }
+
+    // Add main function
+    let mainFunc: IrFunction = {
+        name: "main",
+        params: [],
+        return_type: IrType.VOID,
+        locals: [],
+        blocks: [entry],
+        entry_block: entry
+    };
+    
+    module.functions.push(mainFunc);
+    
+    return module;
+}
+
+function lowerFunctionDeclaration(node: any, ra: RegisterAllocator): IrFunction {
+    resetRegisterAllocator(ra);
+    
+    let entry = createIrBlock(node.name + "_entry");
+    let func: IrFunction = {
+        name: node.name,
+        params: node.params,
+        return_type: IrType.ANY,
+        locals: [],
+        blocks: [entry],
+        entry_block: entry
+    };
+    
+    // Allocate registers for parameters
+    let i = 0;
+    while (i < node.params.length) {
+        let reg = allocateRegister(ra);
+        func.locals.push({ index: i, name: node.params[i], type: IrType.ANY });
+        emitLoadLocal(entry, reg, i);
+        i = i + 1;
+    }
+    
+    // Lower function body
+    lowerBlockStatement(entry, node.body, ra, func);
+    
+    return func;
+}
+
+function lowerBlockStatement(block: IrBlock, node: any, ra: RegisterAllocator, func: IrFunction): void {
+    let i = 0;
+    while (i < node.body.length) {
+        let stmt = node.body[i];
+        if (stmt.type == "VariableDeclaration") {
+            lowerVariableDeclaration(block, stmt, ra);
+        } else if (stmt.type == "ReturnStatement") {
+            let value = lowerExpression(block, stmt.argument, ra, null);
+            emitReturn(block, value);
+        } else if (stmt.type == "ExpressionStatement") {
+            lowerExpression(block, stmt.expression, ra, null);
+        } else if (stmt.type == "IfStatement") {
+            lowerIfStatement(block, stmt, ra, func);
+        } else if (stmt.type == "WhileStatement") {
+            lowerWhileStatement(block, stmt, ra, func);
+        } else if (stmt.type == "ForStatement") {
+            lowerForStatement(block, stmt, ra, func);
+        }
+        i = i + 1;
+    }
+}
+
+function lowerVariableDeclaration(block: IrBlock, node: any, ra: RegisterAllocator): number {
+    if (node.init != null) {
+        let value = lowerExpression(block, node.init, ra, null);
+        let slot = ra.next_reg; // Simple slot allocation
+        ra.next_reg = ra.next_reg + 1;
+        emitStoreLocal(block, slot, value);
+        return slot;
+    }
+    return -1;
+}
+
+function lowerExpression(block: IrBlock, node: any, ra: RegisterAllocator, dest: number | null): number {
+    if (dest == null) {
+        dest = allocateRegister(ra);
+    }
+    
+    if (node.type == "Literal") {
+        emitConst(block, dest, node.value);
+        return dest;
+    }
+    
+    if (node.type == "Identifier") {
+        // For now, just load from slot 0 (simplified)
+        emitLoadLocal(block, dest, 0);
+        return dest;
+    }
+    
+    if (node.type == "BinaryExpression") {
+        let left = lowerExpression(block, node.left, ra, null);
+        let right = lowerExpression(block, node.right, ra, null);
+        let opcode = getOpCodeForBinaryOp(node.operator);
+        emitBinaryOp(block, opcode as IrOpCode, dest, left, right);
+        return dest;
+    }
+    
+    if (node.type == "CallExpression") {
+        let argc = node.arguments.length;
+        let i = 0;
+        while (i < argc) {
+            lowerExpression(block, node.arguments[i], ra, null);
+            i = i + 1;
+        }
+        let callee = lowerExpression(block, node.callee, ra, null);
+        emitCall(block, dest, callee, argc);
+        return dest;
+    }
+    
+    return dest;
+}
+
+function lowerIfStatement(block: IrBlock, node: any, ra: RegisterAllocator, func: IrFunction): void {
+    let thenBlock = createIrBlock("if_then");
+    let elseBlock = createIrBlock("if_else");
+    let mergeBlock = createIrBlock("if_merge");
+    
+    // Evaluate condition
+    let cond = lowerExpression(block, node.test, ra, null);
+    emitJumpIfFalse(block, cond, elseBlock);
+    block.successors.push(elseBlock);
+    elseBlock.predecessors.push(block);
+    
+    // Then branch
+    lowerBlockStatement(thenBlock, node.consequent, ra, func);
+    emitJump(thenBlock, mergeBlock);
+    mergeBlock.predecessors.push(thenBlock);
+    
+    // Else branch (if present)
+    if (node.alternate != null) {
+        lowerBlockStatement(elseBlock, node.alternate, ra, func);
+    }
+    emitJump(elseBlock, mergeBlock);
+    mergeBlock.predecessors.push(elseBlock);
+    
+    func.blocks.push(thenBlock);
+    func.blocks.push(elseBlock);
+    func.blocks.push(mergeBlock);
+}
+
+function lowerWhileStatement(block: IrBlock, node: any, ra: RegisterAllocator, func: IrFunction): void {
+    let loopBlock = createIrBlock("while_loop");
+    let bodyBlock = createIrBlock("while_body");
+    let exitBlock = createIrBlock("while_exit");
+    
+    emitJump(block, loopBlock);
+    loopBlock.predecessors.push(block);
+    
+    // Condition check
+    let cond = lowerExpression(loopBlock, node.test, ra, null);
+    emitJumpIfFalse(loopBlock, cond, exitBlock);
+    exitBlock.predecessors.push(loopBlock);
+    
+    // Body
+    lowerBlockStatement(bodyBlock, node.body, ra, func);
+    emitJump(bodyBlock, loopBlock);
+    loopBlock.predecessors.push(bodyBlock);
+    
+    func.blocks.push(loopBlock);
+    func.blocks.push(bodyBlock);
+    func.blocks.push(exitBlock);
+}
+
+function lowerForStatement(block: IrBlock, node: any, ra: RegisterAllocator, func: IrFunction): void {
+    // Init
+    if (node.init != null) {
+        if (node.init.type == "VariableDeclaration") {
+            lowerVariableDeclaration(block, node.init, ra);
+        } else {
+            lowerExpression(block, node.init, ra, null);
+        }
+    }
+    
+    let loopBlock = createIrBlock("for_loop");
+    let bodyBlock = createIrBlock("for_body");
+    let updateBlock = createIrBlock("for_update");
+    let exitBlock = createIrBlock("for_exit");
+    
+    emitJump(block, loopBlock);
+    loopBlock.predecessors.push(block);
+    
+    // Condition check
+    let cond = lowerExpression(loopBlock, node.test, ra, null);
+    emitJumpIfFalse(loopBlock, cond, exitBlock);
+    exitBlock.predecessors.push(loopBlock);
+    
+    // Body
+    emitJump(bodyBlock, updateBlock);
+    updateBlock.predecessors.push(bodyBlock);
+    lowerBlockStatement(bodyBlock, node.body, ra, func);
+    
+    // Update
+    if (node.update != null) {
+        lowerExpression(updateBlock, node.update, ra, null);
+    }
+    emitJump(updateBlock, loopBlock);
+    loopBlock.predecessors.push(updateBlock);
+    
+    func.blocks.push(loopBlock);
+    func.blocks.push(bodyBlock);
+    func.blocks.push(updateBlock);
+    func.blocks.push(exitBlock);
+}
+
+function getOpCodeForBinaryOp(operator: string): number {
+    if (operator == "+") { return IrOpCode.ADD; }
+    if (operator == "-") { return IrOpCode.SUB; }
+    if (operator == "*") { return IrOpCode.MUL; }
+    if (operator == "/") { return IrOpCode.DIV; }
+    if (operator == "%") { return IrOpCode.MOD; }
+    if (operator == "==") { return IrOpCode.EQ; }
+    if (operator == "!=") { return IrOpCode.NE; }
+    if (operator == "<") { return IrOpCode.LT; }
+    if (operator == ">") { return IrOpCode.GT; }
+    if (operator == "<=") { return IrOpCode.LE; }
+    if (operator == ">=") { return IrOpCode.GE; }
+    if (operator == "&&") { return IrOpCode.AND; }
+    if (operator == "||") { return IrOpCode.OR; }
+    return IrOpCode.ADD; // Default
+}
+
+// ============================================================================
+// IR Verification
+// ============================================================================
+
+function verifyIrModule(module: IrModule): boolean {
+    // Verify version
+    if (module.version != 1) {
+        console.log("Invalid IR version:", module.version);
+        return false;
+    }
+    
+    // Verify ABI version
+    if (module.abi_version != 1) {
+        console.log("Invalid ABI version:", module.abi_version);
+        return false;
+    }
+    
+    // Verify each function
+    let i = 0;
+    while (i < module.functions.length) {
+        let func = module.functions[i];
+        if (!verifyIrFunction(func)) {
+            return false;
+        }
+        i = i + 1;
+    }
+    
+    return true;
+}
+
+function verifyIrFunction(func: IrFunction): boolean {
+    // Verify entry block exists
+    if (func.entry_block == null) {
+        console.log("Function missing entry block:", func.name);
+        return false;
+    }
+    
+    // Verify all blocks have unique labels
+    let labels: { [key: string]: boolean } = {};
+    let i = 0;
+    while (i < func.blocks.length) {
+        let block = func.blocks[i];
+        if (labels[block.label]) {
+            console.log("Duplicate block label:", block.label);
+            return false;
+        }
+        labels[block.label] = true;
+        i = i + 1;
+    }
+    
+    // Verify predecessors/successors are valid
+    i = 0;
+    while (i < func.blocks.length) {
+        let block = func.blocks[i];
+        let j = 0;
+        while (j < block.successors.length) {
+            let succ = block.successors[j];
+            if (succ.label == null || !labels[succ.label]) {
+                console.log("Invalid successor block");
+                return false;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    
+    return true;
+}
+
+// ============================================================================
+// IR Serialization (for deterministic output)
+// ============================================================================
+
+function serializeIrModule(module: IrModule): string {
+    let lines: string[] = [];
+    
+    lines.push("; ============================================================");
+    lines.push("; tscl IR Module");
+    lines.push("; Format version: " + module.version);
+    lines.push("; ABI version: " + module.abi_version);
+    lines.push("; ============================================================");
+    lines.push("");
+    
+    let i = 0;
+    while (i < module.functions.length) {
+        serializeIrFunction(lines, module.functions[i]);
+        i = i + 1;
+    }
+    
+    return lines.join("\n");
+}
+
+function serializeIrFunction(lines: string[], func: IrFunction): void {
+    lines.push("fn " + func.name + "(" + func.params.join(", ") + ") -> " + irTypeToString(func.return_type) + " {");
+    lines.push("    ; Local variables");
+    
+    let i = 0;
+    while (i < func.locals.length) {
+        let loc = func.locals[i];
+        lines.push("    local $" + loc.index + ": " + loc.name + " : " + irTypeToString(loc.type));
+        i = i + 1;
+    }
+    
+    if (func.locals.length == 0) {
+        lines.push("    ; (no local variables)");
+    }
+    
+    lines.push("");
+    lines.push("bb0:");
+    
+    let j = 0;
+    while (j < func.blocks[0].ops.length) {
+        serializeIrInstruction(lines, func.blocks[0].ops[j], "    ");
+        j = j + 1;
+    }
+    
+    lines.push("}");
+    lines.push("");
+}
+
+function serializeIrInstruction(lines: string[], inst: IrInstruction, indent: string): void {
+    let argsStr = inst.args.join(", ");
+    
+    if (inst.dest != null) {
+        let destStr = "$" + inst.dest;
+        let opStr = irOpCodeToString(inst.opcode);
+        
+        if (inst.args.length == 0 && inst.immediate != null) {
+            lines.push(indent + destStr + " = " + opStr + " " + inst.immediate);
+        } else if (inst.args.length == 1) {
+            lines.push(indent + destStr + " = " + opStr + " " + argsStr);
+        } else if (inst.args.length == 2) {
+            lines.push(indent + destStr + " = " + opStr + " " + argsStr);
+        } else {
+            lines.push(indent + destStr + " = " + opStr + " (" + argsStr + ")");
+        }
+    } else {
+        lines.push(indent + irOpCodeToString(inst.opcode) + " " + argsStr);
+    }
+}
+
+function irTypeToString(t: IrType): string {
+    if (t == IrType.NUMBER) { return "number"; }
+    if (t == IrType.STRING) { return "string"; }
+    if (t == IrType.BOOLEAN) { return "boolean"; }
+    if (t == IrType.OBJECT) { return "object"; }
+    if (t == IrType.ARRAY) { return "array"; }
+    if (t == IrType.FUNCTION) { return "function"; }
+    if (t == IrType.ANY) { return "any"; }
+    if (t == IrType.NEVER) { return "never"; }
+    if (t == IrType.VOID) { return "void"; }
+    return "unknown";
+}
+
+function irOpCodeToString(op: IrOpCode): string {
+    let names: string[] = [
+        "const", "add", "sub", "mul", "div", "mod", "neg", "not",
+        "eq", "ne", "lt", "gt", "le", "ge", "and", "or",
+        "load", "store", "load.local", "store.local",
+        "load.prop", "store.prop", "load.elem", "store.elem",
+        "jump", "jump.if.false", "call", "call.method",
+        "return", "phi", "new.object", "new.array",
+        "length", "to.number", "to.string", "to.boolean"
+    ];
+    if (op >= 0 && op < names.length) {
+        return names[op];
+    }
+    return "op_" + op;
+}

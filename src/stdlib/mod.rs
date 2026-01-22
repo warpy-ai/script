@@ -29,6 +29,25 @@ pub fn native_log(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     JsValue::Undefined
 }
 
+pub fn native_error(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    for arg in args {
+        match arg {
+            JsValue::String(s) => eprint!("{}", s),
+            JsValue::Number(n) => eprint!("{}", n),
+            JsValue::Boolean(b) => eprint!("{}", b),
+            JsValue::Null => eprint!("null"),
+            JsValue::Undefined => eprint!("undefined"),
+            JsValue::Object(ptr) => eprint!("Object({})", ptr),
+            JsValue::Function { address, env: _ } => eprint!("Function({})", address),
+            JsValue::NativeFunction(idx) => eprint!("NativeFunction({})", idx),
+            JsValue::Promise(_) => eprint!("Promise"),
+            JsValue::Accessor(_, _) => eprint!("Accessor"),
+        }
+    }
+    eprintln!();
+    JsValue::Undefined
+}
+
 pub fn native_require(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     if let Some(JsValue::String(module_name)) = args.first() {
         if let Some(module) = vm.modules.get(module_name) {

@@ -1359,7 +1359,7 @@ Phase 3: Language Completion – COMPLETE ✅
 Phase 4: Compiler Hardening & Self-Hosting – IN PROGRESS 🚧
 → ✅ Step 1: Stabilize Compiler Output (DONE Jan 2026)
 → 🔄 Step 2: Lock Runtime ABI (IN PROGRESS)
-→ ⏳ Step 3: compiler.tscl (self-hosted compiler)
+→ 🔄 Step 3: compiler.tscl (IN PROGRESS - Bootstrap modules working!)
 → ⏳ Step 4: Bootstrap loop verification
 ```
 
@@ -1386,6 +1386,64 @@ Phase 4: Compiler Hardening & Self-Hosting – IN PROGRESS 🚧
    - Verify `hash(tscl₁) == hash(tscl₂)`
    - Feature parity tests
    - Performance regression tests
+
+### Fix Applied: Bootstrap Compiler VM Hang (Jan 2026)
+
+**Bug:** The bootstrap compiler (`bootstrap/emitter.tscl`) would hang during compilation of any non-trivial program.
+
+**Root Cause:** Two issues:
+1. Long `if-else-if` chains in the `emit()` function caused VM issues when executing nested function calls
+2. Missing explicit `return;` statements in emitter functions caused control flow issues
+
+**Fix Applied to `bootstrap/emitter.tscl`:**
+
+1. Changed `emit()` function from:
+```typescript
+if (type == "Program") {
+    emitProgram(emitter, node);
+} else if (type == "VariableDeclaration") {
+    emitVariableDeclaration(emitter, node);
+} // ... many more branches
+```
+
+To separate `if` statements with early `return`:
+```typescript
+if (type == "Program") {
+    emitProgram(emitter, node);
+    return;
+}
+if (type == "VariableDeclaration") {
+    emitVariableDeclaration(emitter, node);
+    return;
+}
+// ... etc
+```
+
+2. Added explicit `return;` to all emitter functions:
+- `emitBinaryExpression()`
+- `emitUnaryExpression()`
+- `emitIdentifier()`
+- (and any others that were missing it)
+
+**Test Results:**
+```
+=== Bootstrap Compiler Test Suite ===
+Test 1: Simple variable - PASSED
+Test 2: Function declaration - PASSED
+Test 3: If statement - PASSED
+Test 4: While loop - PASSED
+Test 5: Nested function - PASSED
+=== All tests complete ===
+```
+
+**Files Modified:**
+- `bootstrap/emitter.tscl` - emit() function restructured, explicit returns added
+
+**Additional Fix:** Added `console.error` support
+- Added `native_error` function in `src/stdlib/mod.rs`
+- Registered in `src/vm/stdlib_setup.rs`
+
+This fix enables the self-hosted compiler bootstrap to proceed, as the bootstrap modules (lexer.tscl, parser.tscl, emitter.tscl) can now compile correctly.
 
 
 ### Fix Applied: ApplyDecorator Stack Order

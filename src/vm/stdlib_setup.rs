@@ -16,9 +16,11 @@ pub fn setup_stdlib(vm: &mut VM) {
 
 fn setup_console(vm: &mut VM) {
     let log_idx = vm.register_native(crate::stdlib::native_log);
+    let error_idx = vm.register_native(crate::stdlib::native_error);
     let console_ptr = vm.heap.len();
     let mut console_props = std::collections::HashMap::new();
     console_props.insert("log".to_string(), JsValue::NativeFunction(log_idx));
+    console_props.insert("error".to_string(), JsValue::NativeFunction(error_idx));
     vm.heap.push(HeapObject {
         data: HeapData::Object(console_props),
     });
@@ -35,6 +37,7 @@ fn setup_fs(vm: &mut VM) {
         native_fs_rename, native_fs_rmdir, native_fs_stat_sync, native_fs_unlink,
         native_fs_write_file_async, native_fs_write_file_sync,
     };
+    use crate::stdlib::native_write_binary_file;
 
     let fs_exists_sync_idx = vm.register_native(native_fs_exists_sync);
     let fs_mkdir_sync_idx = vm.register_native(native_fs_mkdir_sync);
@@ -47,6 +50,7 @@ fn setup_fs(vm: &mut VM) {
     let fs_rename_idx = vm.register_native(native_fs_rename);
     let fs_read_file_sync_idx = vm.register_native(native_fs_read_file_sync);
     let fs_write_file_sync_idx = vm.register_native(native_fs_write_file_sync);
+    let fs_write_binary_file_idx = vm.register_native(native_write_binary_file);
     let fs_exists_async_idx = vm.register_native(native_fs_exists_async);
     let fs_read_file_async_idx = vm.register_native(native_fs_read_file_async);
     let fs_write_file_async_idx = vm.register_native(native_fs_write_file_async);
@@ -100,6 +104,10 @@ fn setup_fs(vm: &mut VM) {
     fs_props.insert(
         "writeFile".to_string(),
         JsValue::NativeFunction(fs_write_file_async_idx),
+    );
+    fs_props.insert(
+        "writeBinaryFile".to_string(),
+        JsValue::NativeFunction(fs_write_binary_file_idx),
     );
     fs_props.insert(
         "readDir".to_string(),
