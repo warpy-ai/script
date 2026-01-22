@@ -5,7 +5,7 @@
 
 use llvm_sys::core::*;
 use llvm_sys::prelude::*;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::ffi::CString;
 use std::ptr;
 
@@ -15,7 +15,7 @@ use crate::backend::BackendError;
 pub unsafe fn declare_runtime_stubs(
     module: LLVMModuleRef,
     context: LLVMContextRef,
-    stubs: &mut HashMap<String, LLVMValueRef>,
+    stubs: &mut BTreeMap<String, LLVMValueRef>,
 ) -> Result<(), BackendError> {
     // Declare libc functions we'll use
     declare_libc_functions(module, context)?;
@@ -56,7 +56,7 @@ unsafe fn declare_libc_functions(
 unsafe fn define_tscl_call(
     module: LLVMModuleRef,
     context: LLVMContextRef,
-    stubs: &mut HashMap<String, LLVMValueRef>,
+    stubs: &mut BTreeMap<String, LLVMValueRef>,
 ) -> Result<(), BackendError> {
     let i64_ty = LLVMInt64TypeInContext(context);
     let i8_ptr_ty = LLVMPointerType(LLVMInt8TypeInContext(context), 0);
@@ -159,7 +159,7 @@ unsafe fn define_tscl_call(
 unsafe fn define_tscl_console_log(
     module: LLVMModuleRef,
     context: LLVMContextRef,
-    stubs: &mut HashMap<String, LLVMValueRef>,
+    stubs: &mut BTreeMap<String, LLVMValueRef>,
 ) -> Result<(), BackendError> {
     let i64_ty = LLVMInt64TypeInContext(context);
     let i32_ty = LLVMInt32TypeInContext(context);
@@ -341,7 +341,7 @@ where
 unsafe fn define_simple_stubs(
     module: LLVMModuleRef,
     context: LLVMContextRef,
-    stubs: &mut HashMap<String, LLVMValueRef>,
+    stubs: &mut BTreeMap<String, LLVMValueRef>,
 ) -> Result<(), BackendError> {
     let i64_ty = LLVMInt64TypeInContext(context);
     let i8_ty = LLVMInt8TypeInContext(context);

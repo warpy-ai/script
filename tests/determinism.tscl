@@ -1,0 +1,470 @@
+// ============================================================================
+// Determinism Test Suite
+// ============================================================================
+// Tests for Phase 4.3: Deterministic Compilation
+// Verifies that the compiler produces identical output for identical input
+// ============================================================================
+
+require("../bootstrap/pipeline");
+
+console.log("==============================================");
+console.log("Determinism Test Suite");
+console.log("==============================================");
+console.log("");
+
+let allPassed = true;
+
+// ----------------------------------------------------------------------------
+// Test 1: Simple expression determinism
+// ----------------------------------------------------------------------------
+function testSimpleExpressionDeterminism() {
+    console.log("Test 1: Simple Expression Determinism");
+
+    let source = "1 + 2 * 3";
+
+    // Compile twice
+    let bc1 = compileToBytecode(source);
+    let bc2 = compileToBytecode(source);
+
+    if (bc1 == null || bc2 == null) {
+        console.log("  FAIL: Compilation failed");
+        return false;
+    }
+
+    // Check length match
+    if (bc1.length != bc2.length) {
+        console.log("  FAIL: Length mismatch (" + bc1.length + " vs " + bc2.length + ")");
+        return false;
+    }
+
+    // Check hash match
+    let hash1 = computeBytecodeHash(bc1);
+    let hash2 = computeBytecodeHash(bc2);
+
+    if (hash1 != hash2) {
+        console.log("  FAIL: Hash mismatch (" + hash1.toString(16) + " vs " + hash2.toString(16) + ")");
+        return false;
+    }
+
+    console.log("  Length: " + bc1.length + " bytes");
+    console.log("  Hash: " + hash1.toString(16));
+    console.log("  PASS");
+    return true;
+}
+
+// ----------------------------------------------------------------------------
+// Test 2: Variable declaration determinism
+// ----------------------------------------------------------------------------
+function testVariableDeterminism() {
+    console.log("Test 2: Variable Declaration Determinism");
+
+    let source = "let x = 42; let y = 100; let z = x + y;";
+
+    let bc1 = compileToBytecode(source);
+    let bc2 = compileToBytecode(source);
+
+    if (bc1 == null || bc2 == null) {
+        console.log("  FAIL: Compilation failed");
+        return false;
+    }
+
+    if (bc1.length != bc2.length) {
+        console.log("  FAIL: Length mismatch");
+        return false;
+    }
+
+    let hash1 = computeBytecodeHash(bc1);
+    let hash2 = computeBytecodeHash(bc2);
+
+    if (hash1 != hash2) {
+        console.log("  FAIL: Hash mismatch");
+        return false;
+    }
+
+    console.log("  Length: " + bc1.length + " bytes");
+    console.log("  Hash: " + hash1.toString(16));
+    console.log("  PASS");
+    return true;
+}
+
+// ----------------------------------------------------------------------------
+// Test 3: Function declaration determinism
+// ----------------------------------------------------------------------------
+function testFunctionDeterminism() {
+    console.log("Test 3: Function Declaration Determinism");
+
+    let source = "function add(a, b) { return a + b; } function mul(x, y) { return x * y; }";
+
+    let bc1 = compileToBytecode(source);
+    let bc2 = compileToBytecode(source);
+
+    if (bc1 == null || bc2 == null) {
+        console.log("  FAIL: Compilation failed");
+        return false;
+    }
+
+    if (bc1.length != bc2.length) {
+        console.log("  FAIL: Length mismatch");
+        return false;
+    }
+
+    let hash1 = computeBytecodeHash(bc1);
+    let hash2 = computeBytecodeHash(bc2);
+
+    if (hash1 != hash2) {
+        console.log("  FAIL: Hash mismatch");
+        return false;
+    }
+
+    console.log("  Length: " + bc1.length + " bytes");
+    console.log("  Hash: " + hash1.toString(16));
+    console.log("  PASS");
+    return true;
+}
+
+// ----------------------------------------------------------------------------
+// Test 4: Control flow determinism
+// ----------------------------------------------------------------------------
+function testControlFlowDeterminism() {
+    console.log("Test 4: Control Flow Determinism");
+
+    let source = "function fib(n) { if (n <= 1) { return n; } return fib(n - 1) + fib(n - 2); }";
+
+    let bc1 = compileToBytecode(source);
+    let bc2 = compileToBytecode(source);
+
+    if (bc1 == null || bc2 == null) {
+        console.log("  FAIL: Compilation failed");
+        return false;
+    }
+
+    if (bc1.length != bc2.length) {
+        console.log("  FAIL: Length mismatch");
+        return false;
+    }
+
+    let hash1 = computeBytecodeHash(bc1);
+    let hash2 = computeBytecodeHash(bc2);
+
+    if (hash1 != hash2) {
+        console.log("  FAIL: Hash mismatch");
+        return false;
+    }
+
+    console.log("  Length: " + bc1.length + " bytes");
+    console.log("  Hash: " + hash1.toString(16));
+    console.log("  PASS");
+    return true;
+}
+
+// ----------------------------------------------------------------------------
+// Test 5: Loop determinism
+// ----------------------------------------------------------------------------
+function testLoopDeterminism() {
+    console.log("Test 5: Loop Determinism");
+
+    let source = "function sum(n) { let total = 0; for (let i = 0; i < n; i = i + 1) { total = total + i; } return total; }";
+
+    let bc1 = compileToBytecode(source);
+    let bc2 = compileToBytecode(source);
+
+    if (bc1 == null || bc2 == null) {
+        console.log("  FAIL: Compilation failed");
+        return false;
+    }
+
+    if (bc1.length != bc2.length) {
+        console.log("  FAIL: Length mismatch");
+        return false;
+    }
+
+    let hash1 = computeBytecodeHash(bc1);
+    let hash2 = computeBytecodeHash(bc2);
+
+    if (hash1 != hash2) {
+        console.log("  FAIL: Hash mismatch");
+        return false;
+    }
+
+    console.log("  Length: " + bc1.length + " bytes");
+    console.log("  Hash: " + hash1.toString(16));
+    console.log("  PASS");
+    return true;
+}
+
+// ----------------------------------------------------------------------------
+// Test 6: Object literal determinism
+// ----------------------------------------------------------------------------
+function testObjectDeterminism() {
+    console.log("Test 6: Object Literal Determinism");
+
+    let source = "let obj = { name: \"test\", value: 42, active: true };";
+
+    let bc1 = compileToBytecode(source);
+    let bc2 = compileToBytecode(source);
+
+    if (bc1 == null || bc2 == null) {
+        console.log("  FAIL: Compilation failed");
+        return false;
+    }
+
+    if (bc1.length != bc2.length) {
+        console.log("  FAIL: Length mismatch");
+        return false;
+    }
+
+    let hash1 = computeBytecodeHash(bc1);
+    let hash2 = computeBytecodeHash(bc2);
+
+    if (hash1 != hash2) {
+        console.log("  FAIL: Hash mismatch");
+        return false;
+    }
+
+    console.log("  Length: " + bc1.length + " bytes");
+    console.log("  Hash: " + hash1.toString(16));
+    console.log("  PASS");
+    return true;
+}
+
+// ----------------------------------------------------------------------------
+// Test 7: Array literal determinism
+// ----------------------------------------------------------------------------
+function testArrayDeterminism() {
+    console.log("Test 7: Array Literal Determinism");
+
+    let source = "let arr = [1, 2, 3, 4, 5]; let sum = arr[0] + arr[1];";
+
+    let bc1 = compileToBytecode(source);
+    let bc2 = compileToBytecode(source);
+
+    if (bc1 == null || bc2 == null) {
+        console.log("  FAIL: Compilation failed");
+        return false;
+    }
+
+    if (bc1.length != bc2.length) {
+        console.log("  FAIL: Length mismatch");
+        return false;
+    }
+
+    let hash1 = computeBytecodeHash(bc1);
+    let hash2 = computeBytecodeHash(bc2);
+
+    if (hash1 != hash2) {
+        console.log("  FAIL: Hash mismatch");
+        return false;
+    }
+
+    console.log("  Length: " + bc1.length + " bytes");
+    console.log("  Hash: " + hash1.toString(16));
+    console.log("  PASS");
+    return true;
+}
+
+// ----------------------------------------------------------------------------
+// Test 8: Multiple compilation rounds
+// ----------------------------------------------------------------------------
+function testMultipleRounds() {
+    console.log("Test 8: Multiple Compilation Rounds (5x)");
+
+    let source = "function isPrime(n) { if (n <= 1) { return false; } for (let i = 2; i * i <= n; i = i + 1) { if (n % i == 0) { return false; } } return true; }";
+
+    let firstHash = null;
+    let firstLen = 0;
+
+    for (let round = 0; round < 5; round = round + 1) {
+        let bc = compileToBytecode(source);
+
+        if (bc == null) {
+            console.log("  FAIL: Compilation failed on round " + round);
+            return false;
+        }
+
+        let hash = computeBytecodeHash(bc);
+
+        if (round == 0) {
+            firstHash = hash;
+            firstLen = bc.length;
+        } else {
+            if (bc.length != firstLen) {
+                console.log("  FAIL: Length mismatch on round " + round);
+                return false;
+            }
+            if (hash != firstHash) {
+                console.log("  FAIL: Hash mismatch on round " + round);
+                return false;
+            }
+        }
+    }
+
+    console.log("  Length: " + firstLen + " bytes");
+    console.log("  Hash: " + firstHash.toString(16));
+    console.log("  All 5 rounds identical");
+    console.log("  PASS");
+    return true;
+}
+
+// ----------------------------------------------------------------------------
+// Test 9: Bootstrap module determinism
+// ----------------------------------------------------------------------------
+function testBootstrapModuleDeterminism() {
+    console.log("Test 9: Bootstrap Module Determinism");
+
+    let BOOTSTRAP_MODULES = [
+        "../bootstrap/types.tscl",
+        "../bootstrap/lexer.tscl",
+        "../bootstrap/parser.tscl",
+        "../bootstrap/emitter.tscl",
+        "../bootstrap/ir.tscl",
+        "../bootstrap/ir_builder.tscl",
+        "../bootstrap/codegen.tscl",
+        "../bootstrap/pipeline.tscl"
+    ];
+
+    let modulesPassed = true;
+
+    for (let i = 0; i < BOOTSTRAP_MODULES.length; i = i + 1) {
+        let modulePath = BOOTSTRAP_MODULES[i];
+        let source = fs.readFileSync(modulePath, "utf8");
+
+        let bc1 = compileToBytecode(source);
+        let bc2 = compileToBytecode(source);
+
+        if (bc1 == null || bc2 == null) {
+            console.log("  FAIL: " + modulePath + " - compilation failed");
+            modulesPassed = false;
+            continue;
+        }
+
+        if (bc1.length != bc2.length) {
+            console.log("  FAIL: " + modulePath + " - length mismatch");
+            modulesPassed = false;
+            continue;
+        }
+
+        let hash1 = computeBytecodeHash(bc1);
+        let hash2 = computeBytecodeHash(bc2);
+
+        if (hash1 != hash2) {
+            console.log("  FAIL: " + modulePath + " - hash mismatch");
+            modulesPassed = false;
+            continue;
+        }
+
+        let baseName = modulePath.replace("../bootstrap/", "").replace(".tscl", "");
+        console.log("  " + baseName + ": " + hash1.toString(16) + " (" + bc1.length + " bytes)");
+    }
+
+    if (modulesPassed) {
+        console.log("  PASS");
+    }
+    return modulesPassed;
+}
+
+// ----------------------------------------------------------------------------
+// Test 10: Combined source determinism
+// ----------------------------------------------------------------------------
+function testCombinedSourceDeterminism() {
+    console.log("Test 10: Combined Source Determinism");
+
+    let BOOTSTRAP_MODULES = [
+        "../bootstrap/types.tscl",
+        "../bootstrap/lexer.tscl",
+        "../bootstrap/parser.tscl",
+        "../bootstrap/emitter.tscl",
+        "../bootstrap/ir.tscl",
+        "../bootstrap/ir_builder.tscl",
+        "../bootstrap/codegen.tscl",
+        "../bootstrap/pipeline.tscl"
+    ];
+
+    // Combine all sources
+    let combinedSource = "";
+    for (let i = 0; i < BOOTSTRAP_MODULES.length; i = i + 1) {
+        let source = fs.readFileSync(BOOTSTRAP_MODULES[i], "utf8");
+        combinedSource = combinedSource + source + "\n\n";
+    }
+
+    // Compile combined source twice
+    let bc1 = compileToBytecode(combinedSource);
+    let bc2 = compileToBytecode(combinedSource);
+
+    if (bc1 == null || bc2 == null) {
+        console.log("  FAIL: Compilation failed");
+        return false;
+    }
+
+    if (bc1.length != bc2.length) {
+        console.log("  FAIL: Length mismatch (" + bc1.length + " vs " + bc2.length + ")");
+        return false;
+    }
+
+    let hash1 = computeBytecodeHash(bc1);
+    let hash2 = computeBytecodeHash(bc2);
+
+    if (hash1 != hash2) {
+        console.log("  FAIL: Hash mismatch (" + hash1.toString(16) + " vs " + hash2.toString(16) + ")");
+        return false;
+    }
+
+    console.log("  Combined source: " + combinedSource.length + " bytes");
+    console.log("  Bytecode: " + bc1.length + " bytes");
+    console.log("  Hash: " + hash1.toString(16));
+    console.log("  PASS");
+    return true;
+}
+
+// ============================================================================
+// Run All Tests
+// ============================================================================
+
+console.log("Running Determinism Tests...");
+console.log("");
+
+if (!testSimpleExpressionDeterminism()) { allPassed = false; }
+console.log("");
+
+if (!testVariableDeterminism()) { allPassed = false; }
+console.log("");
+
+if (!testFunctionDeterminism()) { allPassed = false; }
+console.log("");
+
+if (!testControlFlowDeterminism()) { allPassed = false; }
+console.log("");
+
+if (!testLoopDeterminism()) { allPassed = false; }
+console.log("");
+
+if (!testObjectDeterminism()) { allPassed = false; }
+console.log("");
+
+if (!testArrayDeterminism()) { allPassed = false; }
+console.log("");
+
+if (!testMultipleRounds()) { allPassed = false; }
+console.log("");
+
+if (!testBootstrapModuleDeterminism()) { allPassed = false; }
+console.log("");
+
+if (!testCombinedSourceDeterminism()) { allPassed = false; }
+console.log("");
+
+// ============================================================================
+// Summary
+// ============================================================================
+
+console.log("==============================================");
+if (allPassed) {
+    console.log("All Determinism Tests PASSED!");
+    console.log("");
+    console.log("The compiler produces DETERMINISTIC output.");
+    console.log("Phase 4.3 verification complete.");
+} else {
+    console.log("Some Determinism Tests FAILED!");
+    console.log("");
+    console.log("The compiler may produce non-deterministic output.");
+}
+console.log("==============================================");

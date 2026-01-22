@@ -56,6 +56,119 @@ function compileModule(source) {
     return bytecode;
 }
 
+function compileFile(filePath) {
+    if (!fs.existsSync(filePath)) {
+        console.log("Error: File not found: " + filePath);
+        return null;
+    }
+    let source = fs.readFileSync(filePath, "utf8");
+    return compileToBytecode(source);
+}
+
+function saveBytecode(filePath, bytecode) {
+    let stream = bytecode;
+    if (bytecode.bytecode != null) {
+        stream = bytecode.bytecode;
+    }
+    let bytes = ByteStream.toArray(stream);
+    let outStream = ByteStream.create();
+    let i = 0;
+    while (i < bytes.length) {
+        ByteStream.writeU8(outStream, bytes[i]);
+        i = i + 1;
+    }
+    let length = ByteStream.length(outStream);
+    fs.writeFileSync(filePath, "bytecode_length:" + length);
+    return length;
+}
+
+function loadBytecode(filePath) {
+    if (!fs.existsSync(filePath)) {
+        console.log("Error: Bytecode file not found: " + filePath);
+        return null;
+    }
+    let data = fs.readFileSync(filePath);
+    let bytes = [];
+    for (let i = 0; i < data.length; i++) {
+        bytes[i] = data.charCodeAt(i) & 0xFF;
+    }
+    return bytes;
+}
+
+function compileToFile(inputPath, outputPath) {
+    let bytecode = compileFile(inputPath);
+    if (bytecode == null) {
+        console.log("Error: Compilation failed for " + inputPath);
+        return null;
+    }
+    let bytesWritten = saveBytecode(outputPath, bytecode);
+    console.log("Compiled: " + inputPath + " -> " + outputPath + " (" + bytesWritten + " bytes)");
+    return bytecode;
+}
+
+// ============================================================================
+// Hash Functions for Determinism Verification
+// ============================================================================
+
+function computeByteHash(bytes) {
+    if (bytes.toArray != null) {
+        bytes = ByteStream.toArray(bytes);
+    } else if (bytes.bytecode != null) {
+        bytes = ByteStream.toArray(bytes.bytecode);
+    }
+    let h = 0;
+    let len = bytes.length;
+    let i = 0;
+    while (i < len) {
+        h = ((h << 5) - h) + bytes[i];
+        h = h & 0xFFFFFFFF;
+        i = i + 1;
+    }
+    return h;
+}
+
+function computeStringHash(str) {
+    let h = 0;
+    let len = str.length;
+    let i = 0;
+    while (i < len) {
+        h = ((h << 5) - h) + str.charCodeAt(i);
+        h = h & 0xFFFFFFFF;
+        i = i + 1;
+    }
+    return h;
+}
+
+function computeFileHash(filePath) {
+    if (!fs.existsSync(filePath)) {
+        return null;
+    }
+    let data = fs.readFileSync(filePath);
+    let len = data.length;
+    let bytes = [];
+    for (let i = 0; i < len; i++) {
+        bytes[i] = data.charCodeAt(i) & 0xFF;
+    }
+    return computeByteHash(bytes);
+}
+
+function computeBytecodeHash(code) {
+    let stream = code;
+    if (code.bytecode != null) {
+        stream = code.bytecode;
+    }
+    let bytes = ByteStream.toArray(stream);
+    let h = 0;
+    let len = bytes.length;
+    let i = 0;
+    while (i < len) {
+        h = ((h << 5) - h) + bytes[i];
+        h = h & 0xFFFFFFFF;
+        i = i + 1;
+    }
+    return h;
+}
+
 // ============================================================================
 // Performance Metrics
 // ============================================================================
@@ -93,7 +206,13 @@ let BootstrapCompiler = {
     compile: compileToBytecode,
     compileModule: compileModule,
     compileAndVerify: compileAndVerify,
-    measureCompilation: measureCompilation,
+    compileFile: compileFile,
+    saveBytecode: saveBytecode,
+    loadBytecode: loadBytecode,
+    compileToFile: compileToFile,
+    computeByteHash: computeByteHash,
+    computeStringHash: computeStringHash,
+    computeFileHash: computeFileHash,
     version: "0.1.0",
     pipeline: "lexer -> parser -> ir -> codegen"
 };

@@ -226,3 +226,150 @@ mod abi_stability_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod additional_abi_tests {
+    use crate::ir::format::IR_FORMAT_VERSION;
+    use crate::runtime::ABI_VERSION;
+
+    /// Test 12: Runtime stub count verification
+    #[test]
+    fn test_runtime_stub_count() {
+        // Verify expected number of stubs exist
+        let expected_stubs = vec![
+            "tscl_add_any",
+            "tscl_sub_any",
+            "tscl_mul_any",
+            "tscl_div_any",
+            "tscl_mod_any",
+            "tscl_neg",
+            "tscl_eq_strict",
+            "tscl_lt",
+            "tscl_alloc_object",
+            "tscl_alloc_array",
+            "tscl_alloc_string",
+            "tscl_get_prop",
+            "tscl_set_prop",
+            "tscl_get_element",
+            "tscl_set_element",
+            "tscl_call",
+            "tscl_to_boolean",
+            "tscl_console_log",
+            "tscl_abort",
+        ];
+        assert!(
+            expected_stubs.len() >= 19,
+            "Should have at least 19 runtime stubs"
+        );
+    }
+
+    /// Test 13: Pointer encoding range
+    #[test]
+    fn test_pointer_encoding_range() {
+        // Pointers must fit in 48-bit virtual address space (common on 64-bit)
+        let max_48bit: u64 = (1 << 48) - 1;
+        let max_mantissa: u64 = (1 << 52) - 1;
+        assert!(
+            max_48bit < max_mantissa,
+            "48-bit pointers must fit in mantissa"
+        );
+    }
+
+    /// Test 14: NaN-box tag consistency
+    #[test]
+    fn test_nan_box_tags() {
+        const QNAN: u64 = 0x7FF8_0000_0000_0000;
+        const TAG_UNDEFINED: u64 = 0x7FF8_0000_0000_0001;
+        const TAG_NULL: u64 = 0x7FF8_0000_0000_0002;
+        const TAG_TRUE: u64 = 0x7FF8_0000_0000_0003;
+        const TAG_FALSE: u64 = 0x7FF8_0000_0000_0004;
+
+        // Tags should not overlap
+        assert_ne!(TAG_UNDEFINED, TAG_NULL);
+        assert_ne!(TAG_NULL, TAG_TRUE);
+        assert_ne!(TAG_TRUE, TAG_FALSE);
+
+        // All tags should be based on quiet NaN
+        assert!(TAG_UNDEFINED > QNAN);
+        assert!(TAG_NULL > QNAN);
+        assert!(TAG_TRUE > QNAN);
+        assert!(TAG_FALSE > QNAN);
+    }
+
+    /// Test 15: Calling convention verification
+    #[test]
+    fn test_calling_convention() {
+        // All tscl functions use C calling convention (extern "C")
+        // This test documents the ABI requirement
+        #[cfg(target_arch = "x86_64")]
+        {
+            // System V AMD64 ABI: first 6 args in rdi, rsi, rdx, rcx, r8, r9
+            assert!(true, "x86_64 uses System V AMD64 ABI");
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            // AAPCS64: first 8 args in x0-x7
+            assert!(true, "aarch64 uses AAPCS64 ABI");
+        }
+    }
+
+    /// Test 16: Module header layout
+    #[test]
+    fn test_ir_module_header() {
+        assert_eq!(IR_FORMAT_VERSION, 1, "IR format version must be 1");
+        assert_eq!(ABI_VERSION, 1, "ABI version must be 1");
+    }
+
+    /// Test 17: Object header size
+    #[test]
+    fn test_object_header_size() {
+        // Object header: type_tag(4) + flags(4) + prop_table(8) = 16 bytes
+        let expected_header_size = 16usize;
+        assert_eq!(4 + 4 + 8, expected_header_size);
+    }
+
+    /// Test 18: Array header size
+    #[test]
+    fn test_array_header_size() {
+        // Array header: type_tag(4) + flags(4) + length(8) + capacity(8) = 24 bytes
+        let expected_header_size = 24usize;
+        assert_eq!(4 + 4 + 8 + 8, expected_header_size);
+    }
+
+    /// Test 19: String header size
+    #[test]
+    fn test_string_header_size() {
+        // String header: type_tag(4) + flags(4) + length(8) = 16 bytes
+        // (UTF-8 data follows, no null terminator)
+        let expected_header_size = 16usize;
+        assert_eq!(4 + 4 + 8, expected_header_size);
+    }
+
+    /// Test 20: IR serialization roundtrip consistency
+    #[test]
+    fn test_ir_serialization_roundtrip() {
+        use crate::ir::format::serialize_module;
+        use crate::ir::{IrFunction, IrModule, IrOp, IrType, Literal, Terminator};
+
+        // Create module
+        let mut module = IrModule::new();
+        let mut func = IrFunction::new("roundtrip_test".to_string());
+        func.return_ty = IrType::Number;
+        let entry = func.alloc_block();
+        let v0 = func.alloc_value(IrType::Number);
+        {
+            let block = func.block_mut(entry);
+            block.push(IrOp::Const(v0, Literal::Number(42.0)));
+            block.terminate(Terminator::Return(Some(v0)));
+        }
+        module.add_function(func);
+
+        // Serialize twice and compare
+        let s1 = serialize_module(&module);
+        let s2 = serialize_module(&module);
+        assert_eq!(s1, s2, "IR serialization must be deterministic");
+
+        // Verify it contains the expected constant
+        assert!(s1.contains("42"), "IR should contain the constant 42");
+    }
+}

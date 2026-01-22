@@ -3,7 +3,7 @@
 //! This module translates tscl SSA IR operations to LLVM IR instructions.
 
 use llvm_sys::prelude::*;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ffi::CString;
 
 use crate::backend::BackendError;
@@ -24,9 +24,9 @@ pub struct LlvmCodegen {
     /// Target triple
     pub target_triple: String,
     /// Declared runtime stubs (name -> function value)
-    pub stubs: HashMap<String, LLVMValueRef>,
+    pub stubs: BTreeMap<String, LLVMValueRef>,
     /// Compiled function values (name -> function value)
-    pub functions: HashMap<String, LLVMValueRef>,
+    pub functions: BTreeMap<String, LLVMValueRef>,
 }
 
 impl LlvmCodegen {
@@ -61,8 +61,8 @@ impl LlvmCodegen {
                 context,
                 module,
                 target_triple,
-                stubs: HashMap::new(),
-                functions: HashMap::new(),
+                stubs: BTreeMap::new(),
+                functions: BTreeMap::new(),
             })
         }
     }
@@ -222,7 +222,7 @@ impl LlvmCodegen {
         &mut self,
         name: &str,
         func: &IrFunction,
-        _struct_types: &HashMap<u32, LLVMTypeRef>,
+        _struct_types: &BTreeMap<u32, LLVMTypeRef>,
     ) -> Result<(), BackendError> {
         // All function parameters and return values are i64 (NaN-boxed)
         let i64_ty = llvm_sys::core::LLVMInt64TypeInContext(self.context);
@@ -282,7 +282,7 @@ impl LlvmCodegen {
         &mut self,
         func: &IrFunction,
         ir_module: &IrModule,
-        struct_types: &HashMap<u32, LLVMTypeRef>,
+        struct_types: &BTreeMap<u32, LLVMTypeRef>,
     ) -> Result<(), BackendError> {
         let func_name = if func.name.is_empty() {
             "anonymous".to_string()
@@ -377,8 +377,8 @@ impl LlvmCodegen {
     unsafe fn build_struct_types(
         &self,
         ir_module: &IrModule,
-    ) -> Result<HashMap<u32, LLVMTypeRef>, BackendError> {
-        let mut struct_types = HashMap::new();
+    ) -> Result<BTreeMap<u32, LLVMTypeRef>, BackendError> {
+        let mut struct_types = BTreeMap::new();
 
         // Build struct types recursively
         for (id, struct_def) in &ir_module.structs {
@@ -401,9 +401,9 @@ impl Drop for LlvmCodegen {
 
 /// Translation context for compiling a function
 struct TranslationContext<'a> {
-    /// Map from IR ValueId to LLVM Value
+    /// Map from IR ValueId to LLVM Value (internal lookup, doesn't affect output order)
     values: HashMap<ValueId, LLVMValueRef>,
-    /// Map from IR BlockId to LLVM BasicBlock
+    /// Map from IR BlockId to LLVM BasicBlock (internal lookup, doesn't affect output order)
     blocks: HashMap<BlockId, LLVMBasicBlockRef>,
     /// Stack slots for local variables (slot index -> alloca)
     locals: Vec<LLVMValueRef>,
@@ -415,13 +415,13 @@ struct TranslationContext<'a> {
     context: LLVMContextRef,
     /// LLVM module
     module: LLVMModuleRef,
-    /// Struct type map
-    struct_types: HashMap<u32, LLVMTypeRef>,
-    /// Runtime stubs
-    stubs: &'a HashMap<String, LLVMValueRef>,
-    /// Compiled functions
-    functions: &'a HashMap<String, LLVMValueRef>,
-    /// Bytecode address to function name mapping
+    /// Struct type map (deterministic ordering for struct declarations)
+    struct_types: BTreeMap<u32, LLVMTypeRef>,
+    /// Runtime stubs (deterministic ordering for stub declarations)
+    stubs: &'a BTreeMap<String, LLVMValueRef>,
+    /// Compiled functions (deterministic ordering for function declarations)
+    functions: &'a BTreeMap<String, LLVMValueRef>,
+    /// Bytecode address to function name mapping (internal lookup)
     function_addrs: &'a HashMap<usize, usize>,
     /// Function return type (for handling Return(None) correctly)
     return_ty: IrType,

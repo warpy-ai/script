@@ -49,77 +49,56 @@ pub fn link_object_files_with_lto(
         }
     }
 
-    // #region agent log
-    // Log object files and runtime library being linked
-    let obj_files_str: Vec<String> = objects.iter().map(|p| p.display().to_string()).collect();
-    let runtime_lib_str = runtime_lib.map(|p| p.display().to_string());
-    let log_msg = format!(
-        r#"{{"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"llvm/linker.rs:52","message":"Preparing linker command","data":{{"linker":"{}","object_files":{:?},"runtime_lib":{:?},"format":"{:?}"}},"timestamp":{}}}"#,
-        linker,
-        obj_files_str,
-        runtime_lib_str,
-        format,
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis()
-    );
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/Volumes/WD_2TB/warpy/script/.cursor/debug.log")
-    {
-        use std::io::Write;
-        let _ = writeln!(f, "{}", log_msg);
+    // Deterministic build flags for --dist mode (Full LTO)
+    if lto_mode == LtoMode::Full {
+        #[cfg(target_os = "macos")]
+        if linker.contains("clang") || linker.contains("ld") {
+            // macOS-specific determinism flags
+            cmd.arg("-Wl,-reproducible"); // Enable reproducible linking (macOS 11+)
+            cmd.arg("-Wl,-no_uuid"); // Remove non-deterministic UUID from binary
+            cmd.arg("-Wl,-headerpad,0"); // Fixed header padding
+        }
+
+        #[cfg(target_os = "linux")]
+        if linker.contains("clang") || linker.contains("gcc") {
+            // Linux-specific determinism flags
+            cmd.arg("-Wl,--build-id=sha1"); // Deterministic build ID
+            cmd.arg("-Wl,-z,nodlopen"); // Prevent runtime loading variations
+            cmd.arg("-Wl,--no-undefined"); // Ensure all symbols resolved at link time
+        }
     }
-    // #endregion
+
+    // Debug logging (disabled by default for deterministic builds)
+    // Set TSCL_DEBUG_LINKER=1 to enable
+    #[cfg(debug_assertions)]
+    if std::env::var("TSCL_DEBUG_LINKER").is_ok() {
+        let obj_files_str: Vec<String> = objects.iter().map(|p| p.display().to_string()).collect();
+        let runtime_lib_str = runtime_lib.map(|p| p.display().to_string());
+        eprintln!(
+            "[linker] Preparing: linker={}, objects={:?}, runtime={:?}, format={:?}",
+            linker, obj_files_str, runtime_lib_str, format
+        );
+    }
 
     // Add object files
     for obj in objects {
-        // #region agent log
-        // Check if object file exists and has main symbol
-        if obj.exists() {
-            if let Ok(nm_output) = std::process::Command::new("nm").arg("-g").arg(obj).output() {
-                let symbols = String::from_utf8_lossy(&nm_output.stdout);
-                let has_main = symbols.contains("main") || symbols.contains("_main");
-                let log_msg = format!(
-                    r#"{{"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"llvm/linker.rs:60","message":"Object file symbols check","data":{{"obj_file":"{}","has_main":{},"symbols_preview":"{}"}},"timestamp":{}}}"#,
-                    obj.display(),
-                    has_main,
-                    symbols.lines().take(5).collect::<Vec<_>>().join(";"),
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_millis()
-                );
-                if let Ok(mut f) = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open("/Volumes/WD_2TB/warpy/script/.cursor/debug.log")
-                {
-                    use std::io::Write;
-                    let _ = writeln!(f, "{}", log_msg);
+        #[cfg(debug_assertions)]
+        if std::env::var("TSCL_DEBUG_LINKER").is_ok() {
+            if obj.exists() {
+                if let Ok(nm_output) = std::process::Command::new("nm").arg("-g").arg(obj).output() {
+                    let symbols = String::from_utf8_lossy(&nm_output.stdout);
+                    let has_main = symbols.contains("main") || symbols.contains("_main");
+                    eprintln!(
+                        "[linker] Object: {} has_main={} symbols={}",
+                        obj.display(),
+                        has_main,
+                        symbols.lines().take(3).collect::<Vec<_>>().join(";")
+                    );
                 }
-            }
-        } else {
-            let log_msg = format!(
-                r#"{{"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"llvm/linker.rs:75","message":"Object file missing","data":{{"obj_file":"{}"}},"timestamp":{}}}"#,
-                obj.display(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis()
-            );
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open("/Volumes/WD_2TB/warpy/script/.cursor/debug.log")
-            {
-                use std::io::Write;
-                let _ = writeln!(f, "{}", log_msg);
+            } else {
+                eprintln!("[linker] Warning: Object file missing: {}", obj.display());
             }
         }
-        // #endregion
         cmd.arg(obj);
     }
 
@@ -167,26 +146,10 @@ pub fn link_object_files_with_lto(
         }
     }
 
-    // #region agent log
-    // Log the exact linker command
-    let cmd_str = format!("{:?}", cmd);
-    let log_msg = format!(
-        r#"{{"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"llvm/linker.rs:85","message":"Executing linker command","data":{{"command":"{}"}},"timestamp":{}}}"#,
-        cmd_str,
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis()
-    );
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/Volumes/WD_2TB/warpy/script/.cursor/debug.log")
-    {
-        use std::io::Write;
-        let _ = writeln!(f, "{}", log_msg);
+    #[cfg(debug_assertions)]
+    if std::env::var("TSCL_DEBUG_LINKER").is_ok() {
+        eprintln!("[linker] Executing: {:?}", cmd);
     }
-    // #endregion
 
     // Execute linker
     let status = cmd
@@ -194,25 +157,10 @@ pub fn link_object_files_with_lto(
         .map_err(|e| BackendError::Llvm(format!("Failed to execute linker {}: {}", linker, e)))?;
 
     if !status.success() {
-        // #region agent log
-        // Log linker failure
-        let log_msg = format!(
-            r#"{{"sessionId":"debug-session","runId":"run1","hypothesisId":"G","location":"llvm/linker.rs:95","message":"Linker failed","data":{{"exit_code":{:?}}},"timestamp":{}}}"#,
-            status.code(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis()
-        );
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("/Volumes/WD_2TB/warpy/script/.cursor/debug.log")
-        {
-            use std::io::Write;
-            let _ = writeln!(f, "{}", log_msg);
+        #[cfg(debug_assertions)]
+        if std::env::var("TSCL_DEBUG_LINKER").is_ok() {
+            eprintln!("[linker] Failed with exit code: {:?}", status.code());
         }
-        // #endregion
         return Err(BackendError::Llvm(format!(
             "Linker failed with exit code: {:?}",
             status.code()

@@ -1,7 +1,7 @@
 //! Type lowering: tscl IR types → LLVM types
 
 use llvm_sys::prelude::*;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::backend::BackendError;
 use crate::ir::{IrStructDef, IrType};
@@ -10,7 +10,7 @@ use crate::ir::{IrStructDef, IrType};
 pub fn ir_type_to_llvm_type(
     ctx: LLVMContextRef,
     ty: &IrType,
-    struct_types: &HashMap<u32, LLVMTypeRef>,
+    struct_types: &BTreeMap<u32, LLVMTypeRef>,
 ) -> Result<LLVMTypeRef, BackendError> {
     unsafe {
         match ty {
@@ -64,7 +64,7 @@ pub fn ir_type_to_llvm_type(
 pub fn create_struct_type(
     ctx: LLVMContextRef,
     struct_def: &IrStructDef,
-    struct_types: &HashMap<u32, LLVMTypeRef>,
+    struct_types: &BTreeMap<u32, LLVMTypeRef>,
 ) -> Result<LLVMTypeRef, BackendError> {
     unsafe {
         let mut field_types = Vec::new();
