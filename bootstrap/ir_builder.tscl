@@ -9,7 +9,14 @@ require ./ir;
 // Builder State
 // ============================================================================
 
-function createIrBuilder() {
+type IrBuilder = {
+    currentFunction: IrFunction | null,
+    currentBlock: IrBlock | null,
+    ra: RegisterAllocator,
+    functions: IrFunction[]
+};
+
+function createIrBuilder(): IrBuilder {
     return {
         currentFunction: null,
         currentBlock: null,
@@ -18,15 +25,14 @@ function createIrBuilder() {
     };
 }
 
-function irBuilderEnterFunction(builder, name, returnType) {
-    let func = {
+function irBuilderEnterFunction(builder: IrBuilder, name: string, returnType: IrType): IrFunction {
+    let func: IrFunction = {
         name: name,
         params: [],
         return_type: returnType,
         locals: [],
         blocks: [],
-        entry_block: null,
-        current_block: null
+        entry_block: null
     };
     builder.currentFunction = func;
     builder.functions.push(func);
@@ -34,119 +40,119 @@ function irBuilderEnterFunction(builder, name, returnType) {
     return func;
 }
 
-function irBuilderAddParam(builder, name) {
-    let func = builder.currentFunction;
-    let slot = func.params.length;
+function irBuilderAddParam(builder: IrBuilder, name: string): number {
+    let func: IrFunction | null = builder.currentFunction;
+    let slot: number = func.params.length;
     func.params.push(name);
     func.locals.push({ index: slot, name: name, type: IrType.ANY });
     return slot;
 }
 
-function irBuilderCreateEntryBlock(builder) {
-    let func = builder.currentFunction;
-    let block = createIrBlock(func.name + "_entry");
+function irBuilderCreateEntryBlock(builder: IrBuilder): IrBlock {
+    let func: IrFunction | null = builder.currentFunction;
+    let block: IrBlock = createIrBlock(func.name + "_entry");
     func.entry_block = block;
     func.blocks.push(block);
     builder.currentBlock = block;
     return block;
 }
 
-function irBuilderAddBlock(builder, label) {
-    let func = builder.currentFunction;
-    let block = createIrBlock(label);
+function irBuilderAddBlock(builder: IrBuilder, label: string): IrBlock {
+    let func: IrFunction | null = builder.currentFunction;
+    let block: IrBlock = createIrBlock(label);
     func.blocks.push(block);
     builder.currentBlock = block;
     return block;
 }
 
-function irBuilderSetBlock(builder, block) {
+function irBuilderSetBlock(builder: IrBuilder, block: IrBlock): void {
     builder.currentBlock = block;
 }
 
-function irBuilderGetBlockOpCount(builder) {
+function irBuilderGetBlockOpCount(builder: IrBuilder): number {
     if (builder.currentBlock == null) {
         return 0;
     }
     return builder.currentBlock.ops.length;
 }
 
-function irBuilderEmitConst(builder, value) {
-    let dest = allocateRegister(builder.ra);
+function irBuilderEmitConst(builder: IrBuilder, value: IrValue): number {
+    let dest: number = allocateRegister(builder.ra);
     emitConst(builder.currentBlock, dest, value);
     return dest;
 }
 
-function irBuilderEmitConstString(builder, value) {
-    let dest = allocateRegister(builder.ra);
+function irBuilderEmitConstString(builder: IrBuilder, value: IrValue): number {
+    let dest: number = allocateRegister(builder.ra);
     emitIrOp(builder.currentBlock, IrOpCode.CONST, dest, [], value);
     return dest;
 }
 
-function irBuilderEmitBinaryOp(builder, opcode, left, right) {
-    let dest = allocateRegister(builder.ra);
+function irBuilderEmitBinaryOp(builder: IrBuilder, opcode: IrOpCode, left: number, right: number): number {
+    let dest: number = allocateRegister(builder.ra);
     emitBinaryOp(builder.currentBlock, opcode, dest, left, right);
     return dest;
 }
 
-function irBuilderEmitAdd(builder, left, right) {
+function irBuilderEmitAdd(builder: IrBuilder, left: number, right: number): number {
     return irBuilderEmitBinaryOp(builder, IrOpCode.ADD, left, right);
 }
 
-function irBuilderEmitSub(builder, left, right) {
+function irBuilderEmitSub(builder: IrBuilder, left: number, right: number): number {
     return irBuilderEmitBinaryOp(builder, IrOpCode.SUB, left, right);
 }
 
-function irBuilderEmitMul(builder, left, right) {
+function irBuilderEmitMul(builder: IrBuilder, left: number, right: number): number {
     return irBuilderEmitBinaryOp(builder, IrOpCode.MUL, left, right);
 }
 
-function irBuilderEmitDiv(builder, left, right) {
+function irBuilderEmitDiv(builder: IrBuilder, left: number, right: number): number {
     return irBuilderEmitBinaryOp(builder, IrOpCode.DIV, left, right);
 }
 
-function irBuilderEmitLoadLocal(builder, slot) {
-    let dest = allocateRegister(builder.ra);
+function irBuilderEmitLoadLocal(builder: IrBuilder, slot: number): number {
+    let dest: number = allocateRegister(builder.ra);
     emitLoadLocal(builder.currentBlock, dest, slot);
     return dest;
 }
 
-function irBuilderEmitStoreLocal(builder, slot, value) {
+function irBuilderEmitStoreLocal(builder: IrBuilder, slot: number, value: number): void {
     emitStoreLocal(builder.currentBlock, slot, value);
 }
 
-function irBuilderEmitJump(builder, targetBlock) {
+function irBuilderEmitJump(builder: IrBuilder, targetBlock: IrBlock): void {
     emitJump(builder.currentBlock, targetBlock);
 }
 
-function irBuilderEmitJumpIfFalse(builder, cond, targetBlock) {
+function irBuilderEmitJumpIfFalse(builder: IrBuilder, cond: number, targetBlock: IrBlock): void {
     emitJumpIfFalse(builder.currentBlock, cond, targetBlock);
 }
 
-function irBuilderEmitReturn(builder, value) {
+function irBuilderEmitReturn(builder: IrBuilder, value: number | null): void {
     emitReturn(builder.currentBlock, value);
 }
 
-function irBuilderEmitReturnVoid(builder) {
+function irBuilderEmitReturnVoid(builder: IrBuilder): void {
     emitReturn(builder.currentBlock, null);
 }
 
-function irBuilderEmitCall(builder, funcReg, argc) {
-    let dest = allocateRegister(builder.ra);
+function irBuilderEmitCall(builder: IrBuilder, funcReg: number, argc: number): number {
+    let dest: number = allocateRegister(builder.ra);
     emitCall(builder.currentBlock, dest, funcReg, argc);
     return dest;
 }
 
-function irBuilderEmitLoad(builder, address) {
-    let dest = allocateRegister(builder.ra);
+function irBuilderEmitLoad(builder: IrBuilder, address: number): number {
+    let dest: number = allocateRegister(builder.ra);
     emitIrOp(builder.currentBlock, IrOpCode.LOAD, dest, [address], null);
     return dest;
 }
 
-function irBuilderEmitStore(builder, address, value) {
+function irBuilderEmitStore(builder: IrBuilder, address: number, value: number): void {
     emitIrOp(builder.currentBlock, IrOpCode.STORE, null, [address, value], null);
 }
 
-function irBuilderGetMaxRegs(builder) {
+function irBuilderGetMaxRegs(builder: IrBuilder): number {
     return getMaxRegisters(builder.ra);
 }
 
@@ -154,31 +160,31 @@ function irBuilderGetMaxRegs(builder) {
 // High-level IR Construction Helpers
 // ============================================================================
 
-function irBuilderCreateSimpleFunction(builder, name, bodyBuilder) {
-    let func = irBuilderEnterFunction(builder, name, IrType.ANY);
+function irBuilderCreateSimpleFunction(builder: IrBuilder, name: string, bodyBuilder: (builder: IrBuilder) => void): IrFunction {
+    let func: IrFunction = irBuilderEnterFunction(builder, name, IrType.ANY);
     irBuilderCreateEntryBlock(builder);
     bodyBuilder(builder);
     return func;
 }
 
-function irBuilderCreateMathFunction(builder, name, op) {
-    return irBuilderCreateSimpleFunction(builder, name, function(b) {
-        let aSlot = irBuilderAddParam(b, "a");
-        let bSlot = irBuilderAddParam(b, "b");
-        let a = irBuilderEmitLoadLocal(b, aSlot);
-        let b = irBuilderEmitLoadLocal(b, bSlot);
-        let result = irBuilderEmitBinaryOp(b, op, a, b);
+function irBuilderCreateMathFunction(builder: IrBuilder, name: string, op: IrOpCode): IrFunction {
+    return irBuilderCreateSimpleFunction(builder, name, function(b: IrBuilder): void {
+        let aSlot: number = irBuilderAddParam(b, "a");
+        let bSlot: number = irBuilderAddParam(b, "b");
+        let a: number = irBuilderEmitLoadLocal(b, aSlot);
+        let bReg: number = irBuilderEmitLoadLocal(b, bSlot);
+        let result: number = irBuilderEmitBinaryOp(b, op, a, bReg);
         irBuilderEmitReturn(b, result);
     });
 }
 
-function irBuilderCreateComparisonFunction(builder, name, op) {
-    return irBuilderCreateSimpleFunction(builder, name, function(b) {
-        let aSlot = irBuilderAddParam(b, "a");
-        let bSlot = irBuilderAddParam(b, "b");
-        let a = irBuilderEmitLoadLocal(b, aSlot);
-        let b = irBuilderEmitLoadLocal(b, bSlot);
-        let result = irBuilderEmitBinaryOp(b, op, a, b);
+function irBuilderCreateComparisonFunction(builder: IrBuilder, name: string, op: IrOpCode): IrFunction {
+    return irBuilderCreateSimpleFunction(builder, name, function(b: IrBuilder): void {
+        let aSlot: number = irBuilderAddParam(b, "a");
+        let bSlot: number = irBuilderAddParam(b, "b");
+        let a: number = irBuilderEmitLoadLocal(b, aSlot);
+        let bReg: number = irBuilderEmitLoadLocal(b, bSlot);
+        let result: number = irBuilderEmitBinaryOp(b, op, a, bReg);
         irBuilderEmitReturn(b, result);
     });
 }
@@ -187,8 +193,8 @@ function irBuilderCreateComparisonFunction(builder, name, op) {
 // Module Building
 // ============================================================================
 
-function irBuilderFinish(builder) {
-    let module = {
+function irBuilderFinish(builder: IrBuilder): IrModule {
+    let module: IrModule = {
         version: 1,
         abi_version: 1,
         functions: builder.functions
@@ -200,65 +206,65 @@ function irBuilderFinish(builder) {
 // Example: Build a complete module with multiple functions
 // ============================================================================
 
-function buildExampleModule() {
-    let builder = createIrBuilder();
-    
+function buildExampleModule(): IrModule {
+    let builder: IrBuilder = createIrBuilder();
+
     // Create add function manually
     {
-        let func = irBuilderEnterFunction(builder, "add", IrType.ANY);
+        let func: IrFunction = irBuilderEnterFunction(builder, "add", IrType.ANY);
         irBuilderCreateEntryBlock(builder);
-        let aSlot = irBuilderAddParam(builder, "a");
-        let bSlot = irBuilderAddParam(builder, "b");
-        let a = irBuilderEmitLoadLocal(builder, aSlot);
-        let b = irBuilderEmitLoadLocal(builder, bSlot);
-        let result = irBuilderEmitBinaryOp(builder, IrOpCode.ADD, a, b);
+        let aSlot: number = irBuilderAddParam(builder, "a");
+        let bSlot: number = irBuilderAddParam(builder, "b");
+        let a: number = irBuilderEmitLoadLocal(builder, aSlot);
+        let bReg: number = irBuilderEmitLoadLocal(builder, bSlot);
+        let result: number = irBuilderEmitBinaryOp(builder, IrOpCode.ADD, a, bReg);
         irBuilderEmitReturn(builder, result);
     }
-    
+
     // Create sub function manually
     {
-        let func = irBuilderEnterFunction(builder, "sub", IrType.ANY);
+        let func: IrFunction = irBuilderEnterFunction(builder, "sub", IrType.ANY);
         irBuilderCreateEntryBlock(builder);
-        let aSlot = irBuilderAddParam(builder, "a");
-        let bSlot = irBuilderAddParam(builder, "b");
-        let a = irBuilderEmitLoadLocal(builder, aSlot);
-        let b = irBuilderEmitLoadLocal(builder, bSlot);
-        let result = irBuilderEmitBinaryOp(builder, IrOpCode.SUB, a, b);
+        let aSlot: number = irBuilderAddParam(builder, "a");
+        let bSlot: number = irBuilderAddParam(builder, "b");
+        let a: number = irBuilderEmitLoadLocal(builder, aSlot);
+        let bReg: number = irBuilderEmitLoadLocal(builder, bSlot);
+        let result: number = irBuilderEmitBinaryOp(builder, IrOpCode.SUB, a, bReg);
         irBuilderEmitReturn(builder, result);
     }
-    
+
     // Create mul function manually
     {
-        let func = irBuilderEnterFunction(builder, "mul", IrType.ANY);
+        let func: IrFunction = irBuilderEnterFunction(builder, "mul", IrType.ANY);
         irBuilderCreateEntryBlock(builder);
-        let aSlot = irBuilderAddParam(builder, "a");
-        let bSlot = irBuilderAddParam(builder, "b");
-        let a = irBuilderEmitLoadLocal(builder, aSlot);
-        let b = irBuilderEmitLoadLocal(builder, bSlot);
-        let result = irBuilderEmitBinaryOp(builder, IrOpCode.MUL, a, b);
+        let aSlot: number = irBuilderAddParam(builder, "a");
+        let bSlot: number = irBuilderAddParam(builder, "b");
+        let a: number = irBuilderEmitLoadLocal(builder, aSlot);
+        let bReg: number = irBuilderEmitLoadLocal(builder, bSlot);
+        let result: number = irBuilderEmitBinaryOp(builder, IrOpCode.MUL, a, bReg);
         irBuilderEmitReturn(builder, result);
     }
-    
+
     // Create eq function manually
     {
-        let func = irBuilderEnterFunction(builder, "eq", IrType.ANY);
+        let func: IrFunction = irBuilderEnterFunction(builder, "eq", IrType.ANY);
         irBuilderCreateEntryBlock(builder);
-        let aSlot = irBuilderAddParam(builder, "a");
-        let bSlot = irBuilderAddParam(builder, "b");
-        let a = irBuilderEmitLoadLocal(builder, aSlot);
-        let b = irBuilderEmitLoadLocal(builder, bSlot);
-        let result = irBuilderEmitBinaryOp(builder, IrOpCode.EQ, a, b);
+        let aSlot: number = irBuilderAddParam(builder, "a");
+        let bSlot: number = irBuilderAddParam(builder, "b");
+        let a: number = irBuilderEmitLoadLocal(builder, aSlot);
+        let bReg: number = irBuilderEmitLoadLocal(builder, bSlot);
+        let result: number = irBuilderEmitBinaryOp(builder, IrOpCode.EQ, a, bReg);
         irBuilderEmitReturn(builder, result);
     }
-    
+
     // Create main function
     irBuilderEnterFunction(builder, "main", IrType.VOID);
     irBuilderCreateEntryBlock(builder);
-    
-    let const1 = irBuilderEmitConst(builder, 1);
-    let const2 = irBuilderEmitConst(builder, 2);
-    
+
+    let const1: number = irBuilderEmitConst(builder, 1);
+    let const2: number = irBuilderEmitConst(builder, 2);
+
     irBuilderEmitReturnVoid(builder);
-    
+
     return irBuilderFinish(builder);
 }

@@ -13,31 +13,31 @@ require ./codegen;
 // Compilation Pipeline
 // ============================================================================
 
-function compileToBytecode(source) {
-    let tokens = tokenize(source);
+function compileToBytecode(source: string): { bytecode: ByteStream, length: number } | null {
+    let tokens: Array<Token> = tokenize(source);
     if (tokens == null) {
         console.log("Error: Lexing failed");
         return null;
     }
-    
-    let ast = parseSource(source);
+
+    let ast: Program = parseSource(source);
     if (ast == null) {
         console.log("Error: Parsing failed");
         return null;
     }
-    
-    let module = lowerProgramToIr(ast);
+
+    let module: IrModule = lowerProgramToIr(ast);
     if (module == null) {
         console.log("Error: IR lowering failed");
         return null;
     }
-    
-    let result = codegenIrModule(module);
+
+    let result: { bytecode: ByteStream, length: number } = codegenIrModule(module);
     return result;
 }
 
-function compileAndVerify(source) {
-    let result = compileToBytecode(source);
+function compileAndVerify(source: string): { bytecode: ByteStream, length: number } | null {
+    let result: { bytecode: ByteStream, length: number } | null = compileToBytecode(source);
     if (result == null) {
         return null;
     }
@@ -48,60 +48,63 @@ function compileAndVerify(source) {
 // Module Compilation
 // ============================================================================
 
-function compileModule(source) {
-    let bytecode = compileToBytecode(source);
+function compileModule(source: string): { bytecode: ByteStream, length: number } | null {
+    let bytecode: { bytecode: ByteStream, length: number } | null = compileToBytecode(source);
     if (bytecode == null) {
         return null;
     }
     return bytecode;
 }
 
-function compileFile(filePath) {
+function compileFile(filePath: string): { bytecode: ByteStream, length: number } | null {
     if (!fs.existsSync(filePath)) {
         console.log("Error: File not found: " + filePath);
         return null;
     }
-    let source = fs.readFileSync(filePath, "utf8");
+    let source: string = fs.readFileSync(filePath, "utf8");
     return compileToBytecode(source);
 }
 
-function saveBytecode(filePath, bytecode) {
-    let stream = bytecode;
-    if (bytecode.bytecode != null) {
+function saveBytecode(filePath: string, bytecode: { bytecode: ByteStream, length: number } | ByteStream): number {
+    let stream: ByteStream = bytecode;
+    if (typeof bytecode === "object" && bytecode.bytecode != null) {
         stream = bytecode.bytecode;
     }
-    let bytes = ByteStream.toArray(stream);
-    let outStream = ByteStream.create();
-    let i = 0;
+    let bytes: Array<number> = ByteStream.toArray(stream);
+    let outStream: ByteStream = ByteStream.create();
+    let i: number = 0;
     while (i < bytes.length) {
         ByteStream.writeU8(outStream, bytes[i]);
         i = i + 1;
     }
-    let length = ByteStream.length(outStream);
+    let length: number = ByteStream.length(outStream);
     fs.writeFileSync(filePath, "bytecode_length:" + length);
     return length;
 }
 
-function loadBytecode(filePath) {
+function loadBytecode(filePath: string): Array<number> | null {
     if (!fs.existsSync(filePath)) {
         console.log("Error: Bytecode file not found: " + filePath);
         return null;
     }
-    let data = fs.readFileSync(filePath);
-    let bytes = [];
-    for (let i = 0; i < data.length; i++) {
+    let data: string = fs.readFileSync(filePath);
+    let bytes: Array<number> = [];
+    let len: number = data.length;
+    let i: number = 0;
+    while (i < len) {
         bytes[i] = data.charCodeAt(i) & 0xFF;
+        i = i + 1;
     }
     return bytes;
 }
 
-function compileToFile(inputPath, outputPath) {
-    let bytecode = compileFile(inputPath);
+function compileToFile(inputPath: string, outputPath: string): { bytecode: ByteStream, length: number } | null {
+    let bytecode: { bytecode: ByteStream, length: number } | null = compileFile(inputPath);
     if (bytecode == null) {
         console.log("Error: Compilation failed for " + inputPath);
         return null;
     }
-    let bytesWritten = saveBytecode(outputPath, bytecode);
+    let bytesWritten: number = saveBytecode(outputPath, bytecode);
     console.log("Compiled: " + inputPath + " -> " + outputPath + " (" + bytesWritten + " bytes)");
     return bytecode;
 }
@@ -110,27 +113,28 @@ function compileToFile(inputPath, outputPath) {
 // Hash Functions for Determinism Verification
 // ============================================================================
 
-function computeByteHash(bytes) {
-    if (bytes.toArray != null) {
-        bytes = ByteStream.toArray(bytes);
-    } else if (bytes.bytecode != null) {
-        bytes = ByteStream.toArray(bytes.bytecode);
+function computeByteHash(bytes: Array<number> | ByteStream | { bytecode: ByteStream }): number {
+    let data: Array<number> = bytes;
+    if (typeof bytes === "object" && (bytes as any).toArray != null) {
+        data = ByteStream.toArray(bytes);
+    } else if (typeof bytes === "object" && (bytes as any).bytecode != null) {
+        data = ByteStream.toArray((bytes as any).bytecode);
     }
-    let h = 0;
-    let len = bytes.length;
-    let i = 0;
+    let h: number = 0;
+    let len: number = data.length;
+    let i: number = 0;
     while (i < len) {
-        h = ((h << 5) - h) + bytes[i];
+        h = ((h << 5) - h) + data[i];
         h = h & 0xFFFFFFFF;
         i = i + 1;
     }
     return h;
 }
 
-function computeStringHash(str) {
-    let h = 0;
-    let len = str.length;
-    let i = 0;
+function computeStringHash(str: string): number {
+    let h: number = 0;
+    let len: number = str.length;
+    let i: number = 0;
     while (i < len) {
         h = ((h << 5) - h) + str.charCodeAt(i);
         h = h & 0xFFFFFFFF;
@@ -139,28 +143,30 @@ function computeStringHash(str) {
     return h;
 }
 
-function computeFileHash(filePath) {
+function computeFileHash(filePath: string): number | null {
     if (!fs.existsSync(filePath)) {
         return null;
     }
-    let data = fs.readFileSync(filePath);
-    let len = data.length;
-    let bytes = [];
-    for (let i = 0; i < len; i++) {
+    let data: string = fs.readFileSync(filePath);
+    let len: number = data.length;
+    let bytes: Array<number> = [];
+    let i: number = 0;
+    while (i < len) {
         bytes[i] = data.charCodeAt(i) & 0xFF;
+        i = i + 1;
     }
     return computeByteHash(bytes);
 }
 
-function computeBytecodeHash(code) {
-    let stream = code;
-    if (code.bytecode != null) {
-        stream = code.bytecode;
+function computeBytecodeHash(code: ByteStream | { bytecode: ByteStream }): number {
+    let stream: ByteStream = code;
+    if (typeof code === "object" && (code as any).bytecode != null) {
+        stream = (code as any).bytecode;
     }
-    let bytes = ByteStream.toArray(stream);
-    let h = 0;
-    let len = bytes.length;
-    let i = 0;
+    let bytes: Array<number> = ByteStream.toArray(stream);
+    let h: number = 0;
+    let len: number = bytes.length;
+    let i: number = 0;
     while (i < len) {
         h = ((h << 5) - h) + bytes[i];
         h = h & 0xFFFFFFFF;
@@ -173,28 +179,28 @@ function computeBytecodeHash(code) {
 // Performance Metrics
 // ============================================================================
 
-function measureCompilation(source) {
-    let metrics = {};
-    
-    let t0 = Date.now();
-    let tokens = tokenize(source);
+function measureCompilation(source: string): { lexerTime: number, parserTime: number, irTime: number, codegenTime: number, totalTime: number, bytecodeSize: number } {
+    let metrics: { lexerTime: number, parserTime: number, irTime: number, codegenTime: number, totalTime: number, bytecodeSize: number };
+
+    let t0: number = Date.now();
+    let tokens: Array<Token> = tokenize(source);
     metrics.lexerTime = Date.now() - t0;
-    
-    let t1 = Date.now();
-    let ast = parseSource(source);
+
+    let t1: number = Date.now();
+    let ast: Program = parseSource(source);
     metrics.parserTime = Date.now() - t1;
-    
-    let t2 = Date.now();
-    let module = lowerProgramToIr(ast);
+
+    let t2: number = Date.now();
+    let module: IrModule = lowerProgramToIr(ast);
     metrics.irTime = Date.now() - t2;
-    
-    let t3 = Date.now();
-    let result = codegenIrModule(module);
+
+    let t3: number = Date.now();
+    let result: { bytecode: ByteStream, length: number } = codegenIrModule(module);
     metrics.codegenTime = Date.now() - t3;
-    
+
     metrics.totalTime = metrics.lexerTime + metrics.parserTime + metrics.irTime + metrics.codegenTime;
     metrics.bytecodeSize = result.length;
-    
+
     return metrics;
 }
 

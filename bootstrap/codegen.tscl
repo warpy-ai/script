@@ -11,9 +11,16 @@ require ./emitter;
 // Code Generator State
 // ============================================================================
 
-function createCodegen() {
+type Codegen = {
+    stream: ByteStream,
+    functions: Array<IrFunction>,
+    constants: Array<any>,
+    currentFunction: IrFunction | null
+};
+
+function createCodegen(): Codegen {
     return {
-        stream: null,
+        stream: ByteStream.create(),
         functions: [],
         constants: [],
         currentFunction: null
@@ -57,12 +64,11 @@ let CODEGEN_OP = {
 // Value Encoding (NaN-boxing)
 // ============================================================================
 
-function encodeNumber(value) {
+function encodeNumber(value: number): number {
     return value;
 }
 
-function encodeString(str) {
-    // For now, store string constant index
+function encodeString(str: string): string {
     return str;
 }
 
@@ -70,47 +76,47 @@ function encodeString(str) {
 // Codegen Helpers
 // ============================================================================
 
-function codegenU8(cg, byte) {
+function codegenU8(cg: Codegen, byte: number): void {
     ByteStream.writeU8(cg.stream, byte);
 }
 
-function codegenU32(cg, value) {
+function codegenU32(cg: Codegen, value: number): void {
     ByteStream.writeU32(cg.stream, value);
 }
 
-function codegenF64(cg, value) {
+function codegenF64(cg: Codegen, value: number): void {
     ByteStream.writeF64(cg.stream, value);
 }
 
-function codegenVarint(cg, value) {
+function codegenVarint(cg: Codegen, value: number): void {
     ByteStream.writeVarint(cg.stream, value);
 }
 
-function codegenString(cg, str) {
+function codegenString(cg: Codegen, str: string): void {
     ByteStream.writeString(cg.stream, str);
 }
 
-function codegenOp(cg, op) {
+function codegenOp(cg: Codegen, op: number): void {
     codegenU8(cg, op);
 }
 
-function codegenReg(cg, reg) {
+function codegenReg(cg: Codegen, reg: number): void {
     codegenVarint(cg, reg);
 }
 
-function codegenRegReg(cg, op, reg1, reg2) {
+function codegenRegReg(cg: Codegen, op: number, reg1: number, reg2: number): void {
     codegenOp(cg, op);
     codegenReg(cg, reg1);
     codegenReg(cg, reg2);
 }
 
-function codegenRegImm(cg, op, reg, imm) {
+function codegenRegImm(cg: Codegen, op: number, reg: number, imm: number): void {
     codegenOp(cg, op);
     codegenReg(cg, reg);
     codegenVarint(cg, imm);
 }
 
-function codegenJump(cg, op, target) {
+function codegenJump(cg: Codegen, op: number, target: number): void {
     codegenOp(cg, op);
     codegenU32(cg, target);
 }
@@ -119,7 +125,7 @@ function codegenJump(cg, op, target) {
 // IR OpCode to Bytecode OpCode Mapping
 // ============================================================================
 
-function irOpToBytecode(op) {
+function irOpToBytecode(op: IrOpCode): number {
     if (op == IrOpCode.CONST) { return CODEGEN_OP.CONST; }
     if (op == IrOpCode.LOAD) { return CODEGEN_OP.LOAD; }
     if (op == IrOpCode.STORE) { return CODEGEN_OP.STORE; }
@@ -152,42 +158,42 @@ function irOpToBytecode(op) {
 // Block Codegen
 // ============================================================================
 
-function codegenBlock(cg, block, labelToOffset) {
-    let offset = ByteStream.length(cg.stream);
+function codegenBlock(cg: Codegen, block: IrBlock, labelToOffset: { [key: string]: number }): void {
+    let offset: number = ByteStream.length(cg.stream);
     block._offset = offset;
     labelToOffset[block.label] = offset;
-    
-    let i = 0;
+
+    let i: number = 0;
     while (i < block.ops.length) {
         codegenInstruction(cg, block.ops[i], labelToOffset);
         i = i + 1;
     }
 }
 
-function codegenInstruction(cg, inst, labelToOffset) {
-    let bcOp = irOpToBytecode(inst.opcode);
-    
+function codegenInstruction(cg: Codegen, inst: IrInstruction, labelToOffset: { [key: string]: number }): void {
+    let bcOp: number = irOpToBytecode(inst.opcode);
+
     if (inst.opcode == IrOpCode.CONST) {
         codegenOp(cg, bcOp);
         codegenReg(cg, inst.dest);
         codegenF64(cg, inst.immediate);
         return;
     }
-    
+
     if (inst.opcode == IrOpCode.JUMP) {
-        let targetOffset = labelToOffset[inst.args[0].label];
+        let targetOffset: number = labelToOffset[inst.args[0].label];
         codegenJump(cg, bcOp, targetOffset);
         return;
     }
-    
+
     if (inst.opcode == IrOpCode.JUMP_IF_FALSE) {
-        let targetOffset = labelToOffset[inst.args[1].label];
+        let targetOffset: number = labelToOffset[inst.args[1].label];
         codegenOp(cg, bcOp);
         codegenReg(cg, inst.args[0]);
         codegenU32(cg, targetOffset);
         return;
     }
-    
+
     if (inst.opcode == IrOpCode.RETURN) {
         codegenOp(cg, bcOp);
         if (inst.args.length > 0) {
@@ -195,7 +201,7 @@ function codegenInstruction(cg, inst, labelToOffset) {
         }
         return;
     }
-    
+
     if (inst.opcode == IrOpCode.CALL) {
         codegenOp(cg, bcOp);
         codegenReg(cg, inst.dest);
@@ -203,19 +209,19 @@ function codegenInstruction(cg, inst, labelToOffset) {
         codegenReg(cg, inst.args[1]);
         return;
     }
-    
+
     // Binary operations
     if (inst.args.length == 2) {
         codegenRegReg(cg, bcOp, inst.dest, inst.args[0], inst.args[1]);
         return;
     }
-    
+
     // Unary operations
     if (inst.args.length == 1) {
         codegenRegReg(cg, bcOp, inst.dest, inst.args[0], 0);
         return;
     }
-    
+
     // Void operations
     codegenOp(cg, bcOp);
 }
@@ -224,43 +230,35 @@ function codegenInstruction(cg, inst, labelToOffset) {
 // Function Codegen
 // ============================================================================
 
-function codegenFunction(cg, func) {
-    // Calculate function header
-    let nameOffset = codegenString(cg, func.name);
-    
-    // Parameter count
+function codegenFunction(cg: Codegen, func: IrFunction): void {
+    codegenString(cg, func.name);
+
     codegenU32(cg, func.params.length);
-    
-    // Local variable count
+
     codegenU32(cg, func.locals.length);
-    
-    // Block count
-    let blockCount = func.blocks.length;
+
+    let blockCount: number = func.blocks.length;
     codegenU32(cg, blockCount);
-    
-    // Block offsets (placeholder, will be patched)
-    let blockOffsets = [];
-    let i = 0;
+
+    let blockOffsets: Array<number> = [];
+    let i: number = 0;
     while (i < blockCount) {
         blockOffsets.push(ByteStream.length(cg.stream));
-        codegenU32(cg, 0); // Placeholder
+        codegenU32(cg, 0);
         i = i + 1;
     }
-    
-    // Create label to offset map
-    let labelToOffset = {};
-    
-    // Generate code for each block
+
+    let labelToOffset: { [key: string]: number } = {};
+
     i = 0;
     while (i < func.blocks.length) {
-        let block = func.blocks[i];
-        let offset = ByteStream.length(cg.stream);
+        let block: IrBlock = func.blocks[i];
+        let offset: number = ByteStream.length(cg.stream);
         labelToOffset[block.label] = offset;
         codegenBlock(cg, block, labelToOffset);
         i = i + 1;
     }
-    
-    // Add HALT at end of function
+
     codegenOp(cg, CODEGEN_OP.HALT);
 }
 
@@ -268,17 +266,14 @@ function codegenFunction(cg, func) {
 // Module Codegen
 // ============================================================================
 
-function codegenModule(cg, module) {
-    // Magic number and version
-    codegenU32(cg, 0x5443434C); // "TCCL" in little endian
+function codegenModule(cg: Codegen, module: IrModule): void {
+    codegenU32(cg, 0x5443434C);
     codegenU32(cg, module.version);
     codegenU32(cg, module.abi_version);
-    
-    // Function count
+
     codegenU32(cg, module.functions.length);
-    
-    // Generate each function
-    let i = 0;
+
+    let i: number = 0;
     while (i < module.functions.length) {
         codegenFunction(cg, module.functions[i]);
         i = i + 1;
@@ -289,30 +284,30 @@ function codegenModule(cg, module) {
 // Public API
 // ============================================================================
 
-function codegenIrModule(module) {
-    let cg = {
+function codegenIrModule(module: IrModule): { bytecode: ByteStream, length: number } {
+    let cg: Codegen = {
         stream: ByteStream.create(),
         functions: [],
         constants: [],
         currentFunction: null
     };
-    
+
     codegenModule(cg, module);
-    
+
     return {
         bytecode: cg.stream,
         length: ByteStream.length(cg.stream)
     };
 }
 
-function compileAstToBytecode(ast) {
-    let module = lowerProgramToIr(ast);
-    let result = codegenIrModule(module);
+function compileAstToBytecode(ast: Program): { bytecode: ByteStream, length: number } | null {
+    let module: IrModule = lowerProgramToIr(ast);
+    let result: { bytecode: ByteStream, length: number } = codegenIrModule(module);
     return result;
 }
 
-function compileSourceToBytecode(source) {
-    let ast = parseSource(source);
+function compileSourceToBytecode(source: string): { bytecode: ByteStream, length: number } | null {
+    let ast: Program = parseSource(source);
     if (ast == null) {
         return null;
     }

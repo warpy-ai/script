@@ -8,7 +8,7 @@
 // Parser State
 // ============================================================================
 
-function createParser(tokens) {
+function createParser(tokens: Array<Token>): Parser {
     return {
         tokens: tokens,
         pos: 0
@@ -19,41 +19,41 @@ function createParser(tokens) {
 // Utility Functions
 // ============================================================================
 
-function parserPeek(parser) {
+function parserPeek(parser: Parser): Token | null {
     if (parser.pos >= parser.tokens.length) {
         return null;
     }
     return parser.tokens[parser.pos];
 }
 
-function peekType(parser) {
-    let tok =  parserPeek(parser);
+function peekType(parser: Parser): TOKEN | string {
+    let tok: Token | null = parserPeek(parser);
     if (tok == null) {
         return TOKEN.EOF;
     }
     return tok.type;
 }
 
-function peekValue(parser) {
-    let tok =  parserPeek(parser);
+function peekValue(parser: Parser): string {
+    let tok: Token | null = parserPeek(parser);
     if (tok == null) {
         return "";
     }
     return tok.value;
 }
 
-function parserAdvance(parser) {
-    let tok =  parserPeek(parser);
+function parserAdvance(parser: Parser): Token | null {
+    let tok: Token | null = parserPeek(parser);
     parser.pos = parser.pos + 1;
     return tok;
 }
 
-function check(parser, type, value) {
-    let tok =  parserPeek(parser);
+function check(parser: Parser, typeVal: TOKEN | string, value: string | null): boolean {
+    let tok: Token | null = parserPeek(parser);
     if (tok == null) {
         return false;
     }
-    if (tok.type != type) {
+    if (tok.type != typeVal) {
         return false;
     }
     if (value != null && tok.value != value) {
@@ -62,30 +62,30 @@ function check(parser, type, value) {
     return true;
 }
 
-function match(parser, type, value) {
-    if (check(parser, type, value)) {
+function match(parser: Parser, typeVal: TOKEN | string, value: string | null): boolean {
+    if (check(parser, typeVal, value)) {
         parserAdvance(parser);
         return true;
     }
     return false;
 }
 
-function expect(parser, type, value) {
-    if (check(parser, type, value)) {
+function expect(parser: Parser, typeVal: TOKEN | string, value: string | null): Token | null {
+    if (check(parser, typeVal, value)) {
         return parserAdvance(parser);
     }
-    let tok =  parserPeek(parser);
-    let tokVal =  "";
-    let tokType =  TOKEN.EOF;
+    let tok: Token | null = parserPeek(parser);
+    let tokVal: string = "";
+    let tokType: TOKEN | string = TOKEN.EOF;
     if (tok != null) {
         tokVal = tok.value;
         tokType = tok.type;
     }
-    console.log("Parse error: expected", type, value, "but got", tokType, tokVal);
+    console.log("Parse error: expected", typeVal, value, "but got", tokType, tokVal);
     return null;
 }
 
-function isAtEnd(parser) {
+function isAtEnd(parser: Parser): boolean {
     return peekType(parser) == TOKEN.EOF;
 }
 
@@ -95,143 +95,125 @@ function isAtEnd(parser) {
 
 // Parse a type annotation after ':'
 // Examples: number, string, boolean, any, void, Array<T>, T[], Promise<T>, A | B
-function parseTypeAnnotation(parser) {
-    let baseType = parseBaseType(parser);
+function parseTypeAnnotation(parser: Parser): TypeAnnotation | null {
+    let baseType: TypeAnnotation | null = parseBaseType(parser);
     if (baseType == null) {
         return null;
     }
-
-    // Check for union type: A | B
-    if (check(parser, TOKEN.OPERATOR, "|")) {
-        let unionTypes = [baseType];
-        while (match(parser, TOKEN.OPERATOR, "|")) {
-            let nextType = parseBaseType(parser);
-            if (nextType != null) {
-                unionTypes.push(nextType);
-            }
-        }
-        return {
-            type: "TypeAnnotation",
-            typeKind: "union",
-            isArray: false,
-            elementType: null,
-            unionTypes: unionTypes,
-            genericParams: null
-        };
-    }
-
     return baseType;
 }
 
-// Parse base type: number, string, Array<T>, T[], etc.
-function parseBaseType(parser) {
-    let typeKind = "";
+function parseBaseType(parser: Parser): TypeAnnotation | null {
+    let typeVal: TOKEN | string = peekType(parser);
+    let value: string = peekValue(parser);
 
-    // Check for identifier (type name)
-    if (peekType(parser) == TOKEN.IDENTIFIER || peekType(parser) == TOKEN.KEYWORD) {
-        let tok = parserAdvance(parser);
-        typeKind = tok.value;
-    } else {
-        return null;
-    }
-
-    // Check for generic parameters: Type<T, U>
-    let genericParams = null;
-    if (check(parser, TOKEN.OPERATOR, "<")) {
-        parserAdvance(parser);
-        genericParams = [];
-        while (!check(parser, TOKEN.OPERATOR, ">")) {
-            if (genericParams.length > 0) {
-                expect(parser, TOKEN.DELIMITER, ",");
-            }
-            let paramType = parseTypeAnnotation(parser);
-            if (paramType != null) {
-                genericParams.push(paramType);
-            }
+    if (typeVal == TOKEN.KEYWORD) {
+        if (value == "number" || value == "string" || value == "boolean" ||
+            value == "any" || value == "void" || value == "never" ||
+            value == "null" || value == "undefined") {
+            parserAdvance(parser);
+            return {
+                type: "TypeAnnotation",
+                typeKind: value,
+                isArray: false,
+                elementType: null,
+                unionTypes: null,
+                genericParams: null
+            };
         }
-        expect(parser, TOKEN.OPERATOR, ">");
     }
 
-    // Check for array notation: type[]
-    let isArray = false;
-    let elementType = null;
-    if (check(parser, TOKEN.DELIMITER, "[")) {
+    if (typeVal == TOKEN.IDENTIFIER) {
         parserAdvance(parser);
-        expect(parser, TOKEN.DELIMITER, "]");
-        isArray = true;
-        elementType = {
+        let typeName: string = value;
+        let genericParams: Array<TypeAnnotation> | null = null;
+
+        if (match(parser, TOKEN.OPERATOR, "<")) {
+            genericParams = [];
+            while (!check(parser, TOKEN.DELIMITER, ">") && !isAtEnd(parser)) {
+                let param: TypeAnnotation | null = parseTypeAnnotation(parser);
+                if (param != null) {
+                    genericParams.push(param);
+                }
+                if (!match(parser, TOKEN.DELIMITER, ",")) {
+                    break;
+                }
+            }
+            expect(parser, TOKEN.DELIMITER, ">");
+        }
+
+        return {
             type: "TypeAnnotation",
-            typeKind: typeKind,
+            typeKind: typeName,
             isArray: false,
             elementType: null,
             unionTypes: null,
             genericParams: genericParams
         };
-        typeKind = "array";
-        genericParams = null;
+    }
+
+    return null;
+}
+
+function parseTypedParam(parser: Parser): TypedParam | null {
+    if (check(parser, TOKEN.IDENTIFIER, null)) {
+        let name: string = peekValue(parser);
+        parserAdvance(parser);
+
+        let typeAnnotation: TypeAnnotation | null = null;
+        if (match(parser, TOKEN.OPERATOR, ":")) {
+            typeAnnotation = parseTypeAnnotation(parser);
+        }
+
+        return {
+            name: name,
+            typeAnnotation: typeAnnotation
+        };
+    }
+    return null;
+}
+
+// ============================================================================
+// Main Parse Function
+// ============================================================================
+
+function parseSource(source: string): Program {
+    let tokens: Array<Token> = tokenize(source);
+    let parser: Parser = createParser(tokens);
+    return parseProgram(parser);
+}
+
+function parseProgram(parser: Parser): Program {
+    let body: Array<Statement> = [];
+
+    while (!isAtEnd(parser)) {
+        let stmt: Statement | null = parseStatement(parser);
+        if (stmt != null) {
+            body.push(stmt);
+        }
     }
 
     return {
-        type: "TypeAnnotation",
-        typeKind: typeKind,
-        isArray: isArray,
-        elementType: elementType,
-        unionTypes: null,
-        genericParams: genericParams
+        type: "Program",
+        body: body
     };
-}
-
-// Try to parse optional type annotation (: type)
-function tryParseTypeAnnotation(parser) {
-    if (check(parser, TOKEN.DELIMITER, ":")) {
-        parserAdvance(parser);
-        return parseTypeAnnotation(parser);
-    }
-    return null;
 }
 
 // ============================================================================
 // Statement Parsers
 // ============================================================================
 
-function parseProgram(parser) {
-    let programBody =  [];
+function parseStatement(parser: Parser): Statement | null {
+    let typeVal: TOKEN | string = peekType(parser);
 
-    while (!isAtEnd(parser)) {
-        let stmt =  parseStatement(parser);
-        if (stmt != null) {
-            programBody.push(stmt);
-        } else {
-            parserAdvance(parser);
-        }
-    }
+    if (typeVal == TOKEN.KEYWORD) {
+        let value: string = peekValue(parser);
 
-    return {
-        type: "Program",
-        body: programBody
-    };
-}
-
-function parseStatement(parser) {
-    let type =  peekType(parser);
-
-    if (type == TOKEN.KEYWORD) {
-        let value =  peekValue(parser);
         if (value == "let" || value == "const" || value == "var") {
             return parseVariableDeclaration(parser);
         }
         if (value == "function") {
             return parseFunctionDeclaration(parser);
-        }
-        if (value == "async") {
-            // async function declaration
-            return parseFunctionDeclaration(parser);
-        }
-        if (value == "import") {
-            return parseImportDeclaration(parser);
-        }
-        if (value == "export") {
-            return parseExportDeclaration(parser);
         }
         if (value == "return") {
             return parseReturnStatement(parser);
@@ -251,44 +233,233 @@ function parseStatement(parser) {
         if (value == "continue") {
             return parseContinueStatement(parser);
         }
-    }
-
-    if (type == TOKEN.DELIMITER) {
-        let value =  peekValue(parser);
-        if (value == "{") {
-            return parseBlockStatement(parser);
+        if (value == "import") {
+            return parseImportDeclaration(parser);
+        }
+        if (value == "export") {
+            return parseExportDeclaration(parser);
         }
     }
 
-    // Try to parse as expression statement
-    let expr =  parseExpression(parser, 0);
-    if (expr != null) {
-        // Check for semicolon
-        match(parser, TOKEN.DELIMITER, ";");
-        return {
-            type: "ExpressionStatement",
-            expression: expr
-        };
-    }
-
-    return null;
+    return parseExpressionStatement(parser);
 }
 
-function parseBlockStatement(parser) {
-    expect(parser, TOKEN.DELIMITER, "{");
+function parseVariableDeclaration(parser: Parser): VariableDeclaration | null {
+    let kind: string = peekValue(parser);
+    parserAdvance(parser);
 
-    let body =  [];
+    if (!check(parser, TOKEN.IDENTIFIER, null)) {
+        console.log("Expected variable name");
+        return null;
+    }
 
-    while (!check(parser, TOKEN.DELIMITER, "}")) {
-        if (isAtEnd(parser)) {
-            console.log("Parse error: unclosed block");
-            break;
+    let name: string = peekValue(parser);
+    parserAdvance(parser);
+
+    let typeAnnotation: TypeAnnotation | null = null;
+    if (match(parser, TOKEN.OPERATOR, ":")) {
+        typeAnnotation = parseTypeAnnotation(parser);
+    }
+
+    let init: Expression | null = null;
+    if (match(parser, TOKEN.OPERATOR, "=")) {
+        init = parseExpression(parser);
+    }
+
+    expect(parser, TOKEN.DELIMITER, ";");
+
+    return {
+        type: "VariableDeclaration",
+        name: name,
+        typeAnnotation: typeAnnotation,
+        init: init,
+        kind: kind
+    };
+}
+
+function parseFunctionDeclaration(parser: Parser): FunctionDeclaration | null {
+    parserAdvance(parser);
+
+    if (!check(parser, TOKEN.IDENTIFIER, null) && !check(parser, TOKEN.DELIMITER, "(")) {
+        console.log("Expected function name or (");
+        return null;
+    }
+
+    let name: string = "";
+    if (check(parser, TOKEN.IDENTIFIER, null)) {
+        name = peekValue(parser);
+        parserAdvance(parser);
+    }
+
+    expect(parser, TOKEN.DELIMITER, "(");
+
+    let params: Array<string | TypedParam> = [];
+    if (!check(parser, TOKEN.DELIMITER, ")")) {
+        while (true) {
+            let param: string | TypedParam | null = null;
+
+            if (check(parser, TOKEN.IDENTIFIER, null)) {
+                param = peekValue(parser);
+                parserAdvance(parser);
+
+                if (match(parser, TOKEN.OPERATOR, ":")) {
+                    let typeAnn: TypeAnnotation | null = parseTypeAnnotation(parser);
+                    param = {
+                        name: param,
+                        typeAnnotation: typeAnn
+                    };
+                }
+            } else {
+                let typedParam: TypedParam | null = parseTypedParam(parser);
+                if (typedParam != null) {
+                    param = typedParam;
+                }
+            }
+
+            if (param != null) {
+                params.push(param);
+            }
+
+            if (!match(parser, TOKEN.DELIMITER, ",")) {
+                break;
+            }
         }
-        let stmt =  parseStatement(parser);
+    }
+
+    expect(parser, TOKEN.DELIMITER, ")");
+
+    let returnType: TypeAnnotation | null = null;
+    if (match(parser, TOKEN.OPERATOR, ":")) {
+        returnType = parseTypeAnnotation(parser);
+    }
+
+    let body: BlockStatement | null = parseBlockStatement(parser);
+
+    return {
+        type: "FunctionDeclaration",
+        name: name,
+        params: params,
+        returnType: returnType,
+        body: body,
+        isAsync: false
+    };
+}
+
+function parseReturnStatement(parser: Parser): ReturnStatement | null {
+    parserAdvance(parser);
+
+    let argument: Expression | null = null;
+    if (!check(parser, TOKEN.DELIMITER, ";")) {
+        argument = parseExpression(parser);
+    }
+
+    expect(parser, TOKEN.DELIMITER, ";");
+
+    return {
+        type: "ReturnStatement",
+        argument: argument
+    };
+}
+
+function parseIfStatement(parser: Parser): IfStatement | null {
+    parserAdvance(parser);
+    expect(parser, TOKEN.DELIMITER, "(");
+
+    let test: Expression | null = parseExpression(parser);
+
+    expect(parser, TOKEN.DELIMITER, ")");
+
+    let consequent: Statement | null = parseStatement(parser);
+
+    let alternate: Statement | null = null;
+    if (check(parser, TOKEN.KEYWORD, "else")) {
+        parserAdvance(parser);
+        alternate = parseStatement(parser);
+    }
+
+    return {
+        type: "IfStatement",
+        test: test,
+        consequent: consequent,
+        alternate: alternate
+    };
+}
+
+function parseWhileStatement(parser: Parser): WhileStatement | null {
+    parserAdvance(parser);
+    expect(parser, TOKEN.DELIMITER, "(");
+
+    let test: Expression | null = parseExpression(parser);
+
+    expect(parser, TOKEN.DELIMITER, ")");
+
+    let body: Statement | null = parseStatement(parser);
+
+    return {
+        type: "WhileStatement",
+        test: test,
+        body: body
+    };
+}
+
+function parseForStatement(parser: Parser): ForStatement | null {
+    parserAdvance(parser);
+    expect(parser, TOKEN.DELIMITER, "(");
+
+    let init: Statement | null = null;
+    if (!check(parser, TOKEN.DELIMITER, ";")) {
+        init = parseStatement(parser);
+    }
+
+    let test: Expression | null = null;
+    if (!check(parser, TOKEN.DELIMITER, ";")) {
+        test = parseExpression(parser);
+    }
+
+    expect(parser, TOKEN.DELIMITER, ";");
+
+    let update: Expression | null = null;
+    if (!check(parser, TOKEN.DELIMITER, ")")) {
+        update = parseExpression(parser);
+    }
+
+    expect(parser, TOKEN.DELIMITER, ")");
+
+    let body: Statement | null = parseStatement(parser);
+
+    return {
+        type: "ForStatement",
+        init: init,
+        test: test,
+        update: update,
+        body: body
+    };
+}
+
+function parseBreakStatement(parser: Parser): BreakStatement | null {
+    parserAdvance(parser);
+    expect(parser, TOKEN.DELIMITER, ";");
+    return { type: "BreakStatement" };
+}
+
+function parseContinueStatement(parser: Parser): ContinueStatement | null {
+    parserAdvance(parser);
+    expect(parser, TOKEN.DELIMITER, ";");
+    return { type: "ContinueStatement" };
+}
+
+function parseBlockStatement(parser: Parser): BlockStatement | null {
+    if (!check(parser, TOKEN.DELIMITER, "{")) {
+        console.log("Expected {");
+        return null;
+    }
+    parserAdvance(parser);
+
+    let body: Array<Statement> = [];
+    while (!check(parser, TOKEN.DELIMITER, "}") && !isAtEnd(parser)) {
+        let stmt: Statement | null = parseStatement(parser);
         if (stmt != null) {
             body.push(stmt);
-        } else {
-            parserAdvance(parser);
         }
     }
 
@@ -300,304 +471,76 @@ function parseBlockStatement(parser) {
     };
 }
 
-function parseVariableDeclaration(parser) {
-    let kind =  peekValue(parser);
+function parseExpressionStatement(parser: Parser): ExpressionStatement | null {
+    let expr: Expression | null = parseExpression(parser);
+    expect(parser, TOKEN.DELIMITER, ";");
+    return {
+        type: "ExpressionStatement",
+        expression: expr
+    };
+}
+
+function parseImportDeclaration(parser: Parser): ImportDeclaration | null {
     parserAdvance(parser);
 
-    let name =  "";
-    let nameTok =  expect(parser, TOKEN.IDENTIFIER, null);
-    if (nameTok != null) {
-        name = nameTok.value;
-    }
+    let specifiers: Array<ImportSpecifier | ImportDefaultSpecifier | ImportNamespaceSpecifier> = [];
+    let source: string = "";
 
-    // Parse optional type annotation: let x: number
-    let typeAnnotation = tryParseTypeAnnotation(parser);
-
-    let init =  null;
-    if (match(parser, TOKEN.OPERATOR, "=")) {
-        init = parseExpression(parser, 0);
-    }
-
-    match(parser, TOKEN.DELIMITER, ";");
-
-    return {
-        type: "VariableDeclaration",
-        name: name,
-        typeAnnotation: typeAnnotation,
-        init: init,
-        kind: kind
-    };
-}
-
-function parseFunctionDeclaration(parser) {
-    // Check for async keyword
-    let isAsync = false;
-    if (check(parser, TOKEN.KEYWORD, "async")) {
+    if (check(parser, TOKEN.DELIMITER, "{")) {
         parserAdvance(parser);
-        isAsync = true;
-    }
+        while (!check(parser, TOKEN.DELIMITER, "}")) {
+            if (check(parser, TOKEN.IDENTIFIER, null)) {
+                let imported: string = peekValue(parser);
+                parserAdvance(parser);
 
-    expect(parser, TOKEN.KEYWORD, "function");
-
-    let name =  "";
-    let nameTok =  expect(parser, TOKEN.IDENTIFIER, null);
-    if (nameTok != null) {
-        name = nameTok.value;
-    }
-
-    expect(parser, TOKEN.DELIMITER, "(");
-
-    let params =  [];
-    while (!check(parser, TOKEN.DELIMITER, ")")) {
-        if (params.length > 0) {
-            expect(parser, TOKEN.DELIMITER, ",");
-        }
-        let paramTok =  expect(parser, TOKEN.IDENTIFIER, null);
-        if (paramTok != null) {
-            // Check for parameter type annotation: param: type
-            let paramType = tryParseTypeAnnotation(parser);
-            if (paramType != null) {
-                params.push({
-                    name: paramTok.value,
-                    typeAnnotation: paramType
-                });
-            } else {
-                params.push(paramTok.value);
-            }
-        }
-    }
-
-    expect(parser, TOKEN.DELIMITER, ")");
-
-    // Parse optional return type annotation: ): type
-    let returnType = tryParseTypeAnnotation(parser);
-
-    let body =  parseBlockStatement(parser);
-
-    return {
-        type: "FunctionDeclaration",
-        name: name,
-        params: params,
-        returnType: returnType,
-        body: body,
-        isAsync: isAsync
-    };
-}
-
-function parseReturnStatement(parser) {
-    expect(parser, TOKEN.KEYWORD, "return");
-
-    let argument =  null;
-    if (!check(parser, TOKEN.DELIMITER, ";") && !isAtEnd(parser)) {
-        argument = parseExpression(parser, 0);
-    }
-
-    match(parser, TOKEN.DELIMITER, ";");
-
-    return {
-        type: "ReturnStatement",
-        argument: argument
-    };
-}
-
-function parseIfStatement(parser) {
-    expect(parser, TOKEN.KEYWORD, "if");
-    expect(parser, TOKEN.DELIMITER, "(");
-
-    let test =  parseExpression(parser, 0);
-
-    expect(parser, TOKEN.DELIMITER, ")");
-
-    let consequent: Statement;
-    if (check(parser, TOKEN.DELIMITER, "{")) {
-        consequent = parseBlockStatement(parser);
-    } else {
-        let stmt =  parseStatement(parser);
-        if (stmt == null) {
-            consequent = { type: "EmptyStatement" };
-        } else {
-            consequent = stmt;
-        }
-    }
-
-    let alternate =  null;
-    if (match(parser, TOKEN.KEYWORD, "else")) {
-        if (check(parser, TOKEN.KEYWORD, "if")) {
-            alternate = parseIfStatement(parser);
-        } else if (check(parser, TOKEN.DELIMITER, "{")) {
-            alternate = parseBlockStatement(parser);
-        } else {
-            let stmt =  parseStatement(parser);
-            alternate = stmt;
-        }
-    }
-
-    return {
-        type: "IfStatement",
-        test: test,
-        consequent: consequent,
-        alternate: alternate
-    };
-}
-
-function parseWhileStatement(parser) {
-    expect(parser, TOKEN.KEYWORD, "while");
-    expect(parser, TOKEN.DELIMITER, "(");
-
-    let test =  parseExpression(parser, 0);
-
-    expect(parser, TOKEN.DELIMITER, ")");
-
-    let body: Statement;
-    if (check(parser, TOKEN.DELIMITER, "{")) {
-        body = parseBlockStatement(parser);
-    } else {
-        let stmt =  parseStatement(parser);
-        if (stmt == null) {
-            body = { type: "EmptyStatement" };
-        } else {
-            body = stmt;
-        }
-    }
-
-    return {
-        type: "WhileStatement",
-        test: test,
-        body: body
-    };
-}
-
-function parseForStatement(parser) {
-    expect(parser, TOKEN.KEYWORD, "for");
-    expect(parser, TOKEN.DELIMITER, "(");
-
-    let init =  null;
-    if (!check(parser, TOKEN.DELIMITER, ";")) {
-        if (peekType(parser) == TOKEN.KEYWORD) {
-            let value =  peekValue(parser);
-            if (value == "let" || value == "const" || value == "var") {
-                init = parseVariableDeclaration(parser);
-            }
-        } else {
-            init = {
-                type: "ExpressionStatement",
-                expression: parseExpression(parser, 0)
-            };
-        }
-    }
-
-    let test =  null;
-    if (!check(parser, TOKEN.DELIMITER, ";")) {
-        test = parseExpression(parser, 0);
-    }
-
-    expect(parser, TOKEN.DELIMITER, ";");
-
-    let update =  null;
-    if (!check(parser, TOKEN.DELIMITER, ")")) {
-        update = parseExpression(parser, 0);
-    }
-
-    expect(parser, TOKEN.DELIMITER, ")");
-
-    let body: Statement;
-    if (check(parser, TOKEN.DELIMITER, "{")) {
-        body = parseBlockStatement(parser);
-    } else {
-        let stmt =  parseStatement(parser);
-        body = stmt;
-    }
-
-    return {
-        type: "ForStatement",
-        init: init,
-        test: test,
-        update: update,
-        body: body
-    };
-}
-
-function parseBreakStatement(parser) {
-    expect(parser, TOKEN.KEYWORD, "break");
-    match(parser, TOKEN.DELIMITER, ";");
-    return { type: "BreakStatement" };
-}
-
-function parseContinueStatement(parser) {
-    expect(parser, TOKEN.KEYWORD, "continue");
-    match(parser, TOKEN.DELIMITER, ";");
-    return { type: "ContinueStatement" };
-}
-
-// ============================================================================
-// Module Declaration Parsers (import/export)
-// ============================================================================
-
-// Parse: import { a, b } from './module';
-// Parse: import defaultExport from './module';
-// Parse: import * as ns from './module';
-// Parse: import './module';
-function parseImportDeclaration(parser) {
-    expect(parser, TOKEN.KEYWORD, "import");
-
-    let specifiers = [];
-    let source = "";
-
-    // Check for side-effect only import: import './module';
-    if (peekType(parser) == TOKEN.STRING) {
-        let sourceTok = parserAdvance(parser);
-        source = sourceTok.value;
-        match(parser, TOKEN.DELIMITER, ";");
-        return {
-            type: "ImportDeclaration",
-            specifiers: [],
-            source: source
-        };
-    }
-
-    // Check for namespace import: import * as ns from './module';
-    if (check(parser, TOKEN.OPERATOR, "*")) {
-        parserAdvance(parser);
-        expect(parser, TOKEN.KEYWORD, "as");
-        let localTok = expect(parser, TOKEN.IDENTIFIER, null);
-        if (localTok != null) {
-            specifiers.push({
-                type: "ImportNamespaceSpecifier",
-                local: localTok.value
-            });
-        }
-    }
-    // Check for default import: import defaultExport from './module';
-    else if (peekType(parser) == TOKEN.IDENTIFIER && !check(parser, TOKEN.DELIMITER, "{")) {
-        let localTok = parserAdvance(parser);
-        specifiers.push({
-            type: "ImportDefaultSpecifier",
-            local: localTok.value
-        });
-
-        // Check for comma followed by named imports: import default, { a, b } from './module';
-        if (match(parser, TOKEN.DELIMITER, ",")) {
-            if (check(parser, TOKEN.DELIMITER, "{")) {
-                let namedSpecifiers = parseNamedImports(parser);
-                for (let i = 0; i < namedSpecifiers.length; i = i + 1) {
-                    specifiers.push(namedSpecifiers[i]);
+                let local: string = imported;
+                if (check(parser, TOKEN.KEYWORD, "as")) {
+                    parserAdvance(parser);
+                    local = peekValue(parser);
+                    parserAdvance(parser);
                 }
+
+                specifiers.push({
+                    type: "ImportSpecifier",
+                    imported: imported,
+                    local: local
+                });
+
+                match(parser, TOKEN.DELIMITER, ",");
+            }
+            if (check(parser, TOKEN.OPERATOR, "*")) {
+                parserAdvance(parser);
+                expect(parser, TOKEN.KEYWORD, "as");
+                let local: string = peekValue(parser);
+                parserAdvance(parser);
+
+                specifiers.push({
+                    type: "ImportNamespaceSpecifier",
+                    local: local
+                });
+            }
+            if (check(parser, TOKEN.IDENTIFIER, null)) {
+                let local: string = peekValue(parser);
+                parserAdvance(parser);
+
+                specifiers.push({
+                    type: "ImportDefaultSpecifier",
+                    local: local
+                });
             }
         }
-    }
-    // Named imports: import { a, b } from './module';
-    else if (check(parser, TOKEN.DELIMITER, "{")) {
-        specifiers = parseNamedImports(parser);
+        expect(parser, TOKEN.DELIMITER, "}");
     }
 
     expect(parser, TOKEN.KEYWORD, "from");
 
-    let sourceTok = expect(parser, TOKEN.STRING, null);
-    if (sourceTok != null) {
-        source = sourceTok.value;
+    let tok: Token | null = parserPeek(parser);
+    if (tok != null && tok.type == TOKEN.STRING) {
+        source = tok.value;
+        parserAdvance(parser);
     }
 
-    match(parser, TOKEN.DELIMITER, ";");
+    expect(parser, TOKEN.DELIMITER, ";");
 
     return {
         type: "ImportDeclaration",
@@ -606,106 +549,68 @@ function parseImportDeclaration(parser) {
     };
 }
 
-// Parse named imports: { a, b as c, d }
-function parseNamedImports(parser) {
-    let specifiers = [];
-    expect(parser, TOKEN.DELIMITER, "{");
+function parseExportDeclaration(parser: Parser): Statement | null {
+    parserAdvance(parser);
 
-    while (!check(parser, TOKEN.DELIMITER, "}")) {
-        if (specifiers.length > 0) {
-            expect(parser, TOKEN.DELIMITER, ",");
-        }
+    if (check(parser, TOKEN.KEYWORD, "default")) {
+        parserAdvance(parser);
 
-        if (check(parser, TOKEN.DELIMITER, "}")) {
-            break;
-        }
-
-        let importedTok = expect(parser, TOKEN.IDENTIFIER, null);
-        if (importedTok == null) {
-            break;
-        }
-
-        let imported = importedTok.value;
-        let local = imported;
-
-        // Check for alias: a as b
-        if (match(parser, TOKEN.KEYWORD, "as")) {
-            let localTok = expect(parser, TOKEN.IDENTIFIER, null);
-            if (localTok != null) {
-                local = localTok.value;
+        if (check(parser, TOKEN.KEYWORD, "function")) {
+            let decl: FunctionDeclaration | null = parseFunctionDeclaration(parser);
+            if (decl != null) {
+                return {
+                    type: "ExportDefaultDeclaration",
+                    declaration: decl
+                };
             }
         }
 
-        specifiers.push({
-            type: "ImportSpecifier",
-            imported: imported,
-            local: local
-        });
-    }
-
-    expect(parser, TOKEN.DELIMITER, "}");
-    return specifiers;
-}
-
-// Parse: export { a, b };
-// Parse: export { a } from './module';
-// Parse: export * from './module';
-// Parse: export default expr;
-// Parse: export const x = 1;
-// Parse: export function foo() {}
-function parseExportDeclaration(parser) {
-    expect(parser, TOKEN.KEYWORD, "export");
-
-    // export default expr;
-    if (match(parser, TOKEN.KEYWORD, "default")) {
-        let declaration = null;
-
-        // export default function foo() {}
-        if (check(parser, TOKEN.KEYWORD, "function") || check(parser, TOKEN.KEYWORD, "async")) {
-            declaration = parseFunctionDeclaration(parser);
-        } else {
-            // export default expression;
-            declaration = parseExpression(parser, 0);
-            match(parser, TOKEN.DELIMITER, ";");
-        }
+        let expr: Expression | null = parseExpression(parser);
+        expect(parser, TOKEN.DELIMITER, ";");
 
         return {
             type: "ExportDefaultDeclaration",
-            declaration: declaration
+            declaration: expr
         };
     }
 
-    // export * from './module';
-    if (check(parser, TOKEN.OPERATOR, "*")) {
+    if (check(parser, TOKEN.OPERATOR, "{")) {
         parserAdvance(parser);
-        expect(parser, TOKEN.KEYWORD, "from");
-        let sourceTok = expect(parser, TOKEN.STRING, null);
-        let source = "";
-        if (sourceTok != null) {
-            source = sourceTok.value;
-        }
-        match(parser, TOKEN.DELIMITER, ";");
 
-        return {
-            type: "ExportAllDeclaration",
-            source: source
-        };
-    }
+        let specifiers: Array<ExportSpecifier> = [];
+        while (!check(parser, TOKEN.DELIMITER, "}")) {
+            if (check(parser, TOKEN.IDENTIFIER, null)) {
+                let local: string = peekValue(parser);
+                parserAdvance(parser);
 
-    // export { a, b } or export { a } from './module';
-    if (check(parser, TOKEN.DELIMITER, "{")) {
-        let specifiers = parseNamedExports(parser);
-        let source = null;
+                let exported: string = local;
+                if (check(parser, TOKEN.KEYWORD, "as")) {
+                    parserAdvance(parser);
+                    exported = peekValue(parser);
+                    parserAdvance(parser);
+                }
 
-        // Check for re-export: export { a } from './module';
-        if (match(parser, TOKEN.KEYWORD, "from")) {
-            let sourceTok = expect(parser, TOKEN.STRING, null);
-            if (sourceTok != null) {
-                source = sourceTok.value;
+                specifiers.push({
+                    type: "ExportSpecifier",
+                    local: local,
+                    exported: exported
+                });
+
+                match(parser, TOKEN.DELIMITER, ",");
             }
         }
+        expect(parser, TOKEN.DELIMITER, "}");
 
-        match(parser, TOKEN.DELIMITER, ";");
+        let source: string | null = null;
+        if (check(parser, TOKEN.KEYWORD, "from")) {
+            parserAdvance(parser);
+            let tok: Token | null = parserPeek(parser);
+            if (tok != null && tok.type == TOKEN.STRING) {
+                source = tok.value;
+                parserAdvance(parser);
+            }
+        }
+        expect(parser, TOKEN.DELIMITER, ";");
 
         return {
             type: "ExportNamedDeclaration",
@@ -715,404 +620,813 @@ function parseExportDeclaration(parser) {
         };
     }
 
-    // export const/let/var x = 1;
-    if (check(parser, TOKEN.KEYWORD, "let") || check(parser, TOKEN.KEYWORD, "const") || check(parser, TOKEN.KEYWORD, "var")) {
-        let declaration = parseVariableDeclaration(parser);
+    if (check(parser, TOKEN.OPERATOR, "*")) {
+        parserAdvance(parser);
+        expect(parser, TOKEN.KEYWORD, "from");
+
+        let tok: Token | null = parserPeek(parser);
+        let source: string = "";
+        if (tok != null && tok.type == TOKEN.STRING) {
+            source = tok.value;
+            parserAdvance(parser);
+        }
+        expect(parser, TOKEN.DELIMITER, ";");
+
+        return {
+            type: "ExportAllDeclaration",
+            source: source
+        };
+    }
+
+    let decl: Statement | null = parseStatement(parser);
+    if (decl != null) {
         return {
             type: "ExportNamedDeclaration",
             specifiers: [],
             source: null,
-            declaration: declaration
+            declaration: decl
         };
     }
 
-    // export function foo() {} or export async function foo() {}
-    if (check(parser, TOKEN.KEYWORD, "function") || check(parser, TOKEN.KEYWORD, "async")) {
-        let declaration = parseFunctionDeclaration(parser);
-        return {
-            type: "ExportNamedDeclaration",
-            specifiers: [],
-            source: null,
-            declaration: declaration
-        };
-    }
-
-    console.log("Parse error: unexpected export syntax");
     return null;
 }
 
-// Parse named exports: { a, b as c }
-function parseNamedExports(parser) {
-    let specifiers = [];
-    expect(parser, TOKEN.DELIMITER, "{");
+// ============================================================================
+// Expression Parsers
+// ============================================================================
 
-    while (!check(parser, TOKEN.DELIMITER, "}")) {
-        if (specifiers.length > 0) {
-            expect(parser, TOKEN.DELIMITER, ",");
-        }
-
-        if (check(parser, TOKEN.DELIMITER, "}")) {
-            break;
-        }
-
-        let localTok = expect(parser, TOKEN.IDENTIFIER, null);
-        if (localTok == null) {
-            break;
-        }
-
-        let local = localTok.value;
-        let exported = local;
-
-        // Check for alias: a as b
-        if (match(parser, TOKEN.KEYWORD, "as")) {
-            let exportedTok = expect(parser, TOKEN.IDENTIFIER, null);
-            if (exportedTok != null) {
-                exported = exportedTok.value;
-            }
-        }
-
-        specifiers.push({
-            type: "ExportSpecifier",
-            local: local,
-            exported: exported
-        });
-    }
-
-    expect(parser, TOKEN.DELIMITER, "}");
-    return specifiers;
+function parseExpression(parser: Parser): Expression | null {
+    return parseAssignment(parser);
 }
 
-// ============================================================================
-// Expression Parsers (Pratt Parser)
-// ============================================================================
+function parseAssignment(parser: Parser): Expression | null {
+    let left: Expression | null = parseConditional(parser);
 
-const PRECEDENCE =  {
-    "=": 1,
-    "||": 2,
-    "&&": 3,
-    "|": 4,
-    "^": 5,
-    "&": 6,
-    "==": 7, "!=": 7, "===": 7, "!==": 7,
-    "<": 8, "<=": 8, ">": 8, ">=": 8,
-    "<<": 9, ">>": 9, ">>>": 9,
-    "+": 10, "-": 10,
-    "*": 11, "/": 11, "%": 11, "**": 12,
-    ".": 14,
-    "[": 14,
-    "(": 15
-};
-
-function parseExpression(parser, minPrec) {
-    let tok =  parserPeek(parser);
-    if (tok == null) {
+    if (left == null) {
         return null;
     }
 
-    let left: Expression | null;
+    if (check(parser, TOKEN.OPERATOR, "=") ||
+        check(parser, TOKEN.OPERATOR, "+=") ||
+        check(parser, TOKEN.OPERATOR, "-=") ||
+        check(parser, TOKEN.OPERATOR, "*=") ||
+        check(parser, TOKEN.OPERATOR, "/=")) {
 
-    // Prefix operators
-    if (tok.type == TOKEN.OPERATOR) {
-        let op =  tok.value;
-        if (op == "!" || op == "-" || op == "+" || op == "~" || op == "typeof" || op == "void" || op == "delete") {
-            parserAdvance(parser);
-            let argument =  parseExpression(parser, 13);
-            if (argument == null) {
-                return null;
-            }
-            left = {
-                type: "UnaryExpression",
-                operator: op,
-                argument: argument
-            };
-        } else {
+        let operator: string = peekValue(parser);
+        parserAdvance(parser);
+
+        let right: Expression | null = parseAssignment(parser);
+        if (right == null) {
             return null;
         }
-    } else if (tok.type == TOKEN.NUMBER) {
-        parserAdvance(parser);
-        let numVal = parseFloat(tok.value);
-        let lit = {
-            type: "Literal",
-            literalType: "number",
-            value: numVal
-        };
-        left = lit;
-    } else if (tok.type == TOKEN.STRING) {
-    } else if (tok.type == TOKEN.STRING) {
-        parserAdvance(parser);
-        left = {
-            type: "Literal",
-            literalType: "string",
-            value: tok.value
-        };
-    } else if (tok.type == TOKEN.KEYWORD && tok.value == "null") {
-        parserAdvance(parser);
-        left = {
-            type: "Literal",
-            literalType: "null",
-            value: null
-        };
-    } else if (tok.type == TOKEN.KEYWORD && (tok.value == "true" || tok.value == "false")) {
-        parserAdvance(parser);
-        left = {
-            type: "Literal",
-            literalType: "boolean",
-            value: tok.value == "true"
-        };
-    } else if (tok.type == TOKEN.IDENTIFIER) {
-        parserAdvance(parser);
-        left = {
-            type: "Identifier",
-            name: tok.value
-        };
-    } else if (tok.type == TOKEN.KEYWORD && tok.value == "this") {
-        parserAdvance(parser);
-        left = { type: "ThisExpression" };
-    } else if (match(parser, TOKEN.DELIMITER, "(")) {
-        // Parenthesized expression or arrow function
-        if (peekType(parser) == TOKEN.IDENTIFIER) {
-            // Check for arrow function
-            let nextToken =  parser.tokens[parser.pos + 1];
-            if (nextToken != null && nextToken.value == "=>") {
-                // Arrow function: (param) => body
-                let params =  [];
-                params.push(tok.value);
 
-                parserAdvance(parser); // Consume identifier
-                parserAdvance(parser); // Consume "=>"
+        return {
+            type: "AssignmentExpression",
+            operator: operator,
+            left: left,
+            right: right
+        };
+    }
 
-                let body: BlockStatement | Expression;
-                if (check(parser, TOKEN.DELIMITER, "{")) {
-                    body = parseBlockStatement(parser);
-                } else {
-                    let expr =  parseExpression(parser, 0);
-                    if (expr == null) {
-                        body = { type: "BlockStatement", body: [] };
-                    } else {
-                        body = expr;
-                    }
-                }
+    return left;
+}
 
-                left = {
-                    type: "ArrowFunctionExpression",
-                    params: params,
-                    body: body
+function parseConditional(parser: Parser): Expression | null {
+    let test: Expression | null = parseLogicalOr(parser);
+
+    if (test == null) {
+        return null;
+    }
+
+    if (check(parser, TOKEN.OPERATOR, "?")) {
+        parserAdvance(parser);
+
+        let consequent: Expression | null = parseExpression(parser);
+        expect(parser, TOKEN.DELIMITER, ":");
+
+        let alternate: Expression | null = parseConditional(parser);
+
+        return {
+            type: "ConditionalExpression",
+            test: test,
+            consequent: consequent,
+            alternate: alternate
+        };
+    }
+
+    return test;
+}
+
+function parseLogicalOr(parser: Parser): Expression | null {
+    let left: Expression | null = parseLogicalAnd(parser);
+    if (left == null) {
+        return null;
+    }
+
+    while (check(parser, TOKEN.OPERATOR, "||")) {
+        let operator: string = peekValue(parser);
+        parserAdvance(parser);
+
+        let right: Expression | null = parseLogicalAnd(parser);
+        if (right == null) {
+            break;
+        }
+
+        left = {
+            type: "BinaryExpression",
+            operator: operator,
+            left: left,
+            right: right
+        };
+    }
+
+    return left;
+}
+
+function parseLogicalAnd(parser: Parser): Expression | null {
+    let left: Expression | null = parseBitwiseOr(parser);
+    if (left == null) {
+        return null;
+    }
+
+    while (check(parser, TOKEN.OPERATOR, "&&")) {
+        let operator: string = peekValue(parser);
+        parserAdvance(parser);
+
+        let right: Expression | null = parseBitwiseOr(parser);
+        if (right == null) {
+            break;
+        }
+
+        left = {
+            type: "BinaryExpression",
+            operator: operator,
+            left: left,
+            right: right
+        };
+    }
+
+    return left;
+}
+
+function parseBitwiseOr(parser: Parser): Expression | null {
+    let left: Expression | null = parseBitwiseXor(parser);
+    if (left == null) {
+        return null;
+    }
+
+    while (check(parser, TOKEN.OPERATOR, "|")) {
+        let operator: string = peekValue(parser);
+        parserAdvance(parser);
+
+        let right: Expression | null = parseBitwiseXor(parser);
+        if (right == null) {
+            break;
+        }
+
+        left = {
+            type: "BinaryExpression",
+            operator: operator,
+            left: left,
+            right: right
+        };
+    }
+
+    return left;
+}
+
+function parseBitwiseXor(parser: Parser): Expression | null {
+    let left: Expression | null = parseBitwiseAnd(parser);
+    if (left == null) {
+        return null;
+    }
+
+    while (check(parser, TOKEN.OPERATOR, "^")) {
+        let operator: string = peekValue(parser);
+        parserAdvance(parser);
+
+        let right: Expression | null = parseBitwiseAnd(parser);
+        if (right == null) {
+            break;
+        }
+
+        left = {
+            type: "BinaryExpression",
+            operator: operator,
+            left: left,
+            right: right
+        };
+    }
+
+    return left;
+}
+
+function parseBitwiseAnd(parser: Parser): Expression | null {
+    let left: Expression | null = parseEquality(parser);
+    if (left == null) {
+        return null;
+    }
+
+    while (check(parser, TOKEN.OPERATOR, "&")) {
+        let operator: string = peekValue(parser);
+        parserAdvance(parser);
+
+        let right: Expression | null = parseEquality(parser);
+        if (right == null) {
+            break;
+        }
+
+        left = {
+            type: "BinaryExpression",
+            operator: operator,
+            left: left,
+            right: right
+        };
+    }
+
+    return left;
+}
+
+function parseEquality(parser: Parser): Expression | null {
+    let left: Expression | null = parseComparison(parser);
+    if (left == null) {
+        return null;
+    }
+
+    while (check(parser, TOKEN.OPERATOR, "===") ||
+           check(parser, TOKEN.OPERATOR, "!==") ||
+           check(parser, TOKEN.OPERATOR, "==") ||
+           check(parser, TOKEN.OPERATOR, "!=")) {
+        let operator: string = peekValue(parser);
+        parserAdvance(parser);
+
+        let right: Expression | null = parseComparison(parser);
+        if (right == null) {
+            break;
+        }
+
+        left = {
+            type: "BinaryExpression",
+            operator: operator,
+            left: left,
+            right: right
+        };
+    }
+
+    return left;
+}
+
+function parseComparison(parser: Parser): Expression | null {
+    let left: Expression | null = parseShift(parser);
+    if (left == null) {
+        return null;
+    }
+
+    while (check(parser, TOKEN.OPERATOR, "<") ||
+           check(parser, TOKEN.OPERATOR, "<=") ||
+           check(parser, TOKEN.OPERATOR, ">") ||
+           check(parser, TOKEN.OPERATOR, ">=") ||
+           check(parser, TOKEN.KEYWORD, "instanceof")) {
+        let operator: string = peekValue(parser);
+        parserAdvance(parser);
+
+        let right: Expression | null = parseShift(parser);
+        if (right == null) {
+            break;
+        }
+
+        left = {
+            type: "BinaryExpression",
+            operator: operator,
+            left: left,
+            right: right
+        };
+    }
+
+    return left;
+}
+
+function parseShift(parser: Parser): Expression | null {
+    let left: Expression | null = parseAdditive(parser);
+    if (left == null) {
+        return null;
+    }
+
+    while (check(parser, TOKEN.OPERATOR, "<<") ||
+           check(parser, TOKEN.OPERATOR, ">>") ||
+           check(parser, TOKEN.OPERATOR, ">>>")) {
+        let operator: string = peekValue(parser);
+        parserAdvance(parser);
+
+        let right: Expression | null = parseAdditive(parser);
+        if (right == null) {
+            break;
+        }
+
+        left = {
+            type: "BinaryExpression",
+            operator: operator,
+            left: left,
+            right: right
+        };
+    }
+
+    return left;
+}
+
+function parseAdditive(parser: Parser): Expression | null {
+    let left: Expression | null = parseMultiplicative(parser);
+    if (left == null) {
+        return null;
+    }
+
+    while (check(parser, TOKEN.OPERATOR, "+") || check(parser, TOKEN.OPERATOR, "-")) {
+        let operator: string = peekValue(parser);
+        parserAdvance(parser);
+
+        let right: Expression | null = parseMultiplicative(parser);
+        if (right == null) {
+            break;
+        }
+
+        left = {
+            type: "BinaryExpression",
+            operator: operator,
+            left: left,
+            right: right
+        };
+    }
+
+    return left;
+}
+
+function parseMultiplicative(parser: Parser): Expression | null {
+    let left: Expression | null = parseUnary(parser);
+    if (left == null) {
+        return null;
+    }
+
+    while (check(parser, TOKEN.OPERATOR, "*") ||
+           check(parser, TOKEN.OPERATOR, "/") ||
+           check(parser, TOKEN.OPERATOR, "%") ||
+           check(parser, TOKEN.OPERATOR, "**")) {
+        let operator: string = peekValue(parser);
+        parserAdvance(parser);
+
+        let right: Expression | null = parseUnary(parser);
+        if (right == null) {
+            break;
+        }
+
+        left = {
+            type: "BinaryExpression",
+            operator: operator,
+            left: left,
+            right: right
+        };
+    }
+
+    return left;
+}
+
+function parseUnary(parser: Parser): Expression | null {
+    if (check(parser, TOKEN.OPERATOR, "-") ||
+        check(parser, TOKEN.OPERATOR, "+") ||
+        check(parser, TOKEN.OPERATOR, "!") ||
+        check(parser, TOKEN.OPERATOR, "~") ||
+        check(parser, TOKEN.OPERATOR, "++") ||
+        check(parser, TOKEN.OPERATOR, "--")) {
+
+        let operator: string = peekValue(parser);
+        parserAdvance(parser);
+
+        let argument: Expression | null = parseUnary(parser);
+        if (argument == null) {
+            return null;
+        }
+
+        return {
+            type: "UnaryExpression",
+            operator: operator,
+            argument: argument
+        };
+    }
+
+    return parsePostfix(parser);
+}
+
+function parsePostfix(parser: Parser): Expression | null {
+    let expr: Expression | null = parseCallMember(parser);
+    if (expr == null) {
+        return null;
+    }
+
+    if (check(parser, TOKEN.OPERATOR, "++") || check(parser, TOKEN.OPERATOR, "--")) {
+        let operator: string = peekValue(parser);
+        parserAdvance(parser);
+
+        return {
+            type: "UnaryExpression",
+            operator: operator,
+            argument: expr
+        };
+    }
+
+    return expr;
+}
+
+function parseCallMember(parser: Parser): Expression | null {
+    let expr: Expression | null = parsePrimary(parser);
+    if (expr == null) {
+        return null;
+    }
+
+    while (true) {
+        if (check(parser, TOKEN.DELIMITER, ".")) {
+            parserAdvance(parser);
+
+            if (check(parser, TOKEN.IDENTIFIER, null)) {
+                let property: Identifier = {
+                    type: "Identifier",
+                    name: peekValue(parser)
+                };
+                parserAdvance(parser);
+
+                expr = {
+                    type: "MemberExpression",
+                    object: expr,
+                    property: property,
+                    computed: false
                 };
             } else {
-                // Parenthesized expression
-                let expr =  parseExpression(parser, 0);
-                expect(parser, TOKEN.DELIMITER, ")");
-                left = expr;
-            }
-        } else {
-            let expr =  parseExpression(parser, 0);
-            expect(parser, TOKEN.DELIMITER, ")");
-            left = expr;
-        }
-    } else if (match(parser, TOKEN.DELIMITER, "{")) {
-        // Object literal
-        let properties =  [];
-
-        while (!check(parser, TOKEN.DELIMITER, "}")) {
-            if (properties.length > 0) {
-                expect(parser, TOKEN.DELIMITER, ",");
-            }
-
-            let keyTok =  expect(parser, TOKEN.IDENTIFIER, null);
-            if (keyTok == null) {
                 break;
             }
+        } else if (check(parser, TOKEN.DELIMITER, "[")) {
+            parserAdvance(parser);
 
-            let key: Identifier | Literal = {
-                type: "Identifier",
-                name: keyTok.value
+            let property: Expression | null = parseExpression(parser);
+
+            expect(parser, TOKEN.DELIMITER, "]");
+
+            expr = {
+                type: "MemberExpression",
+                object: expr,
+                property: property,
+                computed: true
             };
+        } else if (check(parser, TOKEN.DELIMITER, "(")) {
+            parserAdvance(parser);
+
+            let args: Array<Expression> = [];
+            if (!check(parser, TOKEN.DELIMITER, ")")) {
+                while (true) {
+                    let arg: Expression | null = parseAssignment(parser);
+                    if (arg != null) {
+                        args.push(arg);
+                    }
+                    if (!match(parser, TOKEN.DELIMITER, ",")) {
+                        break;
+                    }
+                }
+            }
+
+            expect(parser, TOKEN.DELIMITER, ")");
+
+            expr = {
+                type: "CallExpression",
+                callee: expr,
+                arguments: args
+            };
+        } else {
+            break;
+        }
+    }
+
+    return expr;
+}
+
+function parsePrimary(parser: Parser): Expression | null {
+    let typeVal: TOKEN | string = peekType(parser);
+    let value: string = peekValue(parser);
+
+    if (typeVal == TOKEN.NUMBER) {
+        parserAdvance(parser);
+        return {
+            type: "Literal",
+            literalType: "number",
+            value: parseFloat(value)
+        };
+    }
+
+    if (typeVal == TOKEN.STRING) {
+        parserAdvance(parser);
+        return {
+            type: "Literal",
+            literalType: "string",
+            value: value
+        };
+    }
+
+    if (typeVal == TOKEN.KEYWORD) {
+        if (value == "null") {
+            parserAdvance(parser);
+            return {
+                type: "Literal",
+                literalType: "null",
+                value: null
+            };
+        }
+        if (value == "true" || value == "false") {
+            parserAdvance(parser);
+            return {
+                type: "Literal",
+                literalType: "boolean",
+                value: value == "true"
+            };
+        }
+        if (value == "this") {
+            parserAdvance(parser);
+            return {
+                type: "ThisExpression"
+            };
+        }
+        if (value == "new") {
+            return parseNewExpression(parser);
+        }
+        if (value == "function") {
+            return parseFunctionExpression(parser);
+        }
+        if (value == "class") {
+            return parseClassExpression(parser);
+        }
+        if (value == "if") {
+            return parseConditionalExpression(parser);
+        }
+    }
+
+    if (typeVal == TOKEN.IDENTIFIER) {
+        parserAdvance(parser);
+        return {
+            type: "Identifier",
+            name: value
+        };
+    }
+
+    if (check(parser, TOKEN.DELIMITER, "[")) {
+        return parseArrayExpression(parser);
+    }
+
+    if (check(parser, TOKEN.DELIMITER, "{")) {
+        return parseObjectExpression(parser);
+    }
+
+    if (check(parser, TOKEN.DELIMITER, "(")) {
+        parserAdvance(parser);
+
+        let inner: Expression | null = parseExpression(parser);
+
+        expect(parser, TOKEN.DELIMITER, ")");
+
+        return inner;
+    }
+
+    console.log("Unexpected token:", typeVal, value);
+    return null;
+}
+
+function parseNewExpression(parser: Parser): NewExpression | null {
+    parserAdvance(parser);
+
+    let callee: Expression | null = parseCallMember(parser);
+    if (callee == null) {
+        return null;
+    }
+
+    let args: Array<Expression> = [];
+    if (check(parser, TOKEN.DELIMITER, "(")) {
+        parserAdvance(parser);
+
+        if (!check(parser, TOKEN.DELIMITER, ")")) {
+            while (true) {
+                let arg: Expression | null = parseAssignment(parser);
+                if (arg != null) {
+                    args.push(arg);
+                }
+                if (!match(parser, TOKEN.DELIMITER, ",")) {
+                    break;
+                }
+            }
+        }
+
+        expect(parser, TOKEN.DELIMITER, ")");
+    }
+
+    return {
+        type: "NewExpression",
+        callee: callee,
+        arguments: args
+    };
+}
+
+function parseFunctionExpression(parser: Parser): FunctionExpression | null {
+    parserAdvance(parser);
+
+    let name: string = "";
+    if (check(parser, TOKEN.IDENTIFIER, null)) {
+        name = peekValue(parser);
+        parserAdvance(parser);
+    }
+
+    expect(parser, TOKEN.DELIMITER, "(");
+
+    let params: Array<string | TypedParam> = [];
+    if (!check(parser, TOKEN.DELIMITER, ")")) {
+        while (true) {
+            let param: string | TypedParam | null = null;
+
+            if (check(parser, TOKEN.IDENTIFIER, null)) {
+                param = peekValue(parser);
+                parserAdvance(parser);
+
+                if (match(parser, TOKEN.OPERATOR, ":")) {
+                    let typeAnn: TypeAnnotation | null = parseTypeAnnotation(parser);
+                    param = {
+                        name: param,
+                        typeAnnotation: typeAnn
+                    };
+                }
+            } else {
+                let typedParam: TypedParam | null = parseTypedParam(parser);
+                if (typedParam != null) {
+                    param = typedParam;
+                }
+            }
+
+            if (param != null) {
+                params.push(param);
+            }
+
+            if (!match(parser, TOKEN.DELIMITER, ",")) {
+                break;
+            }
+        }
+    }
+
+    expect(parser, TOKEN.DELIMITER, ")");
+
+    let returnType: TypeAnnotation | null = null;
+    if (match(parser, TOKEN.OPERATOR, ":")) {
+        returnType = parseTypeAnnotation(parser);
+    }
+
+    let body: BlockStatement | Expression | null = null;
+    if (check(parser, TOKEN.DELIMITER, "{")) {
+        body = parseBlockStatement(parser);
+    } else if (check(parser, TOKEN.OPERATOR, "=>")) {
+        parserAdvance(parser);
+
+        if (check(parser, TOKEN.DELIMITER, "{")) {
+            body = parseBlockStatement(parser);
+        } else {
+            body = parseAssignment(parser);
+        }
+
+        return {
+            type: "ArrowFunctionExpression",
+            params: params,
+            body: body,
+            returnType: returnType
+        };
+    }
+
+    return {
+        type: "FunctionExpression",
+        name: name,
+        params: params,
+        body: body,
+        returnType: returnType
+    };
+}
+
+function parseClassExpression(parser: Parser): Expression | null {
+    console.log("Class expression parsing not fully implemented");
+    return parsePrimary(parser);
+}
+
+function parseConditionalExpression(parser: Parser): Expression | null {
+    parserAdvance(parser);
+    expect(parser, TOKEN.DELIMITER, "(");
+
+    let test: Expression | null = parseExpression(parser);
+
+    expect(parser, TOKEN.DELIMITER, ")");
+
+    let consequent: Expression | null = parseExpression(parser);
+
+    expect(parser, TOKEN.DELIMITER, ":");
+
+    let alternate: Expression | null = parseExpression(parser);
+
+    return {
+        type: "ConditionalExpression",
+        test: test,
+        consequent: consequent,
+        alternate: alternate
+    };
+}
+
+function parseArrayExpression(parser: Parser): ArrayExpression | null {
+    parserAdvance(parser);
+
+    let elements: Array<Expression | null> = [];
+    if (!check(parser, TOKEN.DELIMITER, "]")) {
+        while (true) {
+            if (check(parser, TOKEN.DELIMITER, ",")) {
+                elements.push(null);
+            } else if (check(parser, TOKEN.DELIMITER, "]")) {
+                break;
+            } else {
+                let elem: Expression | null = parseAssignment(parser);
+                if (elem != null) {
+                    elements.push(elem);
+                }
+            }
+            if (!match(parser, TOKEN.DELIMITER, ",")) {
+                break;
+            }
+        }
+    }
+
+    expect(parser, TOKEN.DELIMITER, "]");
+
+    return {
+        type: "ArrayExpression",
+        elements: elements
+    };
+}
+
+function parseObjectExpression(parser: Parser): ObjectExpression | null {
+    parserAdvance(parser);
+
+    let properties: Array<ObjectProperty> = [];
+    if (!check(parser, TOKEN.DELIMITER, "}")) {
+        while (true) {
+            let key: Identifier | Literal | null = null;
+            let keyName: string = "";
+            let computedKey: boolean = false;
+
+            if (check(parser, TOKEN.IDENTIFIER, null)) {
+                keyName = peekValue(parser);
+                key = {
+                    type: "Identifier",
+                    name: keyName
+                };
+                parserAdvance(parser);
+            } else if (check(parser, TOKEN.NUMBER, null)) {
+                let numVal: string = peekValue(parser);
+                keyName = numVal;
+                key = {
+                    type: "Literal",
+                    literalType: "number",
+                    value: parseFloat(numVal)
+                };
+                parserAdvance(parser);
+            } else if (check(parser, TOKEN.STRING, null)) {
+                keyName = peekValue(parser);
+                key = {
+                    type: "Literal",
+                    literalType: "string",
+                    value: keyName
+                };
+                parserAdvance(parser);
+            } else if (check(parser, TOKEN.DELIMITER, "[")) {
+                parserAdvance(parser);
+                let exprKey: Expression | null = parseExpression(parser);
+                expect(parser, TOKEN.DELIMITER, "]");
+                computedKey = true;
+                key = exprKey;
+            }
 
             expect(parser, TOKEN.DELIMITER, ":");
 
-            let value =  parseExpression(parser, 0);
+            let value: Expression | null = parseAssignment(parser);
 
             properties.push({
                 key: key,
                 value: value,
                 kind: "init"
             });
-        }
 
-        expect(parser, TOKEN.DELIMITER, "}");
-
-        left = {
-            type: "ObjectExpression",
-            properties: properties
-        };
-    } else if (match(parser, TOKEN.DELIMITER, "[")) {
-        // Array literal
-        let elements: Array<Expression | null> = [];
-
-        while (!check(parser, TOKEN.DELIMITER, "]")) {
-            if (elements.length > 0) {
-                expect(parser, TOKEN.DELIMITER, ",");
-            }
-
-            if (check(parser, TOKEN.DELIMITER, "]")) {
+            if (!match(parser, TOKEN.DELIMITER, ",")) {
                 break;
             }
-
-            let element =  parseExpression(parser, 0);
-            elements.push(element);
-        }
-
-        expect(parser, TOKEN.DELIMITER, "]");
-
-        left = {
-            type: "ArrayExpression",
-            elements: elements
-        };
-    } else {
-        return null;
-    }
-
-    // Parse postfix operators and binary operators
-    while (true) {
-        let nextPrec =  0;
-        let op =  "";
-
-        if (match(parser, TOKEN.DELIMITER, "(")) {
-            // Function call
-            let callee =  left;
-
-            let arguments =  [];
-            while (!check(parser, TOKEN.DELIMITER, ")")) {
-                if (arguments.length > 0) {
-                    expect(parser, TOKEN.DELIMITER, ",");
-                }
-
-                let arg =  parseExpression(parser, 0);
-                if (arg != null) {
-                    arguments.push(arg);
-                }
-            }
-
-            expect(parser, TOKEN.DELIMITER, ")");
-
-            left = {
-                type: "CallExpression",
-                callee: callee,
-                arguments: arguments
-            };
-        } else if (match(parser, TOKEN.DELIMITER, ".")) {
-            // Property access
-            let propertyTok =  expect(parser, TOKEN.IDENTIFIER, null);
-            if (propertyTok == null) {
-                break;
-            }
-
-            left = {
-                type: "MemberExpression",
-                object: left,
-                property: {
-                    type: "Identifier",
-                    name: propertyTok.value
-                },
-                computed: false
-            };
-        } else if (match(parser, TOKEN.DELIMITER, "[")) {
-            // Computed property access
-            let property =  parseExpression(parser, 0);
-            expect(parser, TOKEN.DELIMITER, "]");
-
-            left = {
-                type: "MemberExpression",
-                object: left,
-                property: property,
-                computed: true
-            };
-        } else if (peekType(parser) == TOKEN.OPERATOR) {
-            let opTok =  parserPeek(parser);
-            op = opTok.value;
-
-            if (op == "=>") {
-                // Arrow function
-                parserAdvance(parser);
-
-                let params =  [];
-                if (left.type == "Identifier") {
-                    params.push(left.name);
-                } else if (left.type == "CallExpression") {
-                    console.log("ERROR: Function call not allowed before arrow");
-                    break;
-                }
-
-                let body: BlockStatement | Expression;
-                if (check(parser, TOKEN.DELIMITER, "{")) {
-                    body = parseBlockStatement(parser);
-                } else {
-                    let expr =  parseExpression(parser, 0);
-                    if (expr == null) {
-                        body = { type: "BlockStatement", body: [] };
-                    } else {
-                        body = expr;
-                    }
-                }
-
-                left = {
-                    type: "ArrowFunctionExpression",
-                    params: params,
-                    body: body
-                };
-            } else if (PRECEDENCE[op] != null) {
-                nextPrec = PRECEDENCE[op];
-
-                if (nextPrec <= minPrec) {
-                    break;
-                }
-
-                parserAdvance(parser);
-
-                let right =  parseExpression(parser, nextPrec);
-
-                if (right == null) {
-                    break;
-                }
-
-                if (op == "=") {
-                    // Assignment
-                    if (left.type == "Identifier" || left.type == "MemberExpression") {
-                        left = {
-                            type: "AssignmentExpression",
-                            operator: op,
-                            left: left,
-                            right: right
-                        };
-                    } else {
-                        console.log("ERROR: Invalid assignment target");
-                    }
-                } else {
-                    // Binary operation
-                    left = {
-                        type: "BinaryExpression",
-                        operator: op,
-                        left: left,
-                        right: right
-                    };
-                }
-            } else {
-                break;
-            }
-        } else {
-            break;
         }
     }
 
-    return left;
-}
+    expect(parser, TOKEN.DELIMITER, "}");
 
-// ============================================================================
-// Source Code Entry Point
-// ============================================================================
-
-function parseSource(source) {
-    let tokens =  tokenize(source);
-    let parser =  createParser(tokens);
-    return parseProgram(parser);
+    return {
+        type: "ObjectExpression",
+        properties: properties
+    };
 }

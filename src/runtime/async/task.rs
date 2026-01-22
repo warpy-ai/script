@@ -137,12 +137,12 @@ impl Executor {
         self.tasks.push_back(task);
     }
 
-    pub fn schedule(&self, task: Arc<Task>) {
+    pub fn schedule(&mut self, task: Arc<Task>) {
         self.tasks.push_back(task);
     }
 
-    pub fn schedule_at(&self, at: Instant, task: Arc<Task>) {
-        self.tasks.push_back(task);
+    pub fn schedule_at(&mut self, at: Instant, task: Arc<Task>) {
+        self.tasks.push_back(task.clone());
         self.timer.lock().unwrap().schedule(at, task);
     }
 
