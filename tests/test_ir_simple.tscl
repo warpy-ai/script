@@ -1,0 +1,20 @@
+// Simple IR test
+require("../bootstrap/ir");
+
+console.log("Testing IR module...");
+
+let module = lowerProgramToIr({
+    type: "Program",
+    body: []
+});
+
+console.log("Module version:", module.version);
+console.log("Module ABI version:", module.abi_version);
+console.log("Functions count:", module.functions.length);
+
+let ra = createRegisterAllocator();
+let r1 = allocateRegister(ra);
+let r2 = allocateRegister(ra);
+console.log("Register allocator test: r1=", r1, "r2=", r2, "max=", ra.max_regs);
+
+console.log("IR module test complete!");

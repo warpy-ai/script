@@ -151,11 +151,13 @@ function emitIrOp(block: IrBlock, opcode: IrOpCode, dest: number | null, args: n
 
 function emitJump(block: IrBlock, target: IrBlock): void {
     emitIrOp(block, IrOpCode.JUMP, null, [], null);
+    block.successors.push(target);
     target.predecessors.push(block);
 }
 
 function emitJumpIfFalse(block: IrBlock, cond: number, target: IrBlock): void {
     emitIrOp(block, IrOpCode.JUMP_IF_FALSE, null, [cond], null);
+    block.successors.push(target);
     target.predecessors.push(block);
 }
 

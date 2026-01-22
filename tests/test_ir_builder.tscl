@@ -1,0 +1,484 @@
+// ============================================================================
+// IR Builder Test
+// ============================================================================
+
+require("../bootstrap/ir_builder");
+
+console.log("==============================================");
+console.log("IR Builder Test Suite");
+console.log("==============================================");
+console.log("");
+
+let allPassed = true;
+
+function testBuilderCreation() {
+    console.log("Test: Builder Creation");
+    
+    let builder = createIrBuilder();
+    
+    if (builder == null) {
+        console.log("FAIL: Builder should not be null");
+        return false;
+    }
+    if (builder.currentFunction != null) {
+        console.log("FAIL: Initial currentFunction should be null");
+        return false;
+    }
+    if (builder.currentBlock != null) {
+        console.log("FAIL: Initial currentBlock should be null");
+        return false;
+    }
+    if (builder.functions == null || builder.functions.length != 0) {
+        console.log("FAIL: Initial functions should be empty");
+        return false;
+    }
+    
+    console.log("  PASS: Builder created correctly");
+    return true;
+}
+
+function testEnterFunction() {
+    console.log("Test: Enter Function");
+    
+    let builder = createIrBuilder();
+    let func = irBuilderEnterFunction(builder, "test_func", IrType.NUMBER);
+    
+    if (builder.currentFunction == null) {
+        console.log("FAIL: currentFunction should be set");
+        return false;
+    }
+    if (builder.currentFunction.name != "test_func") {
+        console.log("FAIL: Function name should match");
+        return false;
+    }
+    if (builder.currentFunction.return_type != IrType.NUMBER) {
+        console.log("FAIL: Return type should match");
+        return false;
+    }
+    if (builder.functions.length != 1) {
+        console.log("FAIL: Should have 1 function");
+        return false;
+    }
+    
+    console.log("  PASS: Function entered correctly");
+    return true;
+}
+
+function testAddParam() {
+    console.log("Test: Add Parameter");
+    
+    let builder = createIrBuilder();
+    irBuilderEnterFunction(builder, "test_func", IrType.ANY);
+    
+    let slot1 = irBuilderAddParam(builder, "x");
+    let slot2 = irBuilderAddParam(builder, "y");
+    
+    let func = builder.currentFunction;
+    
+    if (func.params.length != 2) {
+        console.log("FAIL: Should have 2 params");
+        return false;
+    }
+    if (func.locals.length != 2) {
+        console.log("FAIL: Should have 2 locals");
+        return false;
+    }
+    if (slot1 != 0) {
+        console.log("FAIL: First param slot should be 0");
+        return false;
+    }
+    if (slot2 != 1) {
+        console.log("FAIL: Second param slot should be 1");
+        return false;
+    }
+    
+    console.log("  PASS: Parameters added correctly");
+    return true;
+}
+
+function testEntryBlock() {
+    console.log("Test: Entry Block");
+    
+    let builder = createIrBuilder();
+    irBuilderEnterFunction(builder, "test_func", IrType.VOID);
+    
+    let block = irBuilderCreateEntryBlock(builder);
+    
+    let func = builder.currentFunction;
+    
+    if (func.entry_block == null) {
+        console.log("FAIL: entry_block should be set");
+        return false;
+    }
+    if (builder.currentBlock == null) {
+        console.log("FAIL: currentBlock should be set");
+        return false;
+    }
+    if (func.blocks.length != 1) {
+        console.log("FAIL: Should have 1 block");
+        return false;
+    }
+    if (block.label != "test_func_entry") {
+        console.log("FAIL: Block label should be 'test_func_entry'");
+        return false;
+    }
+    
+    console.log("  PASS: Entry block created correctly");
+    return true;
+}
+
+function testAddBlock() {
+    console.log("Test: Add Block");
+    
+    let builder = createIrBuilder();
+    irBuilderEnterFunction(builder, "test_func", IrType.VOID);
+    irBuilderCreateEntryBlock(builder);
+    
+    let loopBlock = irBuilderAddBlock(builder, "loop");
+    
+    let func = builder.currentFunction;
+    
+    if (func.blocks.length != 2) {
+        console.log("FAIL: Should have 2 blocks");
+        return false;
+    }
+    if (builder.currentBlock != loopBlock) {
+        console.log("FAIL: currentBlock should be set to new block");
+        return false;
+    }
+    if (loopBlock.label != "loop") {
+        console.log("FAIL: Block label should be 'loop'");
+        return false;
+    }
+    
+    console.log("  PASS: Additional block created correctly");
+    return true;
+}
+
+function testEmitConst() {
+    console.log("Test: Emit Const");
+    
+    let builder = createIrBuilder();
+    irBuilderEnterFunction(builder, "test_func", IrType.ANY);
+    irBuilderCreateEntryBlock(builder);
+    
+    let reg1 = irBuilderEmitConst(builder, 42);
+    let reg2 = irBuilderEmitConst(builder, 3.14);
+    
+    if (reg1 != 0) {
+        console.log("FAIL: First const should use reg 0");
+        return false;
+    }
+    if (reg2 != 1) {
+        console.log("FAIL: Second const should use reg 1");
+        return false;
+    }
+    let opsCount = irBuilderGetBlockOpCount(builder);
+    if (opsCount != 2) {
+        console.log("FAIL: Block should have 2 ops, got", opsCount);
+        return false;
+    }
+    
+    console.log("  PASS: Const emission works correctly");
+    return true;
+}
+
+function testEmitBinaryOp() {
+    console.log("Test: Emit Binary Op");
+    
+    let builder = createIrBuilder();
+    irBuilderEnterFunction(builder, "test_func", IrType.ANY);
+    irBuilderCreateEntryBlock(builder);
+    
+    let a = irBuilderEmitConst(builder, 10);
+    let b = irBuilderEmitConst(builder, 20);
+    let result = irBuilderEmitAdd(builder, a, b);
+    
+    if (result != 2) {
+        console.log("FAIL: Result should use reg 2");
+        return false;
+    }
+    let opsCount = irBuilderGetBlockOpCount(builder);
+    if (opsCount != 3) {
+        console.log("FAIL: Block should have 3 ops, got", opsCount);
+        return false;
+    }
+    
+    console.log("  PASS: Binary op emission works correctly");
+    return true;
+}
+
+function testEmitJump() {
+    console.log("Test: Emit Jump");
+    
+    let builder = createIrBuilder();
+    irBuilderEnterFunction(builder, "test_func", IrType.VOID);
+    irBuilderCreateEntryBlock(builder);
+    
+    let exitBlock = irBuilderAddBlock(builder, "exit");
+    irBuilderEmitJump(builder, exitBlock);
+    
+    let succCount = builder.currentBlock.successors.length;
+    if (succCount != 1) {
+        console.log("FAIL: Block should have 1 successor, got", succCount);
+        return false;
+    }
+    let predCount = exitBlock.predecessors.length;
+    if (predCount != 1) {
+        console.log("FAIL: Exit block should have 1 predecessor, got", predCount);
+        return false;
+    }
+    
+    console.log("  PASS: Jump emission works correctly");
+    return true;
+}
+
+function testEmitReturn() {
+    console.log("Test: Emit Return");
+    
+    let builder = createIrBuilder();
+    irBuilderEnterFunction(builder, "test_func", IrType.ANY);
+    irBuilderCreateEntryBlock(builder);
+    
+    let value = irBuilderEmitConst(builder, 42);
+    irBuilderEmitReturn(builder, value);
+    
+    let opsCount = irBuilderGetBlockOpCount(builder);
+    if (opsCount != 2) {
+        console.log("FAIL: Block should have 2 ops, got", opsCount);
+        return false;
+    }
+    
+    console.log("  PASS: Return emission works correctly");
+    return true;
+}
+
+function testMathFunction() {
+    console.log("Test: Math Function Creation");
+    
+    let builder = createIrBuilder();
+    
+    // Create add function manually without callback
+    let func = irBuilderEnterFunction(builder, "my_add", IrType.ANY);
+    irBuilderCreateEntryBlock(builder);
+    
+    let aSlot = irBuilderAddParam(builder, "a");
+    let bSlot = irBuilderAddParam(builder, "b");
+    let a = irBuilderEmitLoadLocal(builder, aSlot);
+    let b = irBuilderEmitLoadLocal(builder, bSlot);
+    let result = irBuilderEmitBinaryOp(builder, IrOpCode.ADD, a, b);
+    irBuilderEmitReturn(builder, result);
+    
+    if (func == null) {
+        console.log("FAIL: func should not be null");
+        return false;
+    }
+    if (func.name != "my_add") {
+        console.log("FAIL: Function name should be 'my_add'");
+        return false;
+    }
+    if (func.params.length != 2) {
+        console.log("FAIL: Function should have 2 params");
+        return false;
+    }
+    if (builder.functions.length != 1) {
+        console.log("FAIL: Builder should have 1 function");
+        return false;
+    }
+    
+    console.log("  PASS: Math function created correctly");
+    return true;
+}
+
+function testBuildModule() {
+    console.log("Test: Build Module");
+    
+    let builder = createIrBuilder();
+    
+    // Create add function
+    {
+        let func = irBuilderEnterFunction(builder, "add", IrType.ANY);
+        irBuilderCreateEntryBlock(builder);
+        let aSlot = irBuilderAddParam(builder, "a");
+        let bSlot = irBuilderAddParam(builder, "b");
+        let a = irBuilderEmitLoadLocal(builder, aSlot);
+        let b = irBuilderEmitLoadLocal(builder, bSlot);
+        let result = irBuilderEmitBinaryOp(builder, IrOpCode.ADD, a, b);
+        irBuilderEmitReturn(builder, result);
+    }
+    
+    // Create sub function
+    {
+        let func = irBuilderEnterFunction(builder, "sub", IrType.ANY);
+        irBuilderCreateEntryBlock(builder);
+        let aSlot = irBuilderAddParam(builder, "a");
+        let bSlot = irBuilderAddParam(builder, "b");
+        let a = irBuilderEmitLoadLocal(builder, aSlot);
+        let b = irBuilderEmitLoadLocal(builder, bSlot);
+        let result = irBuilderEmitBinaryOp(builder, IrOpCode.SUB, a, b);
+        irBuilderEmitReturn(builder, result);
+    }
+    
+    let module = irBuilderFinish(builder);
+    
+    if (module == null) {
+        console.log("FAIL: Module should not be null");
+        return false;
+    }
+    if (module.version != 1) {
+        console.log("FAIL: Module version should be 1");
+        return false;
+    }
+    if (module.abi_version != 1) {
+        console.log("FAIL: Module ABI version should be 1");
+        return false;
+    }
+    if (module.functions.length != 2) {
+        console.log("FAIL: Module should have 2 functions");
+        return false;
+    }
+    
+    console.log("  PASS: Module built correctly");
+    return true;
+}
+
+function testVerifyBuiltModule() {
+    console.log("Test: Verify Built Module");
+    
+    let builder = createIrBuilder();
+    
+    // Create add function manually
+    {
+        let func = irBuilderEnterFunction(builder, "add", IrType.ANY);
+        irBuilderCreateEntryBlock(builder);
+        let aSlot = irBuilderAddParam(builder, "a");
+        let bSlot = irBuilderAddParam(builder, "b");
+        let a = irBuilderEmitLoadLocal(builder, aSlot);
+        let b = irBuilderEmitLoadLocal(builder, bSlot);
+        let result = irBuilderEmitBinaryOp(builder, IrOpCode.ADD, a, b);
+        irBuilderEmitReturn(builder, result);
+    }
+    
+    let module = irBuilderFinish(builder);
+    
+    let result = verifyIrModule(module);
+    
+    if (result != true) {
+        console.log("FAIL: Module should verify");
+        return false;
+    }
+    
+    console.log("  PASS: Built module verifies correctly");
+    return true;
+}
+
+function testSerializeBuiltModule() {
+    console.log("Test: Serialize Built Module");
+    
+    let builder = createIrBuilder();
+    
+    // Create add function manually
+    {
+        let func = irBuilderEnterFunction(builder, "add", IrType.ANY);
+        irBuilderCreateEntryBlock(builder);
+        let aSlot = irBuilderAddParam(builder, "a");
+        let bSlot = irBuilderAddParam(builder, "b");
+        let a = irBuilderEmitLoadLocal(builder, aSlot);
+        let b = irBuilderEmitLoadLocal(builder, bSlot);
+        let result = irBuilderEmitBinaryOp(builder, IrOpCode.ADD, a, b);
+        irBuilderEmitReturn(builder, result);
+    }
+    
+    let module = irBuilderFinish(builder);
+    
+    let serialized = serializeIrModule(module);
+    
+    if (serialized.length <= 0) {
+        console.log("FAIL: Serialized output should not be empty");
+        return false;
+    }
+    if (serialized.indexOf("; tscl IR Module") < 0) {
+        console.log("FAIL: Should contain IR module header");
+        return false;
+    }
+    
+    console.log("  PASS: Built module serializes correctly");
+    console.log("  Sample output:");
+    let lines = serialized.split("\n");
+    let i = 0;
+    while (i < 8 && i < lines.length) {
+        console.log("    " + lines[i]);
+        i = i + 1;
+    }
+    return true;
+}
+
+function testExampleModule() {
+    console.log("Test: Example Module");
+    
+    let module = buildExampleModule();
+    
+    if (module.functions.length != 5) {
+        console.log("FAIL: Example module should have 5 functions, got", module.functions.length);
+        return false;
+    }
+    
+    console.log("  PASS: Example module created correctly");
+    return true;
+}
+
+function runAllBuilderTests() {
+    console.log("Running IR Builder Tests...\n");
+    
+    if (!testBuilderCreation()) { allPassed = false; }
+    console.log("");
+    
+    if (!testEnterFunction()) { allPassed = false; }
+    console.log("");
+    
+    if (!testAddParam()) { allPassed = false; }
+    console.log("");
+    
+    if (!testEntryBlock()) { allPassed = false; }
+    console.log("");
+    
+    if (!testAddBlock()) { allPassed = false; }
+    console.log("");
+    
+    if (!testEmitConst()) { allPassed = false; }
+    console.log("");
+    
+    if (!testEmitBinaryOp()) { allPassed = false; }
+    console.log("");
+    
+    if (!testEmitJump()) { allPassed = false; }
+    console.log("");
+    
+    if (!testEmitReturn()) { allPassed = false; }
+    console.log("");
+    
+    if (!testMathFunction()) { allPassed = false; }
+    console.log("");
+    
+    if (!testBuildModule()) { allPassed = false; }
+    console.log("");
+    
+    if (!testVerifyBuiltModule()) { allPassed = false; }
+    console.log("");
+    
+    if (!testSerializeBuiltModule()) { allPassed = false; }
+    console.log("");
+    
+    if (!testExampleModule()) { allPassed = false; }
+    console.log("");
+    
+    console.log("==============================================");
+    if (allPassed) {
+        console.log("All IR Builder tests passed!");
+    } else {
+        console.log("Some IR Builder tests failed!");
+    }
+    console.log("==============================================");
+}
+
+runAllBuilderTests();

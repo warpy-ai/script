@@ -1,0 +1,393 @@
+// ============================================================================
+// Pipeline Test Suite
+// ============================================================================
+
+require("../bootstrap/pipeline");
+
+console.log("==============================================");
+console.log("Pipeline Test Suite");
+console.log("==============================================");
+console.log("");
+
+let allPassed = true;
+
+function testSimpleExpression() {
+    console.log("Test: Simple Expression");
+    
+    let result = compileToBytecode("1 + 2 * 3");
+    
+    if (result == null || result.length <= 0) {
+        console.log("FAIL: Compilation failed");
+        return false;
+    }
+    
+    console.log("  PASS: Simple expression compiles");
+    console.log("    Bytecode: " + result.length + " bytes");
+    return true;
+}
+
+function testVariableDeclaration() {
+    console.log("Test: Variable Declaration");
+    
+    let result = compileToBytecode("let x = 42;");
+    
+    if (result == null) {
+        console.log("FAIL: Compilation failed");
+        return false;
+    }
+    
+    console.log("  PASS: Variable declaration compiles");
+    console.log("    Bytecode: " + result.length + " bytes");
+    return true;
+}
+
+function testFunctionDeclaration() {
+    console.log("Test: Function Declaration");
+    
+    let result = compileToBytecode("function add(a, b) { return a + b; }");
+    
+    if (result == null) {
+        console.log("FAIL: Compilation failed");
+        return false;
+    }
+    
+    console.log("  PASS: Function declaration compiles");
+    console.log("    Bytecode: " + result.length + " bytes");
+    return true;
+}
+
+function testFullPipeline() {
+    console.log("Test: Full Pipeline Metrics");
+    
+    let metrics = measureCompilation("let x = 1; let y = 2; x + y;");
+    
+    if (metrics == null) {
+        console.log("FAIL: Metrics failed");
+        return false;
+    }
+    
+    console.log("  PASS: Full pipeline metrics collected");
+    console.log("    Lexer: " + metrics.lexerTime + "ms");
+    console.log("    Parser: " + metrics.parserTime + "ms");
+    console.log("    IR: " + metrics.irTime + "ms");
+    console.log("    Codegen: " + metrics.codegenTime + "ms");
+    console.log("    Total: " + metrics.totalTime + "ms");
+    console.log("    Bytecode: " + metrics.bytecodeSize + " bytes");
+    return true;
+}
+
+function testModuleCompilation() {
+    console.log("Test: Module Compilation");
+    
+    let source = "function isPrime(n) { if (n <= 1) { return false; } if (n <= 3) { return true; } return true; }";
+    let result = compileModule(source);
+    
+    if (result == null) {
+        console.log("FAIL: Module compilation failed");
+        return false;
+    }
+    
+    console.log("  PASS: Module compiles successfully");
+    console.log("    Bytecode: " + result.length + " bytes");
+    return true;
+}
+
+function testBootstrapCompilerVersion() {
+    console.log("Test: Bootstrap Compiler Version");
+    
+    if (BootstrapCompiler.version != "0.1.0") {
+        console.log("FAIL: Version mismatch");
+        return false;
+    }
+    
+    console.log("  PASS: Bootstrap compiler version correct");
+    console.log("    Version: " + BootstrapCompiler.version);
+    console.log("    Pipeline: " + BootstrapCompiler.pipeline);
+    return true;
+}
+
+function runAllPipelineTests() {
+    console.log("Running Pipeline Tests...\n");
+    
+    if (!testSimpleExpression()) { allPassed = false; }
+    console.log("");
+    
+    if (!testVariableDeclaration()) { allPassed = false; }
+    console.log("");
+    
+    if (!testFunctionDeclaration()) { allPassed = false; }
+    console.log("");
+    
+    if (!testFullPipeline()) { allPassed = false; }
+    console.log("");
+    
+    if (!testModuleCompilation()) { allPassed = false; }
+    console.log("");
+    
+    if (!testBootstrapCompilerVersion()) { allPassed = false; }
+    console.log("");
+    
+    console.log("==============================================");
+    if (allPassed) {
+        console.log("All Pipeline tests passed!");
+    } else {
+        console.log("Some Pipeline tests failed!");
+    }
+    console.log("==============================================");
+}
+
+runAllPipelineTests();
+
+console.log("");
+console.log("==============================================");
+console.log("Self-Hosting Bootstrap Tests");
+console.log("==============================================");
+console.log("");
+
+console.log("==============================================");
+console.log("Self-Hosting Bootstrap Tests");
+console.log("==============================================");
+console.log("");
+
+function testBootstrapLoads() {
+    console.log("Test: Bootstrap compiler loads");
+    if (BootstrapCompiler == null) {
+        console.log("  FAIL");
+        return false;
+    }
+    if (BootstrapCompiler.version != "0.1.0") {
+        console.log("  FAIL");
+        return false;
+    }
+    console.log("  PASS");
+    return true;
+}
+
+function testPipelineSimple() {
+    console.log("Test: Pipeline compiles simple expression");
+    let result = compileToBytecode("let x = 1 + 2;");
+    if (result == null) {
+        console.log("  FAIL");
+        return false;
+    }
+    console.log("  PASS");
+    return true;
+}
+
+function testPipelineFunction() {
+    console.log("Test: Pipeline compiles function");
+    let result = compileToBytecode("function add(a, b) { return a + b; }");
+    if (result == null) {
+        console.log("  FAIL");
+        return false;
+    }
+    console.log("  PASS");
+    return true;
+}
+
+function testBootstrapModulesCompile() {
+    console.log("Test: Bootstrap modules can be compiled");
+    let modules = [
+        "bootstrap/types.tscl",
+        "bootstrap/lexer.tscl",
+        "bootstrap/parser.tscl",
+        "bootstrap/emitter.tscl",
+        "bootstrap/ir.tscl",
+        "bootstrap/ir_builder.tscl",
+        "bootstrap/codegen.tscl",
+        "bootstrap/pipeline.tscl"
+    ];
+    let allCompiled = true;
+    for (let i = 0; i < modules.length; i++) {
+        let source = fs.readFileSync(modules[i], "utf8");
+        let result = compileToBytecode(source);
+        if (result == null) {
+            console.log("  FAIL: Could not compile " + modules[i]);
+            allCompiled = false;
+        }
+    }
+    if (allCompiled) {
+        console.log("  PASS: All " + modules.length + " modules compiled successfully");
+    }
+    return allCompiled;
+}
+
+function testSelfCompilation() {
+    console.log("Test: Self-compilation produces bytecode");
+    let allSource = "";
+    let modules = [
+        "bootstrap/types.tscl",
+        "bootstrap/lexer.tscl",
+        "bootstrap/parser.tscl",
+        "bootstrap/emitter.tscl",
+        "bootstrap/ir.tscl",
+        "bootstrap/ir_builder.tscl",
+        "bootstrap/codegen.tscl",
+        "bootstrap/pipeline.tscl"
+    ];
+    for (let i = 0; i < modules.length; i++) {
+        let source = fs.readFileSync(modules[i], "utf8");
+        allSource = allSource + source + "\n\n";
+    }
+    let result = compileToBytecode(allSource);
+    if (result == null) {
+        console.log("  FAIL");
+        return false;
+    }
+    console.log("  PASS: Self-compilation produced " + result.length + " bytes");
+    return true;
+}
+
+let allPassed = true;
+if (!testBootstrapLoads()) { allPassed = false; }
+console.log("");
+if (!testPipelineSimple()) { allPassed = false; }
+console.log("");
+if (!testPipelineFunction()) { allPassed = false; }
+console.log("");
+if (!testBootstrapModulesCompile()) { allPassed = false; }
+console.log("");
+if (!testSelfCompilation()) { allPassed = false; }
+console.log("");
+
+console.log("==============================================");
+if (allPassed) {
+    console.log("All Self-Hosting tests passed!");
+} else {
+    console.log("Some Self-Hosting tests failed!");
+}
+console.log("==============================================");
+
+console.log("");
+console.log("==============================================");
+console.log("Bootstrap Loop Verification");
+console.log("==============================================");
+console.log("");
+
+function computeByteHash(bytes) {
+    let hash = 0;
+    for (let i = 0; i < bytes.length; i++) {
+        hash = ((hash << 5) - hash) + bytes[i];
+        hash = hash & hash;
+    }
+    return hash >>> 0;
+}
+
+function computeStringHash(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        hash = ((hash << 5) - hash) + str.charCodeAt(i);
+        hash = hash & hash;
+    }
+    return hash >>> 0;
+}
+
+function testModuleBytecodeSerialization() {
+    console.log("Test: Serialize module bytecode to disk");
+    console.log("");
+
+    let outputDir = "/tmp/tscl_bootstrap_bytecode";
+    if (!fs.existsSync(outputDir)) {
+        fs.mkdirSync(outputDir, { recursive: true });
+    }
+
+    let totalBytes = 0;
+    for (let i = 0; i < BOOTSTRAP_MODULES.length; i++) {
+        let modulePath = BOOTSTRAP_MODULES[i];
+        let source = fs.readFileSync(modulePath, "utf8");
+        let bytecode = compileToBytecode(source);
+
+        if (bytecode == null) {
+            console.log("  FAIL: Could not compile " + modulePath);
+            return false;
+        }
+
+        let baseName = modulePath.replace("/", "_").replace(".", "_") + "_bc";
+        let outputPath = outputDir + "/" + baseName + ".bc";
+
+        let stream = ByteStream.create();
+        for (let j = 0; j < bytecode.length; j++) {
+            stream.writeU8(bytecode[j]);
+        }
+        let bytes = stream.toArray();
+        fs.writeFileSync(outputPath, bytes);
+
+        totalBytes = totalBytes + bytes.length;
+        console.log("  Saved: " + outputPath + " (" + bytes.length + " bytes)");
+    }
+
+    console.log("");
+    console.log("Total serialized: " + totalBytes + " bytes");
+    console.log("  PASS: All bytecode serialized to " + outputDir);
+    return true;
+}
+
+function testBootstrapLoop() {
+    console.log("==============================================");
+    console.log("Bootstrap Loop Verification");
+    console.log("==============================================");
+    console.log("");
+
+    console.log("This test verifies that the bootstrap compiler can:");
+    console.log("1. Compile all 8 bootstrap modules to bytecode");
+    console.log("2. Serialize bytecode to disk");
+    console.log("3. Self-compile (compile all modules together)");
+    console.log("");
+
+    let loopPassed = true;
+
+    console.log("--- Step 1: Individual Module Compilation ---");
+    let step1Passed = true;
+    for (let i = 0; i < BOOTSTRAP_MODULES.length; i++) {
+        let source = fs.readFileSync(BOOTSTRAP_MODULES[i], "utf8");
+        let bytecode = compileToBytecode(source);
+        if (bytecode == null) {
+            step1Passed = false;
+        }
+    }
+    if (step1Passed) {
+        console.log("  PASS: All modules compiled");
+    } else {
+        console.log("  FAIL: Some modules failed");
+        loopPassed = false;
+    }
+    console.log("");
+
+    console.log("--- Step 2: Self-Compilation ---");
+    let allSource = "";
+    for (let i = 0; i < BOOTSTRAP_MODULES.length; i++) {
+        let source = fs.readFileSync(BOOTSTRAP_MODULES[i], "utf8");
+        allSource = allSource + source + "\n\n";
+    }
+    let selfBytecode = compileToBytecode(allSource);
+    if (selfBytecode != null) {
+        console.log("  PASS: Self-compilation produced " + selfBytecode.length + " bytes");
+    } else {
+        console.log("  FAIL: Self-compilation failed");
+        loopPassed = false;
+    }
+    console.log("");
+
+    console.log("--- Step 3: Bytecode Serialization ---");
+    if (!testModuleBytecodeSerialization()) {
+        loopPassed = false;
+    }
+    console.log("");
+
+    console.log("==============================================");
+    if (loopPassed) {
+        console.log("Bootstrap Loop: PASS");
+        console.log("");
+        console.log("Next step: Verify hash match between");
+        console.log("Rust-compiled and tscl-compiled output");
+    } else {
+        console.log("Bootstrap Loop: FAIL");
+    }
+    console.log("==============================================");
+
+    return loopPassed;
+}
+
+let loopResult = testBootstrapLoop();
+console.log("");
+console.log("Bootstrap Loop Result: " + (loopResult ? "SUCCESS" : "FAILURE"));

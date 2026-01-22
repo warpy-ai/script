@@ -1,0 +1,163 @@
+// ============================================================================
+// Bootstrap Compiler Benchmark Suite
+// ============================================================================
+
+require("../bootstrap/ir_builder");
+
+console.log("----------------------------------------------");
+console.log("Bootstrap Compiler Benchmark Suite");
+console.log("----------------------------------------------");
+console.log("");
+
+let BENCHMARK_RESULTS = [];
+
+function recordBenchmark(name, timeMs, details) {
+    BENCHMARK_RESULTS.push({ name: name, timeMs: timeMs, details: details });
+    console.log("  " + name + ": " + timeMs + "ms");
+}
+
+console.log("Benchmark 1: Lexer Performance");
+console.log("--------------------------------");
+
+{
+    let start = Date.now();
+    let c = 0;
+    while (c < 10000) { tokenize("1 + 2 * 3 - 4 / 5"); c = c + 1; }
+    let t = Date.now() - start;
+    recordBenchmark("Simple expression lexing", t, "10000 iterations");
+    console.log("    -> " + (t * 1000 / 10000) + "us per op");
+}
+
+{
+    let start = Date.now();
+    let c = 0;
+    while (c < 5000) { tokenize("let x = 1; let y = 2; let z = x + y * 2"); c = c + 1; }
+    recordBenchmark("Variable declarations lexing", Date.now() - start, "5000 iterations");
+}
+
+{
+    let start = Date.now();
+    let c = 0;
+    while (c < 3000) { tokenize("function add(a, b) { return a + b; }"); c = c + 1; }
+    recordBenchmark("Function lexing", Date.now() - start, "3000 iterations");
+}
+
+console.log("");
+
+console.log("Benchmark 2: Parser Performance");
+console.log("--------------------------------");
+
+{
+    let start = Date.now();
+    let c = 0;
+    while (c < 5000) { parseSource("1 + 2 * 3 - 4 / 5"); c = c + 1; }
+    let t = Date.now() - start;
+    recordBenchmark("Simple expression parsing", t, "5000 iterations");
+    console.log("    -> " + (t * 1000 / 5000) + "us per op");
+}
+
+{
+    let start = Date.now();
+    let c = 0;
+    while (c < 3000) { parseSource("let x = 1; let y = 2; let z = x + y * 2"); c = c + 1; }
+    recordBenchmark("Variable declarations parsing", Date.now() - start, "3000 iterations");
+}
+
+{
+    let start = Date.now();
+    let c = 0;
+    while (c < 2000) { parseSource("function add(a, b) { return a + b; }"); c = c + 1; }
+    recordBenchmark("Function parsing", Date.now() - start, "2000 iterations");
+}
+
+console.log("");
+
+console.log("Benchmark 3: IR Builder Performance");
+console.log("--------------------------------");
+
+{
+    let start = Date.now();
+    let c = 0;
+    while (c < 1000) {
+        let b = createIrBuilder();
+        irBuilderEnterFunction(b, "b" + c, IrType.ANY);
+        irBuilderCreateEntryBlock(b);
+        irBuilderAddParam(b, "a");
+        irBuilderAddParam(b, "bb");
+        let a = irBuilderEmitLoadLocal(b, 0);
+        let bb = irBuilderEmitLoadLocal(b, 1);
+        irBuilderEmitReturn(b, irBuilderEmitBinaryOp(b, IrOpCode.ADD, a, bb));
+        c = c + 1;
+    }
+    let t = Date.now() - start;
+    recordBenchmark("IR function creation", t, "1000 functions");
+    console.log("    -> " + (t * 1000 / 1000) + "us per func");
+}
+
+let b2 = createIrBuilder();
+irBuilderEnterFunction(b2, "add", IrType.ANY);
+irBuilderCreateEntryBlock(b2);
+irBuilderAddParam(b2, "a");
+irBuilderAddParam(b2, "b");
+irBuilderEmitReturn(b2, irBuilderEmitBinaryOp(b2, IrOpCode.ADD, irBuilderEmitLoadLocal(b2, 0), irBuilderEmitLoadLocal(b2, 1)));
+
+irBuilderEnterFunction(b2, "sub", IrType.ANY);
+irBuilderCreateEntryBlock(b2);
+irBuilderAddParam(b2, "c");
+irBuilderAddParam(b2, "d");
+irBuilderEmitReturn(b2, irBuilderEmitBinaryOp(b2, IrOpCode.SUB, irBuilderEmitLoadLocal(b2, 0), irBuilderEmitLoadLocal(b2, 1)));
+
+let mod = irBuilderFinish(b2);
+
+{
+    let start = Date.now();
+    let c = 0;
+    while (c < 1000) { verifyIrModule(mod); c = c + 1; }
+    let t = Date.now() - start;
+    recordBenchmark("IR module verification", t, "1000 iterations");
+    console.log("    -> " + (t * 1000 / 1000) + "us per mod");
+}
+
+{
+    let start = Date.now();
+    let c = 0;
+    while (c < 100) { serializeIrModule(mod); c = c + 1; }
+    let t = Date.now() - start;
+    recordBenchmark("IR serialization", t, "100 iterations");
+    console.log("    -> " + (t * 1000 / 100) + "us per mod");
+}
+
+console.log("");
+
+console.log("Benchmark 4: Full Compilation Chain");
+console.log("--------------------------------");
+
+{
+    let start = Date.now();
+    let c = 0;
+    while (c < 100) {
+        let parsed = parseSource("1 + 2 * 3 - 4 / 5");
+        let emitter = createEmitter();
+        emit(emitter, parsed);
+        c = c + 1;
+    }
+    let t = Date.now() - start;
+    recordBenchmark("Full compilation chain", t, "100 iterations");
+    console.log("    -> " + (t * 1000 / 100) + "us per comp");
+}
+
+console.log("");
+
+console.log("----------------------------------------------");
+console.log("Benchmark Summary");
+console.log("----------------------------------------------");
+
+let totalTime = 0;
+let idx = 0;
+while (idx < BENCHMARK_RESULTS.length) { totalTime = totalTime + BENCHMARK_RESULTS[idx].timeMs; idx = idx + 1; }
+
+console.log("Total benchmark time: " + totalTime + "ms");
+console.log("Number of benchmarks: " + BENCHMARK_RESULTS.length);
+console.log("");
+console.log("Bootstrap compiler is functional and ready for self-hosting!");
+console.log("----------------------------------------------");

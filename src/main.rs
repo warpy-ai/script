@@ -28,6 +28,10 @@ const BOOTSTRAP_FILES: &[&str] = &[
     "bootstrap/lexer.tscl",
     "bootstrap/parser.tscl",
     "bootstrap/emitter.tscl",
+    "bootstrap/ir.tscl",
+    "bootstrap/ir_builder.tscl",
+    "bootstrap/codegen.tscl",
+    "bootstrap/pipeline.tscl",
 ];
 
 /// Helper to load and run a script file
@@ -222,7 +226,7 @@ fn main() {
     }
 
     // 2. Check if this is a bootstrap file that needs the compiler modules
-    let is_bootstrap = filename.contains("bootstrap/");
+    let is_bootstrap = filename.contains("bootstrap/") || filename.contains("tests/");
 
     if is_bootstrap {
         println!("Loading bootstrap compiler modules...");

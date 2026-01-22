@@ -1,0 +1,226 @@
+// ============================================================================
+// Codegen Test Suite
+// Tests IR to bytecode compilation
+// ============================================================================
+
+require("../bootstrap/codegen");
+
+console.log("==============================================");
+console.log("Codegen Test Suite");
+console.log("==============================================");
+console.log("");
+
+let allPassed = true;
+
+function testCodegenCreation() {
+    console.log("Test: Codegen Creation");
+    
+    let cg = createCodegen();
+    
+    if (cg == null) {
+        console.log("FAIL: Codegen should not be null");
+        return false;
+    }
+    
+    console.log("  PASS: Codegen created correctly");
+    return true;
+}
+
+function testSimpleConstModule() {
+    console.log("Test: Simple Constant Module");
+    
+    let builder = createIrBuilder();
+    irBuilderEnterFunction(builder, "test", IrType.NUMBER);
+    irBuilderCreateEntryBlock(builder);
+    let r = irBuilderEmitConst(builder, 42);
+    irBuilderEmitReturn(builder, r);
+    
+    let module = irBuilderFinish(builder);
+    
+    let cgResult1 = codegenIrModule(module);
+    
+    if (cgResult1 == null) {
+        console.log("FAIL: Result should not be null");
+        return false;
+    }
+    if (cgResult1.length <= 0) {
+        console.log("FAIL: Bytecode length should be > 0");
+        return false;
+    }
+    
+    console.log("  PASS: Simple module codegen works");
+    console.log("    Bytecode length: " + cgResult1.length + " bytes");
+    return true;
+}
+
+function testBinaryOpModule() {
+    console.log("Test: Binary Operation Module");
+    
+    let builder = createIrBuilder();
+    irBuilderEnterFunction(builder, "add", IrType.NUMBER);
+    irBuilderCreateEntryBlock(builder);
+    irBuilderAddParam(builder, "a");
+    irBuilderAddParam(builder, "b");
+    let a = irBuilderEmitLoadLocal(builder, 0);
+    let b = irBuilderEmitLoadLocal(builder, 1);
+    let addResult = irBuilderEmitAdd(builder, a, b);
+    irBuilderEmitReturn(builder, addResult);
+    
+    let module = irBuilderFinish(builder);
+    let cgResult2 = codegenIrModule(module);
+    
+    if (cgResult2.length < 20) {
+        console.log("FAIL: Binary op module should have more bytecode");
+        return false;
+    }
+    
+    console.log("  PASS: Binary operation module codegen works");
+    console.log("    Bytecode length: " + cgResult2.length + " bytes");
+    return true;
+}
+
+function testMultiFunctionModule() {
+    console.log("Test: Multi-Function Module");
+    
+    let builder = createIrBuilder();
+    
+    // Add function
+    {
+        irBuilderEnterFunction(builder, "add", IrType.NUMBER);
+        irBuilderCreateEntryBlock(builder);
+        irBuilderAddParam(builder, "x");
+        irBuilderAddParam(builder, "y");
+        let r1 = irBuilderEmitLoadLocal(builder, 0);
+        let r2 = irBuilderEmitLoadLocal(builder, 1);
+        irBuilderEmitReturn(builder, irBuilderEmitAdd(builder, r1, r2));
+    }
+    
+    // Sub function
+    {
+        irBuilderEnterFunction(builder, "sub", IrType.NUMBER);
+        irBuilderCreateEntryBlock(builder);
+        irBuilderAddParam(builder, "x");
+        irBuilderAddParam(builder, "y");
+        let r1 = irBuilderEmitLoadLocal(builder, 0);
+        let r2 = irBuilderEmitLoadLocal(builder, 1);
+        irBuilderEmitReturn(builder, irBuilderEmitSub(builder, r1, r2));
+    }
+    
+    let module = irBuilderFinish(builder);
+    let cgResult3 = codegenIrModule(module);
+    
+    if (module.functions.length != 2) {
+        console.log("FAIL: Module should have 2 functions");
+        return false;
+    }
+    if (cgResult3.length < 50) {
+        console.log("FAIL: Multi-function module should have more bytecode");
+        return false;
+    }
+    
+    console.log("  PASS: Multi-function module codegen works");
+    console.log("    Functions: " + module.functions.length);
+    console.log("    Bytecode length: " + cgResult3.length + " bytes");
+    return true;
+}
+
+function testControlFlowModule() {
+    console.log("Test: Control Flow Module");
+    
+    let builder = createIrBuilder();
+    irBuilderEnterFunction(builder, "testIf", IrType.NUMBER);
+    irBuilderCreateEntryBlock(builder);
+    
+    let thenBlock = irBuilderAddBlock(builder, "then");
+    let elseBlock = irBuilderAddBlock(builder, "else");
+    
+    // Condition
+    let cond = irBuilderEmitConst(builder, 1);
+    irBuilderEmitJumpIfFalse(builder, cond, elseBlock);
+    
+    // Then block
+    irBuilderSetBlock(builder, thenBlock);
+    irBuilderEmitReturn(builder, irBuilderEmitConst(builder, 100));
+    
+    // Else block
+    irBuilderSetBlock(builder, elseBlock);
+    irBuilderEmitReturn(builder, irBuilderEmitConst(builder, 200));
+    
+    let module = irBuilderFinish(builder);
+    let cgResult4 = codegenIrModule(module);
+    
+    if (module.functions[0].blocks.length != 3) {
+        console.log("FAIL: Function should have 3 blocks");
+        return false;
+    }
+    
+    console.log("  PASS: Control flow module codegen works");
+    console.log("    Blocks: " + module.functions[0].blocks.length);
+    console.log("    Bytecode length: " + cgResult4.length + " bytes");
+    return true;
+}
+
+function testIrToBytecodeRoundTrip() {
+    console.log("Test: IR to Bytecode Round Trip");
+    
+    let builder = createIrBuilder();
+    irBuilderEnterFunction(builder, "roundtrip", IrType.NUMBER);
+    irBuilderCreateEntryBlock(builder);
+    
+    let r1 = irBuilderEmitConst(builder, 123);
+    let r2 = irBuilderEmitConst(builder, 456);
+    let r3 = irBuilderEmitAdd(builder, r1, r2);
+    irBuilderEmitReturn(builder, r3);
+    
+    let module = irBuilderFinish(builder);
+    let verifyResult = verifyIrModule(module);
+    
+    if (!verifyResult) {
+        console.log("FAIL: IR module should verify");
+        return false;
+    }
+    
+    let cgResult5 = codegenIrModule(module);
+    
+    if (cgResult5.length <= 0) {
+        console.log("FAIL: Bytecode should be generated");
+        return false;
+    }
+    
+    console.log("  PASS: IR to bytecode round trip works");
+    console.log("    IR verified: true");
+    console.log("    Bytecode generated: " + cgResult5.length + " bytes");
+    return true;
+}
+
+function runAllCodegenTests() {
+    console.log("Running Codegen Tests...\n");
+    
+    if (!testCodegenCreation()) { allPassed = false; }
+    console.log("");
+    
+    if (!testSimpleConstModule()) { allPassed = false; }
+    console.log("");
+    
+    if (!testBinaryOpModule()) { allPassed = false; }
+    console.log("");
+    
+    if (!testMultiFunctionModule()) { allPassed = false; }
+    console.log("");
+    
+    if (!testControlFlowModule()) { allPassed = false; }
+    console.log("");
+    
+    if (!testIrToBytecodeRoundTrip()) { allPassed = false; }
+    console.log("");
+    
+    console.log("==============================================");
+    if (allPassed) {
+        console.log("All Codegen tests passed!");
+    } else {
+        console.log("Some Codegen tests failed!");
+    }
+    console.log("==============================================");
+}
+
+runAllCodegenTests();

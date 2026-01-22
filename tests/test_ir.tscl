@@ -1,0 +1,383 @@
+// ============================================================================
+// IR Module Test
+// Tests the IR lowering and serialization functionality
+// ============================================================================
+
+require("../bootstrap/ir");
+
+function testIrModuleCreation() {
+    console.log("Test: IR Module Creation");
+    
+    let module = lowerProgramToIr({
+        type: "Program",
+        body: []
+    });
+    
+    if (module.version != 1) {
+        console.log("FAIL: Module version should be 1");
+        return false;
+    }
+    if (module.abi_version != 1) {
+        console.log("FAIL: ABI version should be 1");
+        return false;
+    }
+    console.log("  PASS: Module created with correct version info");
+    return true;
+}
+
+function testIrModuleWithFunction() {
+    console.log("Test: IR Module with Function");
+    
+    let ast = {
+        type: "Program",
+        body: [
+            {
+                type: "FunctionDeclaration",
+                name: "add",
+                params: ["a", "b"],
+                body: {
+                    type: "BlockStatement",
+                    body: [
+                        {
+                            type: "ReturnStatement",
+                            argument: {
+                                type: "BinaryExpression",
+                                operator: "+",
+                                left: { type: "Identifier", name: "a" },
+                                right: { type: "Identifier", name: "b" }
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    };
+    
+    let module = lowerProgramToIr(ast);
+    
+    if (module.functions.length != 2) {
+        console.log("FAIL: Should have 2 functions (add + main)");
+        return false;
+    }
+    console.log("  PASS: Function lowered correctly");
+    
+    let addFunc = module.functions[0];
+    if (addFunc.name != "add") {
+        console.log("FAIL: First function should be 'add'");
+        return false;
+    }
+    if (addFunc.params.length != 2) {
+        console.log("FAIL: add should have 2 params");
+        return false;
+    }
+    console.log("  PASS: Function has correct name and params");
+    return true;
+}
+
+function testIrModuleWithVariables() {
+    console.log("Test: IR Module with Variables");
+    
+    let ast = {
+        type: "Program",
+        body: [
+            {
+                type: "VariableDeclaration",
+                name: "x",
+                init: { type: "Literal", value: 42 }
+            },
+            {
+                type: "VariableDeclaration",
+                name: "y",
+                init: { type: "Literal", value: 10 }
+            }
+        ]
+    };
+    
+    let module = lowerProgramToIr(ast);
+    if (module.functions.length != 1) {
+        console.log("FAIL: Should have 1 function (main)");
+        return false;
+    }
+    console.log("  PASS: Variables handled correctly");
+    return true;
+}
+
+function testIrVerification() {
+    console.log("Test: IR Verification");
+    
+    let module = lowerProgramToIr({
+        type: "Program",
+        body: []
+    });
+    
+    let result = verifyIrModule(module);
+    if (result != true) {
+        console.log("FAIL: Empty module should verify");
+        return false;
+    }
+    console.log("  PASS: Empty module verifies");
+    return true;
+}
+
+function testIrSerialization() {
+    console.log("Test: IR Serialization");
+    
+    let ast = {
+        type: "Program",
+        body: [
+            {
+                type: "FunctionDeclaration",
+                name: "test",
+                params: [],
+                body: {
+                    type: "BlockStatement",
+                    body: [
+                        {
+                            type: "ReturnStatement",
+                            argument: { type: "Literal", value: 0 }
+                        }
+                    ]
+                }
+            }
+        ]
+    };
+    
+    let module = lowerProgramToIr(ast);
+    let serialized = serializeIrModule(module);
+    
+    if (serialized.length <= 0) {
+        console.log("FAIL: Serialized output should not be empty");
+        return false;
+    }
+    if (serialized.indexOf("; tscl IR Module") < 0) {
+        console.log("FAIL: Should contain IR module header");
+        return false;
+    }
+    console.log("  PASS: Module serialized correctly");
+    
+    console.log("  Sample output:");
+    let lines = serialized.split("\n");
+    let i = 0;
+    while (i < 5 && i < lines.length) {
+        console.log("    " + lines[i]);
+        i = i + 1;
+    }
+    return true;
+}
+
+function testRegisterAllocator() {
+    console.log("Test: Register Allocator");
+    
+    let ra = createRegisterAllocator();
+    
+    if (ra.next_reg != 0) {
+        console.log("FAIL: Initial next_reg should be 0");
+        return false;
+    }
+    if (ra.max_regs != 0) {
+        console.log("FAIL: Initial max_regs should be 0");
+        return false;
+    }
+    
+    let r1 = allocateRegister(ra);
+    let r2 = allocateRegister(ra);
+    let r3 = allocateRegister(ra);
+    
+    if (r1 != 0) {
+        console.log("FAIL: First register should be 0");
+        return false;
+    }
+    if (r2 != 1) {
+        console.log("FAIL: Second register should be 1");
+        return false;
+    }
+    if (r3 != 2) {
+        console.log("FAIL: Third register should be 2");
+        return false;
+    }
+    if (ra.max_regs != 3) {
+        console.log("FAIL: max_regs should be 3 after 3 allocations");
+        return false;
+    }
+    
+    resetRegisterAllocator(ra);
+    if (ra.next_reg != 0) {
+        console.log("FAIL: next_reg should be 0 after reset");
+        return false;
+    }
+    if (ra.max_regs != 0) {
+        console.log("FAIL: max_regs should be 0 after reset");
+        return false;
+    }
+    
+    console.log("  PASS: Register allocator works correctly");
+    return true;
+}
+
+function testIrBlockCreation() {
+    console.log("Test: IR Block Creation");
+    
+    let block = createIrBlock("test_block");
+    
+    if (block.label != "test_block") {
+        console.log("FAIL: Block label should match");
+        return false;
+    }
+    if (block.ops.length != 0) {
+        console.log("FAIL: New block should have no ops");
+        return false;
+    }
+    if (block.predecessors.length != 0) {
+        console.log("FAIL: New block should have no predecessors");
+        return false;
+    }
+    if (block.successors.length != 0) {
+        console.log("FAIL: New block should have no successors");
+        return false;
+    }
+    
+    console.log("  PASS: Block creation works correctly");
+    return true;
+}
+
+function testIrEmitFunctions() {
+    console.log("Test: IR Emit Functions");
+    
+    let block = createIrBlock("test");
+    let ra = createRegisterAllocator();
+    
+    let dest = allocateRegister(ra);
+    emitConst(block, dest, 42);
+    if (block.ops.length != 1) {
+        console.log("FAIL: Block should have 1 op after emitConst");
+        return false;
+    }
+    
+    let dest2 = allocateRegister(ra);
+    emitBinaryOp(block, IrOpCode.ADD, dest2, 0, 1);
+    if (block.ops.length != 2) {
+        console.log("FAIL: Block should have 2 ops after emitBinaryOp");
+        return false;
+    }
+    
+    let target = createIrBlock("target");
+    emitJump(block, target);
+    if (block.ops.length != 3) {
+        console.log("FAIL: Block should have 3 ops after emitJump");
+        return false;
+    }
+    if (block.successors.length != 1) {
+        console.log("FAIL: Block should have 1 successor");
+        return false;
+    }
+    
+    emitReturn(block, 0);
+    if (block.ops.length != 4) {
+        console.log("FAIL: Block should have 4 ops after emitReturn");
+        return false;
+    }
+    
+    console.log("  PASS: Emit functions work correctly");
+    return true;
+}
+
+function testIrTypeConversion() {
+    console.log("Test: IR Type Conversion");
+    
+    if (irTypeToString(IrType.NUMBER) != "number") {
+        console.log("FAIL: NUMBER should convert to 'number'");
+        return false;
+    }
+    if (irTypeToString(IrType.STRING) != "string") {
+        console.log("FAIL: STRING should convert to 'string'");
+        return false;
+    }
+    if (irTypeToString(IrType.BOOLEAN) != "boolean") {
+        console.log("FAIL: BOOLEAN should convert to 'boolean'");
+        return false;
+    }
+    if (irTypeToString(IrType.ANY) != "any") {
+        console.log("FAIL: ANY should convert to 'any'");
+        return false;
+    }
+    if (irTypeToString(IrType.VOID) != "void") {
+        console.log("FAIL: VOID should convert to 'void'");
+        return false;
+    }
+    
+    console.log("  PASS: Type conversion works correctly");
+    return true;
+}
+
+function testIrOpCodeConversion() {
+    console.log("Test: IR OpCode Conversion");
+    
+    if (irOpCodeToString(IrOpCode.CONST) != "const") {
+        console.log("FAIL: CONST should convert to 'const'");
+        return false;
+    }
+    if (irOpCodeToString(IrOpCode.ADD) != "add") {
+        console.log("FAIL: ADD should convert to 'add'");
+        return false;
+    }
+    if (irOpCodeToString(IrOpCode.JUMP) != "jump") {
+        console.log("FAIL: JUMP should convert to 'jump'");
+        return false;
+    }
+    if (irOpCodeToString(IrOpCode.RETURN) != "return") {
+        console.log("FAIL: RETURN should convert to 'return'");
+        return false;
+    }
+    
+    console.log("  PASS: OpCode conversion works correctly");
+    return true;
+}
+
+function runAllIrTests() {
+    console.log("==============================================");
+    console.log("IR Module Test Suite");
+    console.log("==============================================");
+    console.log("");
+    
+    let allPassed = true;
+    
+    if (!testIrModuleCreation()) { allPassed = false; }
+    console.log("");
+    
+    if (!testIrModuleWithFunction()) { allPassed = false; }
+    console.log("");
+    
+    if (!testIrModuleWithVariables()) { allPassed = false; }
+    console.log("");
+    
+    if (!testIrVerification()) { allPassed = false; }
+    console.log("");
+    
+    if (!testIrSerialization()) { allPassed = false; }
+    console.log("");
+    
+    if (!testRegisterAllocator()) { allPassed = false; }
+    console.log("");
+    
+    if (!testIrBlockCreation()) { allPassed = false; }
+    console.log("");
+    
+    if (!testIrEmitFunctions()) { allPassed = false; }
+    console.log("");
+    
+    if (!testIrTypeConversion()) { allPassed = false; }
+    console.log("");
+    
+    if (!testIrOpCodeConversion()) { allPassed = false; }
+    console.log("");
+    
+    console.log("==============================================");
+    if (allPassed) {
+        console.log("All IR tests passed!");
+    } else {
+        console.log("Some IR tests failed!");
+    }
+    console.log("==============================================");
+}
+
+runAllIrTests();

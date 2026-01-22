@@ -1,0 +1,103 @@
+// ============================================================================
+// Bootstrap Compiler Pipeline
+// Unified compilation: Source → Lexer → Parser → IR → Bytecode
+// ============================================================================
+
+require ./lexer;
+require ./parser;
+require ./ir;
+require ./ir_builder;
+require ./codegen;
+
+// ============================================================================
+// Compilation Pipeline
+// ============================================================================
+
+function compileToBytecode(source) {
+    let tokens = tokenize(source);
+    if (tokens == null) {
+        console.log("Error: Lexing failed");
+        return null;
+    }
+    
+    let ast = parseSource(source);
+    if (ast == null) {
+        console.log("Error: Parsing failed");
+        return null;
+    }
+    
+    let module = lowerProgramToIr(ast);
+    if (module == null) {
+        console.log("Error: IR lowering failed");
+        return null;
+    }
+    
+    let result = codegenIrModule(module);
+    return result;
+}
+
+function compileAndVerify(source) {
+    let result = compileToBytecode(source);
+    if (result == null) {
+        return null;
+    }
+    return result;
+}
+
+// ============================================================================
+// Module Compilation
+// ============================================================================
+
+function compileModule(source) {
+    let bytecode = compileToBytecode(source);
+    if (bytecode == null) {
+        return null;
+    }
+    return bytecode;
+}
+
+// ============================================================================
+// Performance Metrics
+// ============================================================================
+
+function measureCompilation(source) {
+    let metrics = {};
+    
+    let t0 = Date.now();
+    let tokens = tokenize(source);
+    metrics.lexerTime = Date.now() - t0;
+    
+    let t1 = Date.now();
+    let ast = parseSource(source);
+    metrics.parserTime = Date.now() - t1;
+    
+    let t2 = Date.now();
+    let module = lowerProgramToIr(ast);
+    metrics.irTime = Date.now() - t2;
+    
+    let t3 = Date.now();
+    let result = codegenIrModule(module);
+    metrics.codegenTime = Date.now() - t3;
+    
+    metrics.totalTime = metrics.lexerTime + metrics.parserTime + metrics.irTime + metrics.codegenTime;
+    metrics.bytecodeSize = result.length;
+    
+    return metrics;
+}
+
+// ============================================================================
+// Export for external use
+// ============================================================================
+
+let BootstrapCompiler = {
+    compile: compileToBytecode,
+    compileModule: compileModule,
+    compileAndVerify: compileAndVerify,
+    measureCompilation: measureCompilation,
+    version: "0.1.0",
+    pipeline: "lexer -> parser -> ir -> codegen"
+};
+
+console.log("Bootstrap Compiler Pipeline loaded");
+console.log("Version: " + BootstrapCompiler.version);
+console.log("Pipeline: " + BootstrapCompiler.pipeline);

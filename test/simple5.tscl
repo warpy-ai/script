@@ -1,0 +1,2 @@
+require "../bootstrap/pipeline";
+console.log("Test");
