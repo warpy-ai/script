@@ -5,12 +5,12 @@
 use swc_ecma_ast::{
     Expr, Ident, TsArrayType, TsFnOrConstructorType, TsFnParam, TsFnType, TsKeywordType,
     TsKeywordTypeKind, TsPropertySignature, TsType, TsTypeAnn, TsTypeLit, TsTypeParamDecl,
-    TsTypeParamInstantiation, TsTypeRef,
+    TsTypeParamInstantiation, TsTypeRef, TsUnionOrIntersectionType, TsUnionType,
 };
 
 use super::error::{Span, TypeError};
 use super::registry::TypeRegistry;
-use super::{FunctionType, ObjectType, Type, TypeVarId, fresh_type_var_id};
+use super::{fresh_type_var_id, FunctionType, ObjectType, Type, TypeVarId};
 use std::collections::HashMap;
 
 /// Type converter context.
@@ -50,11 +50,46 @@ impl<'a> TypeConverter<'a> {
             TsType::TsTypeRef(ref_) => self.convert_type_ref(ref_),
             TsType::TsFnOrConstructorType(fn_type) => self.convert_fn_type(fn_type),
             TsType::TsTypeLit(lit) => self.convert_type_lit(lit),
+            TsType::TsUnionOrIntersectionType(union) => {
+                match union {
+                    TsUnionOrIntersectionType::TsUnionType(u) => self.convert_union(u),
+                    TsUnionOrIntersectionType::TsIntersectionType(_) => {
+                        // For intersection types, just return the first type for now
+                        Err(TypeError::UnsupportedType {
+                            description: "intersection types not fully supported".to_string(),
+                            span: Span::default(),
+                        })
+                    }
+                }
+            }
             _ => Err(TypeError::UnsupportedType {
                 description: format!("{:?}", ts_type),
                 span: Span::default(),
             }),
         }
+    }
+
+    /// Convert union types: T | U | null, etc.
+    /// For runtime, we simplify unions by taking the first non-null type.
+    fn convert_union(&self, union: &TsUnionType) -> Result<Type, TypeError> {
+        // Filter out null/undefined and take the first remaining type
+        for ty in &union.types {
+            match ty.as_ref() {
+                TsType::TsKeywordType(kw) => {
+                    // Skip null and undefined
+                    if kw.kind == TsKeywordTypeKind::TsNullKeyword
+                        || kw.kind == TsKeywordTypeKind::TsUndefinedKeyword
+                    {
+                        continue;
+                    }
+                }
+                _ => {}
+            }
+            // Return the first non-null type
+            return self.convert(ty);
+        }
+        // If all types were null/undefined, return void
+        Ok(Type::Void)
     }
 
     /// Convert keyword types (number, string, boolean, etc.).

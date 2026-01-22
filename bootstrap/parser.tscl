@@ -8,7 +8,7 @@
 // Parser State
 // ============================================================================
 
-function createParser(tokens: Array<Token>): Parser {
+function createParser(tokens) {
     return {
         tokens: tokens,
         pos: 0
@@ -19,37 +19,37 @@ function createParser(tokens: Array<Token>): Parser {
 // Utility Functions
 // ============================================================================
 
-function parserPeek(parser: Parser): Token | null {
+function parserPeek(parser) {
     if (parser.pos >= parser.tokens.length) {
         return null;
     }
     return parser.tokens[parser.pos];
 }
 
-function peekType(parser: Parser): string {
-    let tok: Token | null = parserPeek(parser);
+function peekType(parser) {
+    let tok =  parserPeek(parser);
     if (tok == null) {
         return TOKEN.EOF;
     }
     return tok.type;
 }
 
-function peekValue(parser: Parser): string {
-    let tok: Token | null = parserPeek(parser);
+function peekValue(parser) {
+    let tok =  parserPeek(parser);
     if (tok == null) {
         return "";
     }
     return tok.value;
 }
 
-function parserAdvance(parser: Parser): Token {
-    let tok: Token = parserPeek(parser);
+function parserAdvance(parser) {
+    let tok =  parserPeek(parser);
     parser.pos = parser.pos + 1;
     return tok;
 }
 
-function check(parser: Parser, type: string, value: string | null): boolean {
-    let tok: Token | null = parserPeek(parser);
+function check(parser, type, value) {
+    let tok =  parserPeek(parser);
     if (tok == null) {
         return false;
     }
@@ -62,7 +62,7 @@ function check(parser: Parser, type: string, value: string | null): boolean {
     return true;
 }
 
-function match(parser: Parser, type: string, value: string | null): boolean {
+function match(parser, type, value) {
     if (check(parser, type, value)) {
         parserAdvance(parser);
         return true;
@@ -70,13 +70,13 @@ function match(parser: Parser, type: string, value: string | null): boolean {
     return false;
 }
 
-function expect(parser: Parser, type: string, value: string | null): Token | null {
+function expect(parser, type, value) {
     if (check(parser, type, value)) {
         return parserAdvance(parser);
     }
-    let tok: Token | null = parserPeek(parser);
-    let tokVal: string = "";
-    let tokType: string = TOKEN.EOF;
+    let tok =  parserPeek(parser);
+    let tokVal =  "";
+    let tokType =  TOKEN.EOF;
     if (tok != null) {
         tokVal = tok.value;
         tokType = tok.type;
@@ -85,7 +85,7 @@ function expect(parser: Parser, type: string, value: string | null): Token | nul
     return null;
 }
 
-function isAtEnd(parser: Parser): boolean {
+function isAtEnd(parser) {
     return peekType(parser) == TOKEN.EOF;
 }
 
@@ -93,15 +93,14 @@ function isAtEnd(parser: Parser): boolean {
 // Statement Parsers
 // ============================================================================
 
-function parseProgram(parser: Parser): Program {
-    let programBody: Array<Statement> = [];
+function parseProgram(parser) {
+    let programBody =  [];
 
     while (!isAtEnd(parser)) {
-        let stmt: Statement | null = parseStatement(parser);
+        let stmt =  parseStatement(parser);
         if (stmt != null) {
             programBody.push(stmt);
         } else {
-            // Skip the problematic token
             parserAdvance(parser);
         }
     }
@@ -112,11 +111,11 @@ function parseProgram(parser: Parser): Program {
     };
 }
 
-function parseStatement(parser: Parser): Statement | null {
-    let type: string = peekType(parser);
+function parseStatement(parser) {
+    let type =  peekType(parser);
 
     if (type == TOKEN.KEYWORD) {
-        let value: string = peekValue(parser);
+        let value =  peekValue(parser);
         if (value == "let" || value == "const" || value == "var") {
             return parseVariableDeclaration(parser);
         }
@@ -144,14 +143,14 @@ function parseStatement(parser: Parser): Statement | null {
     }
 
     if (type == TOKEN.DELIMITER) {
-        let value: string = peekValue(parser);
+        let value =  peekValue(parser);
         if (value == "{") {
             return parseBlockStatement(parser);
         }
     }
 
     // Try to parse as expression statement
-    let expr: Expression | null = parseExpression(parser, 0);
+    let expr =  parseExpression(parser, 0);
     if (expr != null) {
         // Check for semicolon
         match(parser, TOKEN.DELIMITER, ";");
@@ -164,17 +163,17 @@ function parseStatement(parser: Parser): Statement | null {
     return null;
 }
 
-function parseBlockStatement(parser: Parser): BlockStatement {
+function parseBlockStatement(parser) {
     expect(parser, TOKEN.DELIMITER, "{");
 
-    let body: Array<Statement> = [];
+    let body =  [];
 
     while (!check(parser, TOKEN.DELIMITER, "}")) {
         if (isAtEnd(parser)) {
             console.log("Parse error: unclosed block");
             break;
         }
-        let stmt: Statement | null = parseStatement(parser);
+        let stmt =  parseStatement(parser);
         if (stmt != null) {
             body.push(stmt);
         } else {
@@ -190,17 +189,17 @@ function parseBlockStatement(parser: Parser): BlockStatement {
     };
 }
 
-function parseVariableDeclaration(parser: Parser): VariableDeclaration {
-    let kind: string = peekValue(parser);
+function parseVariableDeclaration(parser) {
+    let kind =  peekValue(parser);
     parserAdvance(parser);
 
-    let name: string = "";
-    let nameTok: Token | null = expect(parser, TOKEN.IDENTIFIER, null);
+    let name =  "";
+    let nameTok =  expect(parser, TOKEN.IDENTIFIER, null);
     if (nameTok != null) {
         name = nameTok.value;
     }
 
-    let init: Expression | null = null;
+    let init =  null;
     if (match(parser, TOKEN.OPERATOR, "=")) {
         init = parseExpression(parser, 0);
     }
@@ -215,23 +214,23 @@ function parseVariableDeclaration(parser: Parser): VariableDeclaration {
     };
 }
 
-function parseFunctionDeclaration(parser: Parser): FunctionDeclaration {
+function parseFunctionDeclaration(parser) {
     expect(parser, TOKEN.KEYWORD, "function");
 
-    let name: string = "";
-    let nameTok: Token | null = expect(parser, TOKEN.IDENTIFIER, null);
+    let name =  "";
+    let nameTok =  expect(parser, TOKEN.IDENTIFIER, null);
     if (nameTok != null) {
         name = nameTok.value;
     }
 
     expect(parser, TOKEN.DELIMITER, "(");
 
-    let params: Array<string> = [];
+    let params =  [];
     while (!check(parser, TOKEN.DELIMITER, ")")) {
         if (params.length > 0) {
             expect(parser, TOKEN.DELIMITER, ",");
         }
-        let paramTok: Token | null = expect(parser, TOKEN.IDENTIFIER, null);
+        let paramTok =  expect(parser, TOKEN.IDENTIFIER, null);
         if (paramTok != null) {
             params.push(paramTok.value);
         }
@@ -239,7 +238,7 @@ function parseFunctionDeclaration(parser: Parser): FunctionDeclaration {
 
     expect(parser, TOKEN.DELIMITER, ")");
 
-    let body: BlockStatement = parseBlockStatement(parser);
+    let body =  parseBlockStatement(parser);
 
     return {
         type: "FunctionDeclaration",
@@ -249,10 +248,10 @@ function parseFunctionDeclaration(parser: Parser): FunctionDeclaration {
     };
 }
 
-function parseReturnStatement(parser: Parser): ReturnStatement {
+function parseReturnStatement(parser) {
     expect(parser, TOKEN.KEYWORD, "return");
 
-    let argument: Expression | null = null;
+    let argument =  null;
     if (!check(parser, TOKEN.DELIMITER, ";") && !isAtEnd(parser)) {
         argument = parseExpression(parser, 0);
     }
@@ -265,11 +264,11 @@ function parseReturnStatement(parser: Parser): ReturnStatement {
     };
 }
 
-function parseIfStatement(parser: Parser): IfStatement {
+function parseIfStatement(parser) {
     expect(parser, TOKEN.KEYWORD, "if");
     expect(parser, TOKEN.DELIMITER, "(");
 
-    let test: Expression = parseExpression(parser, 0);
+    let test =  parseExpression(parser, 0);
 
     expect(parser, TOKEN.DELIMITER, ")");
 
@@ -277,7 +276,7 @@ function parseIfStatement(parser: Parser): IfStatement {
     if (check(parser, TOKEN.DELIMITER, "{")) {
         consequent = parseBlockStatement(parser);
     } else {
-        let stmt: Statement | null = parseStatement(parser);
+        let stmt =  parseStatement(parser);
         if (stmt == null) {
             consequent = { type: "EmptyStatement" };
         } else {
@@ -285,14 +284,14 @@ function parseIfStatement(parser: Parser): IfStatement {
         }
     }
 
-    let alternate: Statement | null = null;
+    let alternate =  null;
     if (match(parser, TOKEN.KEYWORD, "else")) {
         if (check(parser, TOKEN.KEYWORD, "if")) {
             alternate = parseIfStatement(parser);
         } else if (check(parser, TOKEN.DELIMITER, "{")) {
             alternate = parseBlockStatement(parser);
         } else {
-            let stmt: Statement | null = parseStatement(parser);
+            let stmt =  parseStatement(parser);
             alternate = stmt;
         }
     }
@@ -305,11 +304,11 @@ function parseIfStatement(parser: Parser): IfStatement {
     };
 }
 
-function parseWhileStatement(parser: Parser): WhileStatement {
+function parseWhileStatement(parser) {
     expect(parser, TOKEN.KEYWORD, "while");
     expect(parser, TOKEN.DELIMITER, "(");
 
-    let test: Expression = parseExpression(parser, 0);
+    let test =  parseExpression(parser, 0);
 
     expect(parser, TOKEN.DELIMITER, ")");
 
@@ -317,7 +316,7 @@ function parseWhileStatement(parser: Parser): WhileStatement {
     if (check(parser, TOKEN.DELIMITER, "{")) {
         body = parseBlockStatement(parser);
     } else {
-        let stmt: Statement | null = parseStatement(parser);
+        let stmt =  parseStatement(parser);
         if (stmt == null) {
             body = { type: "EmptyStatement" };
         } else {
@@ -332,14 +331,14 @@ function parseWhileStatement(parser: Parser): WhileStatement {
     };
 }
 
-function parseForStatement(parser: Parser): Statement | null {
+function parseForStatement(parser) {
     expect(parser, TOKEN.KEYWORD, "for");
     expect(parser, TOKEN.DELIMITER, "(");
 
-    let init: Statement | null = null;
+    let init =  null;
     if (!check(parser, TOKEN.DELIMITER, ";")) {
         if (peekType(parser) == TOKEN.KEYWORD) {
-            let value: string = peekValue(parser);
+            let value =  peekValue(parser);
             if (value == "let" || value == "const" || value == "var") {
                 init = parseVariableDeclaration(parser);
             }
@@ -351,14 +350,14 @@ function parseForStatement(parser: Parser): Statement | null {
         }
     }
 
-    let test: Expression | null = null;
+    let test =  null;
     if (!check(parser, TOKEN.DELIMITER, ";")) {
         test = parseExpression(parser, 0);
     }
 
     expect(parser, TOKEN.DELIMITER, ";");
 
-    let update: Expression | null = null;
+    let update =  null;
     if (!check(parser, TOKEN.DELIMITER, ")")) {
         update = parseExpression(parser, 0);
     }
@@ -369,7 +368,7 @@ function parseForStatement(parser: Parser): Statement | null {
     if (check(parser, TOKEN.DELIMITER, "{")) {
         body = parseBlockStatement(parser);
     } else {
-        let stmt: Statement | null = parseStatement(parser);
+        let stmt =  parseStatement(parser);
         body = stmt;
     }
 
@@ -382,13 +381,13 @@ function parseForStatement(parser: Parser): Statement | null {
     };
 }
 
-function parseBreakStatement(parser: Parser): BreakStatement {
+function parseBreakStatement(parser) {
     expect(parser, TOKEN.KEYWORD, "break");
     match(parser, TOKEN.DELIMITER, ";");
     return { type: "BreakStatement" };
 }
 
-function parseContinueStatement(parser: Parser): ContinueStatement {
+function parseContinueStatement(parser) {
     expect(parser, TOKEN.KEYWORD, "continue");
     match(parser, TOKEN.DELIMITER, ";");
     return { type: "ContinueStatement" };
@@ -398,7 +397,7 @@ function parseContinueStatement(parser: Parser): ContinueStatement {
 // Expression Parsers (Pratt Parser)
 // ============================================================================
 
-const PRECEDENCE: Dict = {
+const PRECEDENCE =  {
     "=": 1,
     "||": 2,
     "&&": 3,
@@ -415,8 +414,8 @@ const PRECEDENCE: Dict = {
     "(": 15
 };
 
-function parseExpression(parser: Parser, minPrec: number): Expression | null {
-    let tok: Token | null = parserPeek(parser);
+function parseExpression(parser, minPrec) {
+    let tok =  parserPeek(parser);
     if (tok == null) {
         return null;
     }
@@ -425,10 +424,10 @@ function parseExpression(parser: Parser, minPrec: number): Expression | null {
 
     // Prefix operators
     if (tok.type == TOKEN.OPERATOR) {
-        let op: string = tok.value;
+        let op =  tok.value;
         if (op == "!" || op == "-" || op == "+" || op == "~" || op == "typeof" || op == "void" || op == "delete") {
             parserAdvance(parser);
-            let argument: Expression | null = parseExpression(parser, 13);
+            let argument =  parseExpression(parser, 13);
             if (argument == null) {
                 return null;
             }
@@ -445,7 +444,7 @@ function parseExpression(parser: Parser, minPrec: number): Expression | null {
         left = {
             type: "Literal",
             literalType: "number",
-            value: Number(tok.value)
+            value: parseFloat(tok.value)
         };
     } else if (tok.type == TOKEN.STRING) {
         parserAdvance(parser);
@@ -481,10 +480,10 @@ function parseExpression(parser: Parser, minPrec: number): Expression | null {
         // Parenthesized expression or arrow function
         if (peekType(parser) == TOKEN.IDENTIFIER) {
             // Check for arrow function
-            let nextToken: Token | null = parser.tokens[parser.pos + 1];
+            let nextToken =  parser.tokens[parser.pos + 1];
             if (nextToken != null && nextToken.value == "=>") {
                 // Arrow function: (param) => body
-                let params: Array<string> = [];
+                let params =  [];
                 params.push(tok.value);
 
                 parserAdvance(parser); // Consume identifier
@@ -494,7 +493,7 @@ function parseExpression(parser: Parser, minPrec: number): Expression | null {
                 if (check(parser, TOKEN.DELIMITER, "{")) {
                     body = parseBlockStatement(parser);
                 } else {
-                    let expr: Expression | null = parseExpression(parser, 0);
+                    let expr =  parseExpression(parser, 0);
                     if (expr == null) {
                         body = { type: "BlockStatement", body: [] };
                     } else {
@@ -509,25 +508,25 @@ function parseExpression(parser: Parser, minPrec: number): Expression | null {
                 };
             } else {
                 // Parenthesized expression
-                let expr: Expression | null = parseExpression(parser, 0);
+                let expr =  parseExpression(parser, 0);
                 expect(parser, TOKEN.DELIMITER, ")");
                 left = expr;
             }
         } else {
-            let expr: Expression | null = parseExpression(parser, 0);
+            let expr =  parseExpression(parser, 0);
             expect(parser, TOKEN.DELIMITER, ")");
             left = expr;
         }
     } else if (match(parser, TOKEN.DELIMITER, "{")) {
         // Object literal
-        let properties: Array<ObjectProperty> = [];
+        let properties =  [];
 
         while (!check(parser, TOKEN.DELIMITER, "}")) {
             if (properties.length > 0) {
                 expect(parser, TOKEN.DELIMITER, ",");
             }
 
-            let keyTok: Token | null = expect(parser, TOKEN.IDENTIFIER, null);
+            let keyTok =  expect(parser, TOKEN.IDENTIFIER, null);
             if (keyTok == null) {
                 break;
             }
@@ -539,7 +538,7 @@ function parseExpression(parser: Parser, minPrec: number): Expression | null {
 
             expect(parser, TOKEN.DELIMITER, ":");
 
-            let value: Expression | null = parseExpression(parser, 0);
+            let value =  parseExpression(parser, 0);
 
             properties.push({
                 key: key,
@@ -567,7 +566,7 @@ function parseExpression(parser: Parser, minPrec: number): Expression | null {
                 break;
             }
 
-            let element: Expression | null = parseExpression(parser, 0);
+            let element =  parseExpression(parser, 0);
             elements.push(element);
         }
 
@@ -583,20 +582,20 @@ function parseExpression(parser: Parser, minPrec: number): Expression | null {
 
     // Parse postfix operators and binary operators
     while (true) {
-        let nextPrec: number = 0;
-        let op: string = "";
+        let nextPrec =  0;
+        let op =  "";
 
         if (match(parser, TOKEN.DELIMITER, "(")) {
             // Function call
-            let callee: Expression = left;
+            let callee =  left;
 
-            let arguments: Array<Expression> = [];
+            let arguments =  [];
             while (!check(parser, TOKEN.DELIMITER, ")")) {
                 if (arguments.length > 0) {
                     expect(parser, TOKEN.DELIMITER, ",");
                 }
 
-                let arg: Expression | null = parseExpression(parser, 0);
+                let arg =  parseExpression(parser, 0);
                 if (arg != null) {
                     arguments.push(arg);
                 }
@@ -611,7 +610,7 @@ function parseExpression(parser: Parser, minPrec: number): Expression | null {
             };
         } else if (match(parser, TOKEN.DELIMITER, ".")) {
             // Property access
-            let propertyTok: Token | null = expect(parser, TOKEN.IDENTIFIER, null);
+            let propertyTok =  expect(parser, TOKEN.IDENTIFIER, null);
             if (propertyTok == null) {
                 break;
             }
@@ -627,7 +626,7 @@ function parseExpression(parser: Parser, minPrec: number): Expression | null {
             };
         } else if (match(parser, TOKEN.DELIMITER, "[")) {
             // Computed property access
-            let property: Expression = parseExpression(parser, 0);
+            let property =  parseExpression(parser, 0);
             expect(parser, TOKEN.DELIMITER, "]");
 
             left = {
@@ -637,14 +636,14 @@ function parseExpression(parser: Parser, minPrec: number): Expression | null {
                 computed: true
             };
         } else if (peekType(parser) == TOKEN.OPERATOR) {
-            let opTok: Token = parserPeek(parser);
+            let opTok =  parserPeek(parser);
             op = opTok.value;
 
             if (op == "=>") {
                 // Arrow function
                 parserAdvance(parser);
 
-                let params: Array<string> = [];
+                let params =  [];
                 if (left.type == "Identifier") {
                     params.push(left.name);
                 } else if (left.type == "CallExpression") {
@@ -656,7 +655,7 @@ function parseExpression(parser: Parser, minPrec: number): Expression | null {
                 if (check(parser, TOKEN.DELIMITER, "{")) {
                     body = parseBlockStatement(parser);
                 } else {
-                    let expr: Expression | null = parseExpression(parser, 0);
+                    let expr =  parseExpression(parser, 0);
                     if (expr == null) {
                         body = { type: "BlockStatement", body: [] };
                     } else {
@@ -678,7 +677,7 @@ function parseExpression(parser: Parser, minPrec: number): Expression | null {
 
                 parserAdvance(parser);
 
-                let right: Expression | null = parseExpression(parser, nextPrec);
+                let right =  parseExpression(parser, nextPrec);
 
                 if (right == null) {
                     break;
@@ -720,8 +719,8 @@ function parseExpression(parser: Parser, minPrec: number): Expression | null {
 // Source Code Entry Point
 // ============================================================================
 
-function parseSource(source: string): Program {
-    let tokens: Array<Token> = tokenize(source);
-    let parser: Parser = createParser(tokens);
+function parseSource(source) {
+    let tokens =  tokenize(source);
+    let parser =  createParser(tokens);
     return parseProgram(parser);
 }

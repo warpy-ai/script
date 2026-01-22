@@ -1,0 +1,12 @@
+// Test with different arguments
+console.log("Test 1: 'x'");
+let r1 = parseSource("x");
+console.log("Result:", r1 != null);
+
+console.log("Test 2: 'let x = 1'");
+let r2 = parseSource("let x = 1");
+console.log("Result:", r2 != null);
+
+console.log("Test 3: 'let x = 1;'");
+let r3 = parseSource("let x = 1;");
+console.log("Result:", r3 != null);

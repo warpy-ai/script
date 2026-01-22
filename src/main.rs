@@ -24,6 +24,7 @@ const PRELUDE_PATH: &str = "std/prelude.tscl";
 
 /// Bootstrap compiler files (loaded in order when running bootstrap tests)
 const BOOTSTRAP_FILES: &[&str] = &[
+    "bootstrap/types.tscl",
     "bootstrap/lexer.tscl",
     "bootstrap/parser.tscl",
     "bootstrap/emitter.tscl",

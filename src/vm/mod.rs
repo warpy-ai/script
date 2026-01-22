@@ -839,6 +839,86 @@ impl VM {
                 }
             }
 
+            OpCode::SetPropComputed => {
+                // Pops [obj, value, key] -> sets obj[key] = value
+                let key_val = self.stack.pop().unwrap();
+                let value = self.stack.pop().unwrap();
+                let target = self.stack.pop().unwrap();
+
+                if let JsValue::Object(ptr) = target {
+                    // Convert key to string
+                    let key_name = match &key_val {
+                        JsValue::String(s) => s.clone(),
+                        JsValue::Number(n) => n.to_string(),
+                        JsValue::Object(_) => {
+                            // For objects, use default string representation
+                            format!("[object Object]")
+                        }
+                        _ => format!("{:?}", key_val),
+                    };
+
+                    if let Some(heap_item) = self.heap.get_mut(ptr) {
+                        if let HeapData::Object(props) = &mut heap_item.data {
+                            props.insert(key_name, value);
+                        }
+                    }
+                }
+            }
+
+            OpCode::GetPropComputed => {
+                // Pops [obj, key] -> pushes obj[key]
+                if self.stack.len() < 2 {
+                    panic!("GetPropComputed with insufficient stack at ip={}", self.ip);
+                }
+                let key_val = self.stack.pop().unwrap();
+                let target = self.stack.pop().unwrap();
+
+                match (target, key_val) {
+                    (JsValue::Object(ptr), JsValue::Number(idx)) => {
+                        // Array access: arr[index]
+                        if let Some(heap_obj) = self.heap.get(ptr) {
+                            if let HeapData::Array(arr) = &heap_obj.data {
+                                let i = idx as usize;
+                                let val = arr.get(i).cloned().unwrap_or(JsValue::Undefined);
+                                self.stack.push(val.clone());
+                                self.ip += 1;
+                                return ExecResult::Continue;
+                            }
+                        }
+                        self.stack.push(JsValue::Undefined);
+                    }
+                    (JsValue::Object(ptr), key_val) => {
+                        // Object access: obj[key]
+                        // Convert key to string
+                        let key_name = match &key_val {
+                            JsValue::String(s) => s.clone(),
+                            JsValue::Number(n) => n.to_string(),
+                            JsValue::Object(_) => {
+                                format!("[object Object]")
+                            }
+                            _ => format!("{:?}", key_val),
+                        };
+
+                        // Look up the property with prototype chain
+                        let value = self.get_prop_with_proto_chain(ptr, &key_name);
+                        self.stack.push(value.clone());
+                    }
+                    (JsValue::String(s), JsValue::Number(idx)) => {
+                        // String char access: str[index]
+                        let i = idx as usize;
+                        let char_val = s
+                            .chars()
+                            .nth(i)
+                            .map(|c| JsValue::String(c.to_string()))
+                            .unwrap_or(JsValue::Undefined);
+                        self.stack.push(char_val);
+                    }
+                    _ => {
+                        self.stack.push(JsValue::Undefined);
+                    }
+                }
+            }
+
             OpCode::GetProp(name) => {
                 let target = self.stack.pop();
 
@@ -1035,14 +1115,11 @@ impl VM {
             }
 
             OpCode::Return => {
-                eprintln!("DEBUG: Return at ip={}, call_stack.len={}", self.ip, self.call_stack.len());
                 if self.call_stack.is_empty() {
-                    eprintln!("ERROR: Return opcode with empty call_stack at ip={}", self.ip);
                     return ExecResult::Stop;
                 }
                 let frame = self.call_stack.pop().expect("Missing frame");
                 self.ip = frame.return_address;
-                eprintln!("DEBUG: Return, frame.return_address={}, new ip={}", frame.return_address, self.ip);
                 if self.ip == usize::MAX {
                     return ExecResult::Stop;
                 }

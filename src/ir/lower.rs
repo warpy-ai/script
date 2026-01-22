@@ -622,6 +622,22 @@ impl Lowerer {
                 self.push(obj);
             }
 
+            OpCode::SetPropComputed => {
+                // For now, just pop the values - the VM handles this
+                let _key = self.pop()?;
+                let _val = self.pop()?;
+                let obj = self.pop()?;
+                self.push(obj);
+            }
+
+            OpCode::GetPropComputed => {
+                // For now, just pop the values and push undefined
+                let _key = self.pop()?;
+                let _obj = self.pop()?;
+                let dst = self.alloc_value(IrType::Any);
+                self.push(dst);
+            }
+
             // Array operations
             OpCode::NewArray(_size) => {
                 let dst = self.alloc_value(IrType::Array);

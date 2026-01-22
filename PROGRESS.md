@@ -1,4 +1,4 @@
-## tscl: Development Progress
+## Script: Development Progress
 
 High-performance systems language with **JavaScript syntax** that compiles to **native code** via **Cranelift JIT** and **LLVM AOT + LTO**.
 

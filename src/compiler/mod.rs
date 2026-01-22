@@ -489,6 +489,54 @@ impl Codegen {
             Decl::Var(var_decl) => {
                 self.gen_var_decl(var_decl);
             }
+            Decl::TsEnum(enum_decl) => {
+                // Generate enum as a runtime object
+                let enum_name = enum_decl.id.sym.to_string();
+
+                // Create new object
+                self.instructions.push(OpCode::NewObject);
+
+                // Add each enum member as a property
+                for member in &enum_decl.members {
+                    // Duplicate the object reference for each property
+                    self.instructions.push(OpCode::Dup);
+
+                    // Get the member name
+                    let member_name = match &member.id {
+                        swc_ecma_ast::TsEnumMemberId::Ident(ident) => ident.sym.to_string(),
+                        swc_ecma_ast::TsEnumMemberId::Str(s) => s.value.as_str().expect("Invalid string enum member").to_string(),
+                    };
+
+                    // Push the value
+                    match &member.init {
+                        Some(expr) => {
+                            // Compute the value
+                            self.gen_expr(expr);
+                        }
+                        None => {
+                            // Auto-incrementing number for unvalued variants
+                            let idx = enum_decl.members.iter().position(|m| m.id == member.id).unwrap_or(0);
+                            self.instructions.push(OpCode::Push(JsValue::Number(idx as f64)));
+                        }
+                    }
+
+                    // Set the property
+                    self.instructions.push(OpCode::SetProp(member_name));
+                }
+
+                // Store the enum object in a variable
+                self.instructions.push(OpCode::Store(enum_name.clone()));
+                self.outer_scope_vars.insert(enum_name);
+            }
+            Decl::TsModule(_) => {
+                // TypeScript modules are compile-time only, skip
+            }
+            Decl::TsInterface(_) => {
+                // Interfaces are compile-time only, skip
+            }
+            Decl::TsTypeAlias(_) => {
+                // Type aliases are compile-time only, skip
+            }
             _ => {}
         }
     }
@@ -669,6 +717,54 @@ impl Codegen {
                 self.gen_class(&class_decl.class, Some(class_name.as_str()));
                 self.instructions.push(OpCode::Let(class_name.clone()));
                 self.outer_scope_vars.insert(class_name);
+            }
+            Stmt::Decl(Decl::TsEnum(enum_decl)) => {
+                // Generate enum as a runtime object at statement level
+                let enum_name = enum_decl.id.sym.to_string();
+
+                // Create new object
+                self.instructions.push(OpCode::NewObject);
+
+                // Add each enum member as a property
+                for member in &enum_decl.members {
+                    // Duplicate the object reference for each property
+                    self.instructions.push(OpCode::Dup);
+
+                    // Get the member name
+                    let member_name = match &member.id {
+                        swc_ecma_ast::TsEnumMemberId::Ident(ident) => ident.sym.to_string(),
+                        swc_ecma_ast::TsEnumMemberId::Str(s) => s.value.as_str().expect("Invalid string enum member").to_string(),
+                    };
+
+                    // Push the value
+                    match &member.init {
+                        Some(expr) => {
+                            // Compute the value
+                            self.gen_expr(expr);
+                        }
+                        None => {
+                            // Auto-incrementing number for unvalued variants
+                            let idx = enum_decl.members.iter().position(|m| m.id == member.id).unwrap_or(0);
+                            self.instructions.push(OpCode::Push(JsValue::Number(idx as f64)));
+                        }
+                    }
+
+                    // Set the property
+                    self.instructions.push(OpCode::SetProp(member_name));
+                }
+
+                // Store the enum object in a variable
+                self.instructions.push(OpCode::Let(enum_name.clone()));
+                self.outer_scope_vars.insert(enum_name);
+            }
+            Stmt::Decl(Decl::TsModule(_)) => {
+                // TypeScript modules are compile-time only, skip at runtime
+            }
+            Stmt::Decl(Decl::TsInterface(_)) => {
+                // Interfaces are compile-time only, skip at runtime
+            }
+            Stmt::Decl(Decl::TsTypeAlias(_)) => {
+                // Type aliases are compile-time only, skip at runtime
             }
             Stmt::Expr(expr_stmt) => {
                 self.gen_expr(&expr_stmt.expr);
@@ -1196,10 +1292,10 @@ impl Codegen {
                                     self.instructions.push(OpCode::SetProp(id.sym.to_string()));
                                 }
                                 MemberProp::Computed(computed) => {
-                                    // obj[key] = value - need StoreElement
-                                    // Stack: [obj, value, index]
-                                    self.gen_expr(&computed.expr); // Push the index
-                                    self.instructions.push(OpCode::StoreElement);
+                                    // obj[key] = value
+                                    // Stack: [obj, value, key]
+                                    self.gen_expr(&computed.expr); // Push the key
+                                    self.instructions.push(OpCode::SetPropComputed);
                                 }
                                 MemberProp::PrivateName(pn) => {
                                     // obj.#field = value - use SetPrivateProp
@@ -1286,7 +1382,7 @@ impl Codegen {
                     // Handle arr[index]
                     MemberProp::Computed(computed) => {
                         self.gen_expr(&computed.expr); // Push the index expression
-                        self.instructions.push(OpCode::LoadElement);
+                        self.instructions.push(OpCode::GetPropComputed);
                     }
                     // Handle #privateField
                     MemberProp::PrivateName(pn) => {

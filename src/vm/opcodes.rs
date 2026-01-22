@@ -22,6 +22,10 @@ pub enum OpCode {
     NewObjectWithProto, // Creates object with given prototype
     SetProp(String),
     GetProp(String),
+    /// Store into object with computed key: pops [obj, value, key] -> sets obj[key] = value
+    SetPropComputed,
+    /// Get from object with computed key: pops [obj, key] -> pushes obj[key]
+    GetPropComputed,
     Dup,
     Swap,
     Swap3,
