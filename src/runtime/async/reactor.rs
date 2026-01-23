@@ -1,10 +1,14 @@
 use super::{Interest, Token};
+#[cfg(target_os = "macos")]
 use libc::{EVFILT_READ, EVFILT_WRITE};
 use std::collections::HashMap;
 use std::io;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
+
+#[cfg(all(target_os = "linux", feature = "io-uring"))]
+use super::io_uring::IoUringReactor;
 
 pub struct Reactor {
     fd: RawFd,
@@ -154,13 +158,91 @@ mod sys {
     }
 }
 
+// ============================================================================
+// ReactorHandle - Platform-specific I/O multiplexing
+// ============================================================================
+
+/// macOS: kqueue-based reactor handle
+#[cfg(target_os = "macos")]
+pub struct ReactorHandle {
+    kq_fd: RawFd,
+}
+
+#[cfg(target_os = "macos")]
+impl ReactorHandle {
+    pub fn new() -> io::Result<Self> {
+        let kq_fd = sys::create_kqueue()?;
+        Ok(Self { kq_fd })
+    }
+
+    pub fn add(&self, reactor: &Reactor) -> io::Result<()> {
+        sys::add_fd(self.kq_fd, reactor.fd, &reactor.interest)
+    }
+
+    pub fn wait(&self, timeout_ms: i32) -> io::Result<Vec<(Token, Interest)>> {
+        const MAX_EVENTS: usize = 1024;
+        let mut events = vec![unsafe { std::mem::zeroed() }; MAX_EVENTS];
+        let n = sys::wait(self.kq_fd, &mut events, timeout_ms)?;
+
+        let mut ready = Vec::with_capacity(n);
+        for i in 0..n {
+            let fd = events[i].ident as RawFd;
+            let interest = if events[i].filter == EVFILT_READ as i16 {
+                Interest::Readable
+            } else {
+                Interest::Writable
+            };
+            ready.push((Token(fd as usize), interest));
+        }
+        Ok(ready)
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for ReactorHandle {
+    fn drop(&mut self) {
+        unsafe {
+            libc::close(self.kq_fd);
+        }
+    }
+}
+
+/// Linux with io_uring feature: io_uring-based reactor handle
+#[cfg(all(target_os = "linux", feature = "io-uring"))]
+pub struct ReactorHandle {
+    inner: std::sync::Mutex<IoUringReactor>,
+}
+
+#[cfg(all(target_os = "linux", feature = "io-uring"))]
+impl ReactorHandle {
+    pub fn new() -> io::Result<Self> {
+        Ok(Self {
+            inner: std::sync::Mutex::new(IoUringReactor::new()?),
+        })
+    }
+
+    pub fn add(&self, reactor: &Reactor) -> io::Result<()> {
+        let mut inner = self.inner.lock().unwrap();
+        inner.register(reactor.fd, reactor.interest.clone(), None)?;
+        Ok(())
+    }
+
+    pub fn wait(&self, timeout_ms: i32) -> io::Result<Vec<(Token, Interest)>> {
+        let mut inner = self.inner.lock().unwrap();
+        inner.wait(timeout_ms)
+    }
+}
+
+/// Linux without io_uring: epoll-based reactor handle
+#[cfg(all(target_os = "linux", not(feature = "io-uring")))]
 pub struct ReactorHandle {
     epoll_fd: RawFd,
 }
 
+#[cfg(all(target_os = "linux", not(feature = "io-uring")))]
 impl ReactorHandle {
     pub fn new() -> io::Result<Self> {
-        let epoll_fd = sys::create_kqueue()?;
+        let epoll_fd = sys::create_epoll()?;
         Ok(Self { epoll_fd })
     }
 
@@ -169,17 +251,19 @@ impl ReactorHandle {
     }
 
     pub fn wait(&self, timeout_ms: i32) -> io::Result<Vec<(Token, Interest)>> {
+        use libc::{epoll_event, EPOLLIN};
+
         const MAX_EVENTS: usize = 1024;
-        let mut events = vec![unsafe { std::mem::zeroed() }; MAX_EVENTS];
+        let mut events: Vec<epoll_event> = vec![unsafe { std::mem::zeroed() }; MAX_EVENTS];
         let n = sys::wait(self.epoll_fd, &mut events, timeout_ms)?;
 
         let mut ready = Vec::with_capacity(n);
         for i in 0..n {
-            let fd = events[i].ident as RawFd;
-            let interest = if events[i].filter == EVFILT_READ as i16 {
-                super::Interest::Readable
+            let fd = events[i].u64 as RawFd;
+            let interest = if events[i].events as i32 & EPOLLIN as i32 != 0 {
+                Interest::Readable
             } else {
-                super::Interest::Writable
+                Interest::Writable
             };
             ready.push((Token(fd as usize), interest));
         }
@@ -187,6 +271,7 @@ impl ReactorHandle {
     }
 }
 
+#[cfg(all(target_os = "linux", not(feature = "io-uring")))]
 impl Drop for ReactorHandle {
     fn drop(&mut self) {
         unsafe {
