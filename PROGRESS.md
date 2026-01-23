@@ -22,28 +22,26 @@ High-performance systems language with **TypeScript syntax** compiling to **nati
 
 ## Architecture
 
-Script is the **language core** — compiler, type system, and minimal runtime. Library functionality is separated:
+**Script Core is like C without libc** — minimal, self-contained, runs without dependencies.
 
 ```
-┌─────────────────────────────────────────┐
-│            User App Code                │
-└──────────────────┬──────────────────────┘
-                   │
-┌──────────────────▼──────────────────────┐
-│   Rolls (official system libs)          │  ← FUTURE: separate repo
-│   @rolls/http, @rolls/tls, @rolls/fs    │
-└──────────────────┬──────────────────────┘
-                   │
-┌──────────────────▼──────────────────────┐
-│   Unroll (runtime + tooling)            │  ← FUTURE: separate repo
-│   pkg manager, lockfiles, bundler, LSP  │
-└──────────────────┬──────────────────────┘
-                   │
-┌──────────────────▼──────────────────────┐
-│   Script (language core)                │  ← THIS REPO
-│   compiler, type system, ABI, bootstrap │
-└─────────────────────────────────────────┘
+┌───────────────────────────────────┐  ┌──────────────────────────────────┐
+│         SCRIPT CORE               │  │            ROLLS                 │
+│  ✅ Always available              │  │  ⚡ Optional system libraries    │
+│                                   │  │                                  │
+│  • Compiler (scriptc)             │  │  • @rolls/http, @rolls/tls       │
+│  • Runtime (NaN-boxing, heap)     │  │  • @rolls/fs, @rolls/db          │
+│  • Primitives + console.log       │  │  • @rolls/async, @rolls/crypto   │
+└───────────────────────────────────┘  └──────────────────────────────────┘
+                    │                               │
+                    └───────────────┬───────────────┘
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  UNROLL: Build system → Single static binary (no runtime needed)        │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
+
+See `docs/ARCHITECTURE.md` for detailed diagrams and philosophy.
 
 ### Compilation Pipeline
 

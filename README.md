@@ -39,28 +39,49 @@ console.log(fib(35));  // Compiled to native code!
 
 ## Architecture
 
-Script is the **language core** — the compiler, type system, and minimal runtime primitives. Library functionality (HTTP, TLS, file system, etc.) will be provided by the **Rolls** ecosystem in a separate repository.
+**Script Core is like C without libc** — a minimal, self-contained language that runs without dependencies. Everything else is optional.
 
 ```
-┌─────────────────────────────────────────┐
-│            User App Code                │
-└──────────────────┬──────────────────────┘
-                   │
-┌──────────────────▼──────────────────────┐
-│   Rolls (official system libs)          │  ← FUTURE: separate repo
-│   @rolls/http, @rolls/tls, @rolls/fs    │
-└──────────────────┬──────────────────────┘
-                   │
-┌──────────────────▼──────────────────────┐
-│   Unroll (runtime + tooling)            │  ← FUTURE: separate repo
-│   pkg manager, lockfiles, bundler, LSP  │
-└──────────────────┬──────────────────────┘
-                   │
-┌──────────────────▼──────────────────────┐
-│   Script (language core)                │  ← THIS REPO
-│   compiler, type system, ABI, bootstrap │
-└─────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           User App Code                                 │
+└───────────────────────────────────┬─────────────────────────────────────┘
+                                    │
+                    ┌───────────────┴───────────────┐
+                    │                               │
+                    ▼                               ▼
+┌───────────────────────────────────┐  ┌──────────────────────────────────┐
+│         SCRIPT CORE               │  │            ROLLS                 │
+│  ✅ Always available              │  │  ⚡ Optional system libraries    │
+│                                   │  │                                  │
+│  • Compiler (scriptc)             │  │  • @rolls/http   HTTP server     │
+│  • Runtime (NaN-boxing, heap)     │  │  • @rolls/tls    TLS encryption  │
+│  • Primitives (number, string...) │  │  • @rolls/fs     File system     │
+│  • console.log                    │  │  • @rolls/db     Databases       │
+│                                   │  │  • @rolls/async  Event loop      │
+│  Like C without libc:             │  │                                  │
+│  Can run, can't do HTTP           │  │  Batteries for real apps         │
+└───────────────────────────────────┘  └──────────────────────────────────┘
+                    │                               │
+                    └───────────────┬───────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                             UNROLL                                      │
+│  Build system & package manager                                         │
+│                                                                         │
+│  • Resolves dependencies (Rolls + NPM → .nroll)                         │
+│  • Produces single static binary                                        │
+│  • Lockfile for reproducible builds                                     │
+└───────────────────────────────────┬─────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        ./myapp (Single Binary)                          │
+│  ✅ No runtime required  ✅ No node_modules  ✅ Deploy: copy one file   │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed diagrams and philosophy.
 
 ### Compilation Pipeline
 
