@@ -7,6 +7,9 @@ require ./ast/types;
 require ./parser/mod;
 require ./ir/mod;
 require ./ir/builder;
+require ./codegen/mod;
+require ./codegen/emitter;
+require ./passes/mod;
 require ./stdlib/builtins;
 
 // ============================================================================
@@ -35,7 +38,7 @@ function parseArgs(args: string[]): CliArgs {
     let i = 0;
     while (i < args.length) {
         let arg = args[i];
-        if (arg == "run" || arg == "build" || arg == "ir" || arg == "ast") {
+        if (arg == "run" || arg == "build" || arg == "ir" || arg == "ast" || arg == "check") {
             result.command = arg;
         } else if (arg == "-o" || arg == "--output") {
             i = i + 1;
@@ -65,6 +68,7 @@ function printUsage() {
     console.log("Commands:");
     console.log("  run <file>      Run the file");
     console.log("  build <file>    Compile to native binary");
+    console.log("  check <file>    Type check and borrow check");
     console.log("  ir <file>       Output IR");
     console.log("  ast <file>      Output AST");
     console.log("");
@@ -152,6 +156,53 @@ function main(args: string[]) {
         return;
     }
 
+    if (parsed.command == "check") {
+        logVerbose(parsed.verbose, "Checking source...");
+
+        let ast = parseSource(source);
+        if (ast == null) {
+            console.log("Parse error");
+            return;
+        }
+        logVerbose(parsed.verbose, "  Parsed " + ast.body.length + " statements");
+
+        // Run AST-level borrow checking
+        let astResult = Passes.checkAst(ast);
+        if (astResult.errors.length > 0) {
+            console.log("Borrow check errors:");
+            let i = 0;
+            while (i < astResult.errors.length) {
+                console.log("  " + BorrowCheck.formatError(astResult.errors[i]));
+                i = i + 1;
+            }
+            return;
+        }
+
+        // Lower to IR and run additional passes
+        let irModule = lowerProgramToIr(ast);
+        if (irModule == null) {
+            console.log("IR lowering error");
+            return;
+        }
+
+        // Run type checking
+        Passes.typecheck(irModule);
+        logVerbose(parsed.verbose, "  Type check passed");
+
+        // Run optimization (optional for check, but useful to verify IR is valid)
+        Passes.optimize(irModule);
+        logVerbose(parsed.verbose, "  Optimization passed");
+
+        // Verify IR
+        if (!verifyIrModule(irModule)) {
+            console.log("IR verification failed");
+            return;
+        }
+
+        console.log("Check passed: " + parsed.inputFile);
+        return;
+    }
+
     if (parsed.command == "ir") {
         let irModule = compileSource(source, parsed.verbose);
         if (irModule != null) {
@@ -166,26 +217,75 @@ function main(args: string[]) {
     }
 
     if (parsed.command == "build") {
-        console.log("AOT compilation not yet implemented");
-        console.log("Use 'run' command for VM execution");
+        logVerbose(parsed.verbose, "Compiling to bytecode...");
+
+        let ast = parseSource(source);
+        if (ast == null) {
+            console.log("Parse error");
+            return;
+        }
+        logVerbose(parsed.verbose, "  Parsed " + ast.body.length + " statements");
+
+        // Use direct emitter for VM-compatible bytecode
+        let result = Emitter.compileAst(ast);
+        if (result == null) {
+            console.log("Bytecode generation failed");
+            return;
+        }
+        logVerbose(parsed.verbose, "  Generated " + result.length + " bytes");
+
+        let outputFile = parsed.outputFile;
+        if (outputFile == "") {
+            outputFile = parsed.inputFile + ".bc";
+        }
+
+        let bytes = ByteStream.toArray(result.bytecode);
+        fs.writeBinaryFile(outputFile, bytes);
+        console.log("Compiled: " + parsed.inputFile + " -> " + outputFile + " (" + result.length + " bytes)");
         return;
     }
 
-    // Default: run command
-    console.log("VM execution not yet implemented with new compiler");
-    console.log("Use bootstrap compiler: ./target/release/script " + parsed.inputFile);
+    // Default: run command - compile and execute
+    logVerbose(parsed.verbose, "Compiling for execution...");
+
+    let ast = parseSource(source);
+    if (ast == null) {
+        console.log("Parse error");
+        return;
+    }
+
+    // Generate bytecode
+    let result = Emitter.compileAst(ast);
+    if (result == null) {
+        console.log("Bytecode generation failed");
+        return;
+    }
+
+    console.log("Bytecode generated (" + result.length + " bytes)");
+    console.log("To run, use the VM: ./target/release/script --run-binary <file.bc>");
 }
 
 // Export for external use
 let Compiler = {
     compile: compileSource,
+    compileToBytecode: function(source) {
+        let ast = parseSource(source);
+        if (ast == null) return null;
+        return Emitter.compileAst(ast);
+    },
     parse: parseSource,
     tokenize: tokenize,
     lowerToIr: lowerProgramToIr,
     verifyIr: verifyIrModule,
     serializeIr: serializeIrModule,
-    version: "0.1.0"
+    codegenIr: codegenIrModule,
+    Emitter: Emitter,
+    Passes: Passes,
+    TypeCheck: TypeCheck,
+    Optimizer: Optimizer,
+    BorrowCheck: BorrowCheck,
+    version: "0.3.0"
 };
 
-console.log("tscl compiler loaded");
-console.log("Use: require('./compiler/main') to access Compiler API");
+console.log("tscl compiler loaded (v" + Compiler.version + ")");
+console.log("Commands: ast, ir, check, build, run");
