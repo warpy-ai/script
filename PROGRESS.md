@@ -180,26 +180,72 @@ Script core includes only essential primitives:
 
 ---
 
-### Phase 4: Self-Hosting Compiler ✅
+### Phase 4: Self-Hosting Compiler 🚧
 
-Compiler written in tscl, producing deterministic native binaries.
+Working towards a fully self-hosted compiler (`scriptc`) written in Script.
 
-#### Bootstrap Chain
+#### Current State
+
+| Compiler | Location | Status | Output |
+|----------|----------|--------|--------|
+| **Rust Compiler** | `src/compiler/` | ✅ Production | Native binaries |
+| **Bootstrap** | `bootstrap/*.tscl` | ✅ Working | Bytecode |
+| **Modular** | `compiler/*.tscl` | 🚧 In Progress | Bytecode (partial) |
+
+#### Self-Hosting Roadmap
+
+See `docs/SELF_HOSTING.md` for detailed plan.
+
+**Phase 1 (Current):** Foundation
 ```
-tscl₀ (Rust) ──compile──> tscl₁ (native)
-                            │
-                            └──compile──> tscl₂ (self-compiled)
-                                              │
-                                              └──verify: hash(tscl₁) == hash(tscl₂)
+Source → bootstrap/*.tscl → Bytecode → Rust VM
+Source → src/compiler/ (Rust) → Native Binary ← Production builds
 ```
 
-#### Key Achievements
-- **ABI Frozen:** `ABI_VERSION = 1`, stable runtime interface
-- **IR Frozen:** Deterministic serialization with `--emit-ir`
-- **Deterministic Builds:** Bit-for-bit reproducible with `--dist`
-- **Self-Hosted Compiler:** Two implementations in .tscl
+**Phase 2:** Feature Parity
+```
+Source → compiler/*.tscl → Bytecode → Rust VM
+         + Type inference, optimizations, borrow checking
+```
 
-#### Compiler Structure (Modular - `compiler/`)
+**Phase 3:** Native Code Generation
+```
+Source → compiler/*.tscl (scriptc) → Native Binary
+         No Rust compiler needed for builds!
+```
+
+**Phase 4:** Bootstrap Verification
+```
+tscl₀ (Rust) ──► tscl₁ (native scriptc)
+                      │
+                      └──► tscl₂ (self-compiled)
+                                 │
+                                 └──► verify: hash(tscl₁) == hash(tscl₂)
+```
+
+#### Bootstrap Compiler (Working - `bootstrap/`)
+
+Reference implementation, flat file structure (~5,000 lines):
+
+```
+bootstrap/
+├── main.tscl           # CLI entry point (273 lines)
+├── types.tscl          # Type definitions (357 lines)
+├── lexer.tscl          # Tokenization (335 lines)
+├── parser.tscl         # AST generation (1,432 lines)
+├── ir.tscl             # IR types (619 lines)
+├── ir_builder.tscl     # AST → IR (270 lines)
+├── codegen.tscl        # IR → Bytecode (315 lines)
+├── emitter.tscl        # Bytecode serialization (846 lines)
+├── pipeline.tscl       # Compilation orchestration (228 lines)
+├── stdlib.tscl         # Runtime declarations (248 lines)
+└── utils.tscl          # Helpers (22 lines)
+```
+
+#### Modular Compiler (Target - `compiler/`)
+
+Future production compiler, modular structure (~3,500 lines, growing):
+
 ```
 compiler/
 ├── main.tscl           # CLI entry point
@@ -220,24 +266,15 @@ compiler/
 │   └── builder.tscl
 ├── codegen/            # Code generation
 │   └── mod.tscl
-└── stdlib/             # Runtime declarations
+├── passes/             # (TODO) Compiler passes
+│   ├── typecheck.tscl
+│   ├── opt.tscl
+│   └── borrow_ck.tscl
+├── backend/            # (TODO) Native codegen
+│   ├── x86_64/
+│   └── arm64/
+└── stdlib/
     └── builtins.tscl
-```
-
-#### Bootstrap Compiler (Flat - `bootstrap/`)
-```
-bootstrap/
-├── main.tscl           # CLI entry point
-├── types.tscl          # Type definitions
-├── lexer.tscl          # Tokenization
-├── parser.tscl         # AST generation
-├── ir.tscl             # IR types
-├── ir_builder.tscl     # AST → IR
-├── codegen.tscl        # IR → Bytecode
-├── emitter.tscl        # Bytecode serialization
-├── pipeline.tscl       # Compilation orchestration
-├── stdlib.tscl         # Runtime declarations
-└── utils.tscl          # Helpers
 ```
 
 #### CLI Flags

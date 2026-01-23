@@ -369,7 +369,7 @@ script/
 ├── Cargo.toml                    # Minimal dependencies
 ├── README.md                     # This file
 ├── PROGRESS.md                   # Development status
-├── compiler/                     # Self-hosted compiler (modular)
+├── compiler/                     # Self-hosted compiler (modular, target)
 │   ├── main.tscl                 # CLI entry point
 │   ├── lexer/                    # Tokenization module
 │   ├── parser/                   # AST generation module
@@ -377,12 +377,12 @@ script/
 │   ├── ir/                       # IR system module
 │   ├── codegen/                  # Code generation module
 │   └── stdlib/                   # Runtime declarations
-├── bootstrap/                    # Bootstrap compiler (flat files)
+├── bootstrap/                    # Bootstrap compiler (working reference)
 │   └── *.tscl                    # 11 files (~5,000 lines)
 ├── src/
 │   ├── main.rs                   # Entry point
 │   ├── lib.rs                    # Library target
-│   ├── compiler/
+│   ├── compiler/                 # Rust compiler (production)
 │   │   ├── mod.rs                # Parser → Bytecode
 │   │   └── borrow_ck.rs          # Borrow checker
 │   ├── ir/
@@ -416,21 +416,50 @@ script/
 │   └── stdlib/
 │       └── mod.rs                # console, ByteStream only
 ├── docs/
+│   ├── SELF_HOSTING.md           # Self-hosting roadmap
 │   └── future/                   # Future architecture docs
 │       ├── rolls-design.md       # Rolls (system libraries)
 │       └── unroll-design.md      # Unroll (tooling)
 └── tests/
 ```
 
+## Compiler Architecture
+
+Script has three compiler implementations working toward full self-hosting:
+
+| Compiler | Location | Status | Purpose |
+|----------|----------|--------|---------|
+| **Rust** | `src/compiler/` | ✅ Production | Native binaries via LLVM/Cranelift |
+| **Bootstrap** | `bootstrap/*.tscl` | ✅ Working | Reference implementation, bytecode output |
+| **Modular** | `compiler/*.tscl` | 🚧 In Progress | Future `scriptc`, will replace Rust compiler |
+
+### Self-Hosting Roadmap
+
+```
+Phase 1 (Current):  bootstrap/*.tscl → Bytecode → Rust VM
+                    src/compiler/ (Rust) → Native Binary
+
+Phase 2:            compiler/*.tscl → Bytecode (+ optimizations)
+                    Still uses Rust VM for execution
+
+Phase 3:            compiler/*.tscl (scriptc) → Native Binary
+                    No Rust compiler needed!
+
+Phase 4:            scriptc compiles itself
+                    Verify: hash(tscl₁) == hash(tscl₂)
+```
+
+See [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) for detailed roadmap.
+
 ## Development Status
 
 | Phase | Status | Description |
 |-------|--------|-------------|
-| Phase 0 | Complete | Runtime kernel (NaN-boxing, allocator, stubs) |
-| Phase 1 | Complete | SSA IR (lowering, type inference, optimizations) |
-| Phase 2 | Complete | Cranelift JIT backend |
-| Phase 3 | Complete | LLVM AOT backend with LTO |
-| Phase 4 | Complete | Self-hosted bootstrap compiler |
+| Phase 0 | ✅ Complete | Runtime kernel (NaN-boxing, allocator, stubs) |
+| Phase 1 | ✅ Complete | SSA IR (lowering, type inference, optimizations) |
+| Phase 2 | ✅ Complete | Cranelift JIT backend |
+| Phase 3 | ✅ Complete | LLVM AOT backend with LTO |
+| Phase 4 | 🚧 In Progress | Self-hosted compiler (`scriptc`) |
 
 See [PROGRESS.md](PROGRESS.md) for detailed implementation notes.
 
