@@ -189,6 +189,28 @@ impl TimerEntry {
     }
 }
 
+// BinaryHeap is a max-heap, so we reverse the ordering to get a min-heap (earliest deadline first)
+impl PartialEq for TimerEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.at == other.at
+    }
+}
+
+impl Eq for TimerEntry {}
+
+impl PartialOrd for TimerEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for TimerEntry {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // Reverse ordering for min-heap behavior (earliest deadline = highest priority)
+        other.at.cmp(&self.at)
+    }
+}
+
 pub struct Timer {
     heap: std::collections::BinaryHeap<TimerEntry>,
 }

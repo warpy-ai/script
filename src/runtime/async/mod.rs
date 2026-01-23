@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, VecDeque, HashMap};
 use std::sync::{Arc, Mutex, Condvar, atomic::{AtomicUsize, Ordering}};
 use std::task::{Context, Poll, Waker, Wake};
 use std::time::{Duration, Instant};
-use std::os::unix::io::{RawFd, IntoRawFd};
+use std::os::unix::io::{AsRawFd, RawFd, IntoRawFd};
 use std::thread;
 use std::pin::Pin;
 use std::future::Future;
@@ -89,25 +89,32 @@ impl<T: AsyncRead> AsyncBufRead<T> {
     }
 }
 
-impl<T: AsyncRead> AsyncRead for AsyncBufRead<T> {
+impl<T: AsyncRead + Unpin> AsyncRead for AsyncBufRead<T> {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context,
         buf: &mut [u8],
     ) -> Poll<std::io::Result<usize>> {
-        if self.consumed >= self.buf.len() {
-            self.buf.clear();
-            self.consumed = 0;
-            let n = Pin::new(&mut self.inner).poll_read(cx, &mut self.buf)?;
-            if n == 0 {
-                return Poll::Ready(Ok(0));
+        let this = self.get_mut();
+        if this.consumed >= this.buf.len() {
+            this.buf.clear();
+            this.consumed = 0;
+            // Read into a temporary buffer first
+            let mut temp_buf = vec![0u8; 8192];
+            match Pin::new(&mut this.inner).poll_read(cx, &mut temp_buf) {
+                Poll::Ready(Ok(0)) => return Poll::Ready(Ok(0)),
+                Poll::Ready(Ok(n)) => {
+                    this.buf.extend_from_slice(&temp_buf[..n]);
+                }
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Pending => return Poll::Pending,
             }
         }
 
-        let remaining = &self.buf[self.consumed..];
+        let remaining = &this.buf[this.consumed..];
         let to_copy = std::cmp::min(buf.len(), remaining.len());
         buf[..to_copy].copy_from_slice(&remaining[..to_copy]);
-        self.consumed += to_copy;
+        this.consumed += to_copy;
         Poll::Ready(Ok(to_copy))
     }
 }
@@ -120,15 +127,15 @@ pub trait AsyncTcpStream: AsyncRead + AsyncWrite + Unpin {
 
 pub trait AsyncTcpListener: Unpin {
     type Stream: AsyncTcpStream + Unpin;
-    fn accept(&self) -> AcceptFuture<Self::Stream>;
+    fn accept(&self) -> AcceptFuture;
 }
 
-pub struct AcceptFuture<T: AsyncTcpStream> {
+pub struct AcceptFuture {
     listener: std::net::TcpListener,
     waker: Option<Waker>,
 }
 
-impl<T: AsyncTcpStream> AcceptFuture<T> {
+impl AcceptFuture {
     pub fn new(listener: std::net::TcpListener) -> Self {
         Self {
             listener,
@@ -137,14 +144,21 @@ impl<T: AsyncTcpStream> AcceptFuture<T> {
     }
 }
 
-impl<T: AsyncTcpStream> std::future::Future for AcceptFuture<T> {
-    type Output = std::io::Result<(T, std::net::SocketAddr)>;
+impl std::future::Future for AcceptFuture {
+    type Output = std::io::Result<(TcpStream, std::net::SocketAddr)>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         match self.listener.accept() {
             Ok((stream, addr)) => {
-                let stream = unsafe { std::mem::transmute(stream) };
-                Poll::Ready(Ok((stream, addr)))
+                stream.set_nonblocking(true).ok();
+                let fd = stream.as_raw_fd();
+                let reactor = reactor::Reactor::new(fd, Interest::Readable);
+                let tcp_stream = TcpStream {
+                    stream,
+                    inner: reactor,
+                    interest: Interest::Readable,
+                };
+                Poll::Ready(Ok((tcp_stream, addr)))
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 self.waker = Some(cx.waker().clone());
@@ -165,6 +179,38 @@ impl TcpStream {
     pub fn connect(addr: &std::net::SocketAddr) -> ConnectFuture {
         ConnectFuture::new(addr)
     }
+
+    /// Async read convenience method
+    pub async fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        use std::io::Read;
+        loop {
+            match self.stream.read(buf) {
+                Ok(n) => return Ok(n),
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    // Yield to the executor
+                    std::future::pending::<()>().await;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    /// Async write_all convenience method
+    pub async fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        use std::io::Write;
+        let mut written = 0;
+        while written < buf.len() {
+            match self.stream.write(&buf[written..]) {
+                Ok(n) => written += n,
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    // Yield to the executor
+                    std::future::pending::<()>().await;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
+    }
 }
 
 impl AsyncTcpStream for TcpStream {
@@ -184,34 +230,54 @@ impl AsyncTcpStream for TcpStream {
 impl AsyncRead for TcpStream {
     fn poll_read(
         self: Pin<&mut Self>,
-        cx: &mut Context,
+        _cx: &mut Context,
         buf: &mut [u8],
     ) -> Poll<std::io::Result<usize>> {
-        Pin::new(&mut self.get_mut().stream).poll_read(cx, buf)
+        use std::io::Read;
+        match self.get_mut().stream.read(buf) {
+            Ok(n) => Poll::Ready(Ok(n)),
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => Poll::Pending,
+            Err(e) => Poll::Ready(Err(e)),
+        }
     }
 }
 
 impl AsyncWrite for TcpStream {
     fn poll_write(
         self: Pin<&mut Self>,
-        cx: &mut Context,
+        _cx: &mut Context,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        Pin::new(&mut self.get_mut().stream).poll_write(cx, buf)
+        use std::io::Write;
+        match self.get_mut().stream.write(buf) {
+            Ok(n) => Poll::Ready(Ok(n)),
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => Poll::Pending,
+            Err(e) => Poll::Ready(Err(e)),
+        }
     }
 
     fn poll_flush(
         self: Pin<&mut Self>,
-        cx: &mut Context,
+        _cx: &mut Context,
     ) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.get_mut().stream).poll_flush(cx)
+        use std::io::Write;
+        match self.get_mut().stream.flush() {
+            Ok(()) => Poll::Ready(Ok(())),
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => Poll::Pending,
+            Err(e) => Poll::Ready(Err(e)),
+        }
     }
 
     fn poll_close(
         self: Pin<&mut Self>,
-        cx: &mut Context,
+        _cx: &mut Context,
     ) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.get_mut().stream).poll_close(cx)
+        // TCP shutdown for write direction
+        match self.get_mut().stream.shutdown(std::net::Shutdown::Write) {
+            Ok(()) => Poll::Ready(Ok(())),
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => Poll::Pending,
+            Err(e) => Poll::Ready(Err(e)),
+        }
     }
 }
 
@@ -260,12 +326,16 @@ impl TcpListener {
         listener.set_nonblocking(true)?;
         Ok(Self { listener })
     }
+
+    pub fn local_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+        self.listener.local_addr()
+    }
 }
 
 impl AsyncTcpListener for TcpListener {
     type Stream = TcpStream;
 
-    fn accept(&self) -> AcceptFuture<Self::Stream> {
+    fn accept(&self) -> AcceptFuture {
         AcceptFuture::new(self.listener.try_clone().unwrap())
     }
 }

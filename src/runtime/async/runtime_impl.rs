@@ -54,17 +54,18 @@ impl Runtime {
         F: std::future::Future,
     {
         let mut pinned = Box::pin(future);
-        let waker = Arc::new(WakerData {
+        let waker_data = Arc::new(WakerData {
             woken: AtomicUsize::new(0),
-        }) as Arc<dyn Wake>;
+        });
+        let waker = Waker::from(waker_data.clone());
 
         loop {
-            let mut cx = Context::from_waker(&Waker::from(waker.clone()));
+            let mut cx = Context::from_waker(&waker);
 
             match pinned.as_mut().poll(&mut cx) {
                 Poll::Ready(output) => return output,
                 Poll::Pending => {
-                    if waker.woken.load(Ordering::Relaxed) == 0 {
+                    if waker_data.woken.load(Ordering::Relaxed) == 0 {
                         self.tick();
                     }
                 }
@@ -97,8 +98,9 @@ impl Runtime {
             .unwrap_or_default();
         self.io_events.lock().unwrap().extend(events);
 
-        // Process expired timers
-        for task in self.executor.timer.lock().unwrap().poll() {
+        // Process expired timers - collect first to avoid borrow conflict
+        let expired_tasks: Vec<_> = self.executor.timer.lock().unwrap().poll();
+        for task in expired_tasks {
             self.executor.schedule(task);
         }
 
@@ -110,7 +112,7 @@ impl Runtime {
             }
 
             let waker_data = Arc::new(WakerData::new());
-            let waker = Waker::from(waker_data as Arc<dyn Wake>);
+            let waker = Waker::from(waker_data);
             let mut cx = Context::from_waker(&waker);
 
             task.poll(&mut cx);

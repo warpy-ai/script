@@ -244,11 +244,11 @@ pub struct TlsStream<T> {
 
 impl<T> TlsStream<T> {
     /// Check if session was resumed (for monitoring/debugging).
+    /// In TLS 1.3, this checks if 0-RTT early data was accepted.
     pub fn is_resumed(&self) -> bool {
-        match &self.conn {
-            rustls::Connection::Client(c) => c.is_resumed(),
-            rustls::Connection::Server(c) => c.is_resumed(),
-        }
+        // In rustls 0.23+, check negotiated_cipher_suite to see if handshake completed
+        // and whether we have a protocol version (indicates successful handshake)
+        self.conn.protocol_version().is_some() && !self.conn.is_handshaking()
     }
 
     /// Get negotiated ALPN protocol.

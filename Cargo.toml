@@ -16,6 +16,7 @@ vm_interop = []
 io-uring = ["dep:io-uring"]
 work-stealing = ["dep:crossbeam-deque", "dep:parking"]
 tls = ["dep:rustls", "dep:webpki-roots", "dep:rustls-pemfile"]
+may-runtime = ["dep:may"]
 
 
 [dependencies]
@@ -61,14 +62,32 @@ parking = { version = "2.2", optional = true }
 # Date/time handling
 chrono = "0.4"
 
-# Socket utilities (for io_uring connect)
-socket2 = "0.5"
-
 # TLS support (rustls with aws-lc-rs for Actix-level performance)
 rustls = { version = "0.23", optional = true, default-features = false, features = ["std", "tls12", "aws_lc_rs"] }
 webpki-roots = { version = "0.26", optional = true }
 rustls-pemfile = { version = "2.1", optional = true }
 
+# Stackful coroutines (may runtime - same as may_minihttp)
+may = { version = "0.3", optional = true }
+
+# Fast HTTP parsing with SIMD acceleration
+httparse = "1.8"
+
 # io_uring backend (Linux only)
 [target.'cfg(target_os = "linux")'.dependencies]
 io-uring = { version = "0.6", optional = true }
+
+# Benchmark configuration
+[[bench]]
+name = "tls_bench"
+harness = false
+required-features = ["tls"]
+
+# Example configurations
+[[example]]
+name = "https_server"
+required-features = ["tls"]
+
+[[example]]
+name = "http_server_may"
+required-features = ["may-runtime"]

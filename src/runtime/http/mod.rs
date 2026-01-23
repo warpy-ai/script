@@ -4,6 +4,9 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::str;
 
+// Re-export httparse for SIMD-accelerated parsing
+pub use httparse;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Method {
     Get,
@@ -297,14 +300,17 @@ pub enum HttpError {
     TooLarge,
 }
 
+const MAX_HEADERS: usize = 64;
 const MAX_HEADER_LINE: usize = 8192;
-const MAX_HEADERS: usize = 256;
 const MAX_BODY_SIZE: usize = 16 * 1024 * 1024;
 
+/// HTTP Request Parser using httparse for SIMD-accelerated parsing.
+///
+/// This parser uses the `httparse` crate which leverages SIMD instructions
+/// on x86_64 and ARM for fast header parsing (~1GB/s throughput).
 pub struct RequestParser {
-    buf: Vec<u8>,
+    pub buf: Vec<u8>,
     pos: usize,
-    max_header_line: usize,
     max_headers: usize,
     max_body_size: usize,
 }
@@ -312,9 +318,8 @@ pub struct RequestParser {
 impl RequestParser {
     pub fn new() -> Self {
         Self {
-            buf: Vec::with_capacity(16384),
+            buf: Vec::with_capacity(8192),
             pos: 0,
-            max_header_line: MAX_HEADER_LINE,
             max_headers: MAX_HEADERS,
             max_body_size: MAX_BODY_SIZE,
         }
@@ -324,142 +329,115 @@ impl RequestParser {
         Self {
             buf: Vec::with_capacity(capacity),
             pos: 0,
-            max_header_line: MAX_HEADER_LINE,
             max_headers: MAX_HEADERS,
             max_body_size: MAX_BODY_SIZE,
         }
     }
 
+    /// Feed data into the parser buffer
+    #[inline]
     pub fn feed(&mut self, data: &[u8]) {
         self.buf.extend_from_slice(data);
     }
 
+    /// Parse a complete HTTP request using httparse (SIMD-accelerated)
+    ///
+    /// Returns Ok(Some(Request)) if a complete request was parsed,
+    /// Ok(None) if more data is needed, or Err if the request is malformed.
     pub fn parse(&mut self) -> Result<Option<Request>, HttpError> {
         if self.pos >= self.buf.len() {
             return Ok(None);
         }
 
-        let end = self.find_end_of_line(self.pos)?;
-        if end.is_none() {
-            if self.buf.len() > self.max_header_line {
-                return Err(HttpError::TooLarge);
-            }
-            return Ok(None);
-        }
-        let end = end.unwrap();
+        // Stack-allocated headers array for zero heap allocation during parsing
+        let mut headers = [httparse::EMPTY_HEADER; MAX_HEADERS];
+        let mut req = httparse::Request::new(&mut headers);
 
-        let line = &self.buf[self.pos..end];
-        self.pos = end + 2;
+        // Use httparse for SIMD-accelerated parsing
+        let status = req.parse(&self.buf[self.pos..])
+            .map_err(|_| HttpError::InvalidRequest)?;
 
-        let (method, uri, version) = self.parse_request_line(line)?;
+        match status {
+            httparse::Status::Complete(header_len) => {
+                // Extract method
+                let method_str = req.method.ok_or(HttpError::InvalidMethod)?;
+                let method = Method::try_from(method_str.as_bytes())?;
 
-        let mut request = Request::new(method, uri, version);
-        let mut content_length: usize = 0;
+                // Extract URI
+                let uri = req.path.ok_or(HttpError::InvalidUri)?.to_string();
 
-        while self.pos < self.buf.len() {
-            let end = self.find_end_of_line(self.pos)?;
-            if end.is_none() {
-                if self.buf.len() - self.pos > self.max_header_line {
-                    return Err(HttpError::TooLarge);
-                }
-                break;
-            }
-            let end = end.unwrap();
+                // Extract version
+                let version = match req.version {
+                    Some(0) => Version::Http10,
+                    Some(1) => Version::Http11,
+                    _ => Version::Http11,
+                };
 
-            if self.pos == end {
-                self.pos = end + 2;
-                break;
-            }
+                let mut request = Request::new(method, uri, version);
+                let mut content_length: usize = 0;
 
-            let line = &self.buf[self.pos..end];
-            self.pos = end + 2;
+                // Extract headers
+                for header in req.headers.iter() {
+                    let name = header.name.to_string();
+                    let value = String::from_utf8_lossy(header.value).to_string();
 
-            if request.headers.len() >= self.max_headers {
-                return Err(HttpError::TooLarge);
-            }
-
-            let (name, value) = self.parse_header_line(line)?;
-            if name.eq_ignore_ascii_case("Content-Length") {
-                content_length = value.parse().unwrap_or(0);
-            }
-            request.add_header(name, value);
-        }
-
-        if content_length > 0 {
-            if content_length > self.max_body_size {
-                return Err(HttpError::TooLarge);
-            }
-            let body_start = self.pos;
-            let body_end = body_start + content_length;
-
-            if body_end > self.buf.len() {
-                return Ok(None);
-            }
-
-            let body = self.buf[body_start..body_end].to_vec();
-            request.set_body(body);
-            self.pos = body_end;
-        }
-
-        Ok(Some(request))
-    }
-
-    fn find_end_of_line(&self, start: usize) -> Result<Option<usize>, HttpError> {
-        let mut pos = start;
-        while pos < self.buf.len() {
-            match self.buf[pos] {
-                b'\r' => {
-                    if pos + 1 < self.buf.len() && self.buf[pos + 1] == b'\n' {
-                        return Ok(Some(pos));
+                    if name.eq_ignore_ascii_case("Content-Length") {
+                        content_length = value.parse().unwrap_or(0);
                     }
-                    return Err(HttpError::InvalidRequest);
+                    request.add_header(name, value);
                 }
-                b'\n' => return Ok(Some(pos)),
-                _ => {
-                    if pos - start > self.max_header_line {
+
+                // Update position past headers
+                self.pos += header_len;
+
+                // Handle body if Content-Length is present
+                if content_length > 0 {
+                    if content_length > self.max_body_size {
                         return Err(HttpError::TooLarge);
                     }
+
+                    let body_end = self.pos + content_length;
+                    if body_end > self.buf.len() {
+                        // Need more data for body - revert position
+                        self.pos -= header_len;
+                        return Ok(None);
+                    }
+
+                    let body = self.buf[self.pos..body_end].to_vec();
+                    request.set_body(body);
+                    self.pos = body_end;
                 }
+
+                Ok(Some(request))
             }
-            pos += 1;
+            httparse::Status::Partial => {
+                // Need more data
+                Ok(None)
+            }
         }
-        Ok(None)
     }
 
-    fn parse_request_line(&self, line: &[u8]) -> Result<(Method, String, Version), HttpError> {
-        let mut parts = line.splitn(3, |&c| c == b' ');
-
-        let method = parts.next().ok_or(HttpError::InvalidMethod)?;
-        let method = Method::try_from(method)?;
-
-        let uri = parts.next().ok_or(HttpError::InvalidUri)?;
-        let uri = String::from_utf8_lossy(uri).to_string();
-
-        let version = parts.next().ok_or(HttpError::InvalidVersion)?;
-        let version = Version::try_from(version)?;
-
-        Ok((method, uri, version))
+    /// Drain consumed bytes from the buffer
+    #[inline]
+    pub fn drain(&mut self, _n: usize) {
+        // Drain all consumed data up to current position
+        if self.pos > 0 {
+            self.buf.drain(..self.pos);
+            self.pos = 0;
+        }
     }
 
-    fn parse_header_line(&self, line: &[u8]) -> Result<(String, String), HttpError> {
-        let colon_pos = line
-            .iter()
-            .position(|&c| c == b':')
-            .ok_or(HttpError::InvalidHeader)?;
-
-        let name = String::from_utf8_lossy(&line[..colon_pos]).to_string();
-        let value = if colon_pos + 2 < line.len() {
-            String::from_utf8_lossy(&line[colon_pos + 2..]).to_string()
-        } else {
-            String::new()
-        };
-
-        Ok((name, value))
+    /// Reset the parser state
+    #[inline]
+    pub fn reset(&mut self) {
+        self.buf.clear();
+        self.pos = 0;
     }
 
-    pub fn drain(&mut self, n: usize) {
-        self.buf.drain(..n);
-        self.pos = self.pos.saturating_sub(n);
+    /// Get remaining unparsed data length
+    #[inline]
+    pub fn remaining(&self) -> usize {
+        self.buf.len() - self.pos
     }
 }
 
