@@ -117,76 +117,8 @@ function compileSource(source: string, verbose: boolean): any {
     return irModule;
 }
 
-function lowerProgramToIr(ast: Program): any {
-    let builder = createIrBuilder();
-    let funcCount = 0;
-    let i = 0;
-    while (i < ast.body.length) {
-        let stmt = ast.body[i];
-        if (stmt.type == "FunctionDeclaration") {
-            lowerFunctionDeclaration(builder, stmt);
-            funcCount = funcCount + 1;
-        }
-        i = i + 1;
-    }
-    return irBuilderFinish(builder);
-}
-
-function lowerFunctionDeclaration(builder: any, node: any) {
-    let returnType = IrType.ANY;
-    if (node.returnType != null) {
-        returnType = irTypeFromAnnotation(node.returnType);
-    }
-
-    let func = irBuilderEnterFunction(builder, node.name, returnType);
-    irBuilderCreateEntryBlock(builder);
-
-    let j = 0;
-    while (j < node.params.length) {
-        let param = node.params[j];
-        let paramName = param;
-        if (typeof param === "object" && param.name != null) {
-            paramName = param.name;
-        }
-        irBuilderAddParam(builder, paramName);
-        j = j + 1;
-    }
-
-    // TODO: Lower function body to IR
-    // For now, emit a simple return
-    if (node.body != null && node.body.type == "BlockStatement") {
-        let hasReturn = false;
-        let k = 0;
-        while (k < node.body.body.length) {
-            let bodyStmt = node.body.body[k];
-            if (bodyStmt.type == "ReturnStatement") {
-                hasReturn = true;
-            }
-            k = k + 1;
-        }
-        if (!hasReturn) {
-            irBuilderEmitReturnVoid(builder);
-        }
-    }
-
-    return func;
-}
-
-function irTypeFromAnnotation(annotation: any): IrType {
-    if (annotation == null) {
-        return IrType.ANY;
-    }
-    let kind = annotation.typeKind;
-    if (kind == "number") return IrType.NUMBER;
-    if (kind == "string") return IrType.STRING;
-    if (kind == "boolean") return IrType.BOOLEAN;
-    if (kind == "any") return IrType.ANY;
-    if (kind == "void") return IrType.VOID;
-    if (kind == "never") return IrType.NEVER;
-    if (kind == "object") return IrType.OBJECT;
-    if (kind == "function") return IrType.FUNCTION;
-    return IrType.ANY;
-}
+// lowerProgramToIr is now defined in ./ir/builder.tscl
+// It provides complete AST → IR lowering for all statement and expression types
 
 // ============================================================================
 // Main Entry Point
