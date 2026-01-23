@@ -81,7 +81,7 @@ console.log(fib(35));  // Compiled to native code!
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed diagrams and philosophy.
+See [docs/ARCHITECTURE.md](docs/docs/architecture.md) for detailed diagrams and philosophy.
 
 ### Compilation Pipeline
 
@@ -437,8 +437,8 @@ script/
 │   └── stdlib/
 │       └── mod.rs                # console, ByteStream only
 ├── docs/
-│   ├── SELF_HOSTING.md           # Self-hosting roadmap
-│   └── future/                   # Future architecture docs
+│   ├── docs/self-hosting.md      # Self-hosting roadmap
+│   └── docs/future/               # Future architecture docs
 │       ├── rolls-design.md       # Rolls (system libraries)
 │       └── unroll-design.md      # Unroll (tooling)
 └── tests/
