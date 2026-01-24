@@ -146,7 +146,7 @@ function parsePostfix(parser) {
     return expr;
 }
 
-function parsePrimary() {
+function parsePrimary(parser) {
     let tok = parserPeek(parser);
     if (tok == null) return null;
 
