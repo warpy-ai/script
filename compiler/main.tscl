@@ -241,8 +241,8 @@ function main(args: string[]) {
             outputFile = parsed.inputFile + ".bc";
         }
 
-        let bytes = ByteStream.toArray(result.bytecode);
-        fs.writeBinaryFile(outputFile, bytes);
+        // fs.writeBinaryFile expects a ByteStream object directly
+        fs.writeBinaryFile(outputFile, result.bytecode);
         console.log("Compiled: " + parsed.inputFile + " -> " + outputFile + " (" + result.length + " bytes)");
         return;
     }

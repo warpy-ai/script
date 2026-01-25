@@ -220,6 +220,21 @@ pub fn native_byte_stream_write_string(vm: &mut VM, args: Vec<JsValue>) -> JsVal
             data: HeapData::ByteStream(bytes),
         }) = vm.heap.get_mut(*ptr)
         {
+            // Write length as varint first (matching decoder's read_string)
+            let len = s.len() as u64;
+            let mut value = len;
+            loop {
+                let mut byte = (value & 0x7F) as u8;
+                value >>= 7;
+                if value != 0 {
+                    byte |= 0x80;
+                }
+                bytes.push(byte);
+                if value == 0 {
+                    break;
+                }
+            }
+            // Then write string bytes
             bytes.extend_from_slice(s.as_bytes());
             return JsValue::Undefined;
         }

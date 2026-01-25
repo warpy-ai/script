@@ -136,17 +136,16 @@ function readNumber(lexer: Lexer, start: string): string {
             if (value.indexOf("e") == -1 && value.indexOf("E") == -1) {
                 value = value + c;
                 advance(lexer);
+                c = peekChar(lexer);
             } else if (c == "+" || c == "-") {
+                break;
+            } else {
                 break;
             }
         } else {
             value = value + c;
-        }
-        c = peekChar(lexer);
-        if (c != "" && (isDigit(c) || c == "." || c == "e" || c == "E")) {
             advance(lexer);
-        } else {
-            break;
+            c = peekChar(lexer);
         }
     }
     return value;
