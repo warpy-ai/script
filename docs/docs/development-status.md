@@ -1,5 +1,8 @@
 ---
 sidebar_position: 8
+title: Script Development Status and Roadmap
+description: Track Script's development progress, feature status, and roadmap. See what's implemented, in progress, and planned for future releases.
+keywords: [development status, roadmap, features, progress, releases, changelog]
 ---
 
 # Development Status

@@ -1,8 +1,10 @@
 ---
 slug: es-modules
 title: "ES Modules in Script: File-Based Resolution, Caching, and Cross-Module Calls"
+description: Learn how Script implements ES module support with import/export statements, file-based resolution, SHA256 caching, and cross-module function calls.
 authors: [lucas]
 tags: [modules, es-modules, import, export, caching]
+image: /img/logo_bg.png
 ---
 
 Script now has full ES module support with `import` and `export` statements, file-based resolution, SHA256 caching, and cross-module function calls. This post explains how we built it, the decisions we made, and what's coming next.

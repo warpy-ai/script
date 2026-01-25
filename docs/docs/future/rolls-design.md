@@ -1,3 +1,9 @@
+---
+title: Rolls - Script System Libraries Design
+description: Design document for Rolls, the official system library ecosystem for Script. Analogous to Rust's standard library crates.
+keywords: [rolls, system libraries, stdlib, packages, future]
+---
+
 # Rolls - Official System Libraries for Script
 
 > **Status**: Future Implementation - Archived Design Document

@@ -1,3 +1,10 @@
+---
+sidebar_position: 4
+title: Script Compiler Architecture
+description: Learn about Script's compiler architecture, including the lexer, parser, type checker, SSA IR, and native code generation via Cranelift and LLVM backends.
+keywords: [compiler architecture, lexer, parser, type checker, ssa, ir, cranelift, llvm, code generation]
+---
+
 # Script Architecture
 
 This document describes the Script ecosystem architecture, the philosophy behind each layer, and the transition path to full self-hosting.

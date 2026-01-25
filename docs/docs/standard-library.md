@@ -1,5 +1,8 @@
 ---
 sidebar_position: 7
+title: Script Standard Library Reference
+description: Complete reference for Script's standard library including console, arrays, strings, math functions, and file I/O operations.
+keywords: [standard library, stdlib, console, arrays, strings, math, file io, api reference]
 ---
 
 # Standard Library

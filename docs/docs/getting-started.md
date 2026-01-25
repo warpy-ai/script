@@ -1,5 +1,8 @@
 ---
 sidebar_position: 2
+title: Getting Started with Script Language
+description: Learn how to install and set up Script programming language. Build your first Script program with Cranelift JIT or LLVM AOT compilation.
+keywords: [script installation, script setup, getting started, llvm, cranelift, jit compilation]
 ---
 
 # Getting Started

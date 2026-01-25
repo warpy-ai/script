@@ -1,5 +1,8 @@
 ---
 sidebar_position: 1
+title: Welcome to Script - High Performance JavaScript Alternative
+description: Script is a high-performance JavaScript-like programming language with native code execution, memory safety, and a self-hosting compiler. Get started with Script today.
+keywords: [script language, programming language, javascript alternative, native code, high performance]
 ---
 
 # Welcome to Script

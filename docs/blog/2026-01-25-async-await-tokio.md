@@ -1,8 +1,10 @@
 ---
 slug: async-await-tokio
 title: "Async/Await in Script: How We Built a Modern Async Runtime on Top of Tokio"
+description: Deep dive into Script's async/await implementation using Tokio. Learn about Promises, the await opcode, and bridging Rust's async with Script's VM.
 authors: [lucas]
 tags: [async, promises, tokio, runtime, javascript]
+image: /img/logo_bg.png
 ---
 
 Script now has full async/await support, built on top of Tokio—Rust's production-grade async runtime. This post dives into how we implemented Promises, the `await` opcode, and bridged Rust's async world with Script's VM.

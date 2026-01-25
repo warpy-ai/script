@@ -188,7 +188,7 @@ Fully self-hosted compiler (`scriptc`) written in Script with TypeScript support
 |----------|----------|--------|--------|
 | **Rust Compiler** | `src/compiler/` | ✅ Production | Native binaries |
 | **Bootstrap** | `bootstrap/*.tscl` | ✅ Self-Compiling | Bytecode |
-| **Modular** | `compiler/*.tscl` | 🚧 In Progress | Bytecode (partial) |
+| **Modular** | `compiler/*.tscl` | ✅ Working | Bytecode (VM executable) |
 
 #### Self-Compilation Verified ✅
 
@@ -231,16 +231,17 @@ The bootstrap compiler now supports TypeScript syntax:
 
 See `docs/SELF_HOSTING.md` for detailed plan.
 
-**Phase 1 (Current):** Foundation
+**Phase 1:** Foundation ✅
 ```
 Source → bootstrap/*.tscl → Bytecode → Rust VM
 Source → src/compiler/ (Rust) → Native Binary ← Production builds
 ```
 
-**Phase 2:** Feature Parity
+**Phase 2 (Complete):** Feature Parity ✅
 ```
 Source → compiler/*.tscl → Bytecode → Rust VM
          + Type inference, optimizations, borrow checking
+         + All CLI commands working: ast, ir, check, build, run
 ```
 
 **Phase 3:** Native Code Generation
@@ -294,7 +295,27 @@ Production compiler in modular structure (~3,500 lines, growing).
 **Recent Fixes:**
 - IR opcode serialization (ADD/SUB/MUL/DIV display correctly)
 - Function name collision (`getOpCodeForBinaryOp` renamed to `getIrOpCodeForBinaryOp` in IR builder)
-- VM fall-through bug workaround (explicit `return` statements)
+- VM fall-through bug workaround (explicit `return` statements in emitter functions)
+- Bytecode string encoding (varint-prefixed strings for decoder compatibility)
+- Array element storage order (correct stack order for StoreElement)
+- Variable declaration format handling (parser format compatibility)
+- Number lexing bug fix (digits were being duplicated due to missing advance)
+
+**IR Builder Features Implemented:**
+- Break/continue with loop context tracking
+- Member expressions (property and element access)
+- Property/element assignment
+- Array initialization with element storage
+- Object initialization with property storage
+- Conditional expression (ternary) with value merging
+- Basic function expressions (closures foundation)
+- Try/catch/finally block lowering
+
+**Bytecode Generation Verified:**
+- Arrays, objects, functions compile and execute correctly
+- Control flow (while, if, break) works properly
+- Function calls with parameters verified
+- Console output confirmed working
 
 **Architecture:**
 
@@ -318,7 +339,7 @@ compiler/
 │   └── builder.tscl
 ├── codegen/            # Code generation
 │   └── mod.tscl
-├── passes/             # (TODO) Compiler passes
+├── passes/             # Compiler passes (working)
 │   ├── typecheck.tscl
 │   ├── opt.tscl
 │   └── borrow_ck.tscl

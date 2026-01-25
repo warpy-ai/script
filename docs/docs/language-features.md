@@ -1,5 +1,8 @@
 ---
 sidebar_position: 3
+title: Script Language Features - Syntax and Capabilities
+description: Explore Script's language features including JavaScript-like syntax, classes, closures, error handling, type annotations, decorators, and memory-safe programming.
+keywords: [script syntax, functions, classes, closures, type annotations, decorators, error handling]
 ---
 
 # Language Features

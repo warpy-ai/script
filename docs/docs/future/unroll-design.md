@@ -1,3 +1,9 @@
+---
+title: Unroll - Script Package Manager and Tooling
+description: Design document for Unroll, Script's package manager, build system, and developer tooling ecosystem.
+keywords: [unroll, package manager, build system, tooling, future]
+---
+
 # Unroll - Runtime & Tooling for Script
 
 > **Status**: Future Implementation - Archived Design Document

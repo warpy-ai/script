@@ -413,13 +413,29 @@ function emitVariableDeclaration(emitter, node) {
     let i = 0;
     while (i < declarations.length) {
         let decl = declarations[i];
-        let name = decl.id;
-        if (typeof decl.id === "object" && decl.id.name != null) {
-            name = decl.id.name;
+        // Handle both parser formats:
+        // - ESTree style: decl.id.name
+        // - Our parser style: decl.name (for single decl) or node.name
+        let name = null;
+        if (typeof decl.name === "string") {
+            name = decl.name;
+        } else if (decl.id != null) {
+            if (typeof decl.id === "string") {
+                name = decl.id;
+            } else if (typeof decl.id === "object" && decl.id.name != null) {
+                name = decl.id.name;
+            }
+        }
+        // Fallback to node.name for single-declaration format
+        if (name == null && typeof node.name === "string") {
+            name = node.name;
         }
 
         if (decl.init != null) {
             emit(emitter, decl.init);
+        } else if (node.init != null) {
+            // Handle single-declaration format where init is on node
+            emit(emitter, node.init);
         } else {
             emitU8(emitter, OP.PUSH);
             emitU8(emitter, TYPE.UNDEFINED);
@@ -662,6 +678,7 @@ function emitBreakStatement(emitter, node) {
     emitU8(emitter, OP.JUMP);
     loopInfo.breakPatches.push(currentOffset(emitter));
     emitU32(emitter, 0);
+    return;
 }
 
 function emitContinueStatement(emitter, node) {
@@ -672,12 +689,14 @@ function emitContinueStatement(emitter, node) {
     }
     emitU8(emitter, OP.JUMP);
     emitU32(emitter, loopInfo.continueTarget);
+    return;
 }
 
 function emitThrowStatement(emitter, node) {
     emit(emitter, node.argument);
     // For now, just return the thrown value
     emitU8(emitter, OP.RETURN);
+    return;
 }
 
 function emitTryStatement(emitter, node) {
@@ -685,6 +704,7 @@ function emitTryStatement(emitter, node) {
     if (node.block != null) {
         emit(emitter, node.block);
     }
+    return;
 }
 
 // ============================================================================
@@ -853,6 +873,7 @@ function emitMemberExpression(emitter, node) {
         }
         emitString(emitter, propName);
     }
+    return;
 }
 
 function emitIdentifier(emitter, node) {
@@ -872,6 +893,7 @@ function emitIdentifier(emitter, node) {
         emitU8(emitter, OP.LOAD);
         emitString(emitter, node.name);
     }
+    return;
 }
 
 function emitLiteral(emitter, node) {
@@ -926,9 +948,7 @@ function emitArrayExpression(emitter, node) {
     let i = 0;
     while (i < node.elements.length) {
         emitU8(emitter, OP.DUP);
-        emitU8(emitter, OP.PUSH);
-        emitU8(emitter, TYPE.NUMBER);
-        emitF64(emitter, i);
+        // StoreElement expects stack: [array, value, index] (index at top)
         let element = node.elements[i];
         if (element != null) {
             emit(emitter, element);
@@ -936,9 +956,13 @@ function emitArrayExpression(emitter, node) {
             emitU8(emitter, OP.PUSH);
             emitU8(emitter, TYPE.UNDEFINED);
         }
+        emitU8(emitter, OP.PUSH);
+        emitU8(emitter, TYPE.NUMBER);
+        emitF64(emitter, i);
         emitU8(emitter, OP.STORE_ELEMENT);
         i = i + 1;
     }
+    return;
 }
 
 function emitObjectExpression(emitter, node) {
@@ -959,6 +983,7 @@ function emitObjectExpression(emitter, node) {
         emitString(emitter, keyName);
         i = i + 1;
     }
+    return;
 }
 
 function emitNewExpression(emitter, node) {
@@ -970,10 +995,12 @@ function emitNewExpression(emitter, node) {
     emit(emitter, node.callee);
     emitU8(emitter, OP.CONSTRUCT);
     emitU8(emitter, node.arguments.length);
+    return;
 }
 
 function emitThisExpression(emitter, node) {
     emitU8(emitter, OP.LOAD_THIS);
+    return;
 }
 
 function emitFunctionExpression(emitter, node) {
@@ -1035,6 +1062,7 @@ function emitFunctionExpression(emitter, node) {
         emitString(emitter, paramName);
         i = i + 1;
     }
+    return;
 }
 
 function emitConditionalExpression(emitter, node) {
@@ -1055,6 +1083,7 @@ function emitConditionalExpression(emitter, node) {
     emit(emitter, node.alternate);
 
     patchU32(emitter, endPatch, currentOffset(emitter));
+    return;
 }
 
 // ============================================================================

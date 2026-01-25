@@ -105,12 +105,30 @@ function irBuilderEmitDiv(builder, left, right) {
 
 function irBuilderEmitLoadLocal(builder, slot) {
     let dest = allocateRegister(builder.ra);
-    emitLoadLocal(builder.currentBlock, dest, slot);
+    // Inline emit to avoid cross-module reference passing issue
+    let block = builder.currentBlock;
+    let inst = {
+        opcode: IrOpCode.LOAD_LOCAL,
+        dest: dest,
+        args: [slot],
+        immediate: null,
+        label: null
+    };
+    block.ops.push(inst);
     return dest;
 }
 
 function irBuilderEmitStoreLocal(builder, slot, value) {
-    emitStoreLocal(builder.currentBlock, slot, value);
+    // Inline emit to avoid cross-module reference passing issue
+    let block = builder.currentBlock;
+    let inst = {
+        opcode: IrOpCode.STORE_LOCAL,
+        dest: null,
+        args: [slot, value],
+        immediate: null,
+        label: null
+    };
+    block.ops.push(inst);
 }
 
 function irBuilderEmitJump(builder, targetBlock) {
@@ -129,9 +147,15 @@ function irBuilderEmitReturnVoid(builder) {
     emitReturn(builder.currentBlock, null);
 }
 
-function irBuilderEmitCall(builder, funcReg, argc) {
+function irBuilderEmitCall(builder, funcReg, argRegs) {
     let dest = allocateRegister(builder.ra);
-    emitCall(builder.currentBlock, dest, funcReg, argc);
+    emitCall(builder.currentBlock, dest, funcReg, argRegs);
+    return dest;
+}
+
+function irBuilderEmitMethodCall(builder, objName, methodName, argRegs) {
+    let dest = allocateRegister(builder.ra);
+    emitMethodCall(builder.currentBlock, dest, objName, methodName, argRegs);
     return dest;
 }
 
@@ -143,6 +167,26 @@ function irBuilderEmitLoad(builder, address) {
 
 function irBuilderEmitStore(builder, address, value) {
     emitIrOp(builder.currentBlock, IrOpCode.STORE, null, [address, value], null);
+}
+
+function irBuilderEmitLoadProp(builder, objReg, propName) {
+    let dest = allocateRegister(builder.ra);
+    emitIrOp(builder.currentBlock, IrOpCode.LOAD_PROP, dest, [objReg], propName);
+    return dest;
+}
+
+function irBuilderEmitStoreProp(builder, objReg, propName, valueReg) {
+    emitIrOp(builder.currentBlock, IrOpCode.STORE_PROP, null, [objReg, valueReg], propName);
+}
+
+function irBuilderEmitLoadElement(builder, arrReg, indexReg) {
+    let dest = allocateRegister(builder.ra);
+    emitIrOp(builder.currentBlock, IrOpCode.LOAD_ELEMENT, dest, [arrReg, indexReg], null);
+    return dest;
+}
+
+function irBuilderEmitStoreElement(builder, arrReg, indexReg, valueReg) {
+    emitIrOp(builder.currentBlock, IrOpCode.STORE_ELEMENT, null, [arrReg, indexReg, valueReg], null);
 }
 
 function irBuilderGetMaxRegs(builder) {
@@ -186,13 +230,48 @@ function irBuilderCreateComparisonFunction(builder, name, op) {
 // AST to IR Lowering
 // ============================================================================
 
-// Lowering context for tracking variable bindings
+// Lowering context for tracking variable bindings and loop targets
 function createLoweringContext(builder) {
     return {
         builder: builder,
         variables: {},  // name -> slot
-        nextSlot: 0
+        nextSlot: 0,
+        loopStack: []   // Stack of { breakBlock, continueBlock, label }
     };
+}
+
+// Push a loop context for break/continue
+function contextPushLoop(ctx, breakBlock, continueBlock, label) {
+    ctx.loopStack.push({
+        breakBlock: breakBlock,
+        continueBlock: continueBlock,
+        label: label
+    });
+}
+
+// Pop a loop context
+function contextPopLoop(ctx) {
+    ctx.loopStack.pop();
+}
+
+// Find loop target for break/continue (with optional label)
+function contextFindLoop(ctx, label) {
+    if (ctx.loopStack.length == 0) {
+        return null;
+    }
+    if (label == null) {
+        // No label - use innermost loop
+        return ctx.loopStack[ctx.loopStack.length - 1];
+    }
+    // Search for labeled loop
+    let i = ctx.loopStack.length - 1;
+    while (i >= 0) {
+        if (ctx.loopStack[i].label == label) {
+            return ctx.loopStack[i];
+        }
+        i = i - 1;
+    }
+    return null;
 }
 
 function contextDeclareVariable(ctx, name) {
@@ -332,9 +411,9 @@ function lowerStatement(ctx, stmt) {
     } else if (stmt.type == "BlockStatement") {
         lowerBlockStatement(ctx, stmt);
     } else if (stmt.type == "BreakStatement") {
-        // TODO: implement break with label tracking
+        lowerBreakStatement(ctx, stmt);
     } else if (stmt.type == "ContinueStatement") {
-        // TODO: implement continue with label tracking
+        lowerContinueStatement(ctx, stmt);
     } else if (stmt.type == "ThrowStatement") {
         lowerThrowStatement(ctx, stmt);
     } else if (stmt.type == "TryStatement") {
@@ -352,9 +431,24 @@ function lowerVariableDeclaration(ctx, node) {
     let i = 0;
     while (i < declarations.length) {
         let decl = declarations[i];
-        let name = decl.id;
-        if (typeof decl.id === "object" && decl.id.name != null) {
-            name = decl.id.name;
+        let name = null;
+
+        // Extract variable name - handle different parser structures
+        // 1. Parser may use node.name directly (our parser)
+        // 2. Parser may use node.id as string
+        // 3. Parser may use node.id.name (ESTree-style)
+        if (decl.name != null && decl.name != "") {
+            name = decl.name;
+        } else if (decl.id != null) {
+            if (decl.id.name != null) {
+                name = decl.id.name;
+            } else {
+                name = String(decl.id);
+            }
+        }
+
+        if (name == null || name == "" || name == "undefined" || name == "null") {
+            name = "__anon_var_" + String(ctx.nextSlot);
         }
 
         let slot = contextDeclareVariable(ctx, name);
@@ -432,6 +526,9 @@ function lowerWhileStatement(ctx, stmt) {
     let bodyBlock = irBuilderAddBlock(builder, "while_body");
     let exitBlock = irBuilderAddBlock(builder, "while_exit");
 
+    // Push loop context for break/continue
+    contextPushLoop(ctx, exitBlock, loopBlock, null);
+
     // Jump to condition check
     irBuilderEmitJump(builder, loopBlock);
 
@@ -449,6 +546,9 @@ function lowerWhileStatement(ctx, stmt) {
         lowerStatement(ctx, stmt.body);
     }
     irBuilderEmitJump(builder, loopBlock);
+
+    // Pop loop context
+    contextPopLoop(ctx);
 
     // Continue after loop
     irBuilderSetBlock(builder, exitBlock);
@@ -471,6 +571,9 @@ function lowerForStatement(ctx, stmt) {
     let bodyBlock = irBuilderAddBlock(builder, "for_body");
     let updateBlock = irBuilderAddBlock(builder, "for_update");
     let exitBlock = irBuilderAddBlock(builder, "for_exit");
+
+    // Push loop context for break/continue (continue goes to update, not cond)
+    contextPushLoop(ctx, exitBlock, updateBlock, null);
 
     // Jump to condition check
     irBuilderEmitJump(builder, loopBlock);
@@ -499,6 +602,9 @@ function lowerForStatement(ctx, stmt) {
     }
     irBuilderEmitJump(builder, loopBlock);
 
+    // Pop loop context
+    contextPopLoop(ctx);
+
     // Continue after loop
     irBuilderSetBlock(builder, exitBlock);
 }
@@ -509,6 +615,9 @@ function lowerDoWhileStatement(ctx, stmt) {
     let bodyBlock = irBuilderAddBlock(builder, "dowhile_body");
     let condBlock = irBuilderAddBlock(builder, "dowhile_cond");
     let exitBlock = irBuilderAddBlock(builder, "dowhile_exit");
+
+    // Push loop context for break/continue (continue goes to condition)
+    contextPushLoop(ctx, exitBlock, condBlock, null);
 
     // Jump to body (execute at least once)
     irBuilderEmitJump(builder, bodyBlock);
@@ -528,25 +637,117 @@ function lowerDoWhileStatement(ctx, stmt) {
     irBuilderEmitJumpIfFalse(builder, cond, exitBlock);
     irBuilderEmitJump(builder, bodyBlock);
 
+    // Pop loop context
+    contextPopLoop(ctx);
+
     // Continue after loop
     irBuilderSetBlock(builder, exitBlock);
 }
 
+// Lower break statement
+function lowerBreakStatement(ctx, stmt) {
+    let label = stmt.label;
+    if (label != null && typeof label === "object") {
+        label = label.name;
+    }
+    let loop = contextFindLoop(ctx, label);
+    if (loop != null) {
+        irBuilderEmitJump(ctx.builder, loop.breakBlock);
+    }
+}
+
+// Lower continue statement
+function lowerContinueStatement(ctx, stmt) {
+    let label = stmt.label;
+    if (label != null && typeof label === "object") {
+        label = label.name;
+    }
+    let loop = contextFindLoop(ctx, label);
+    if (loop != null) {
+        irBuilderEmitJump(ctx.builder, loop.continueBlock);
+    }
+}
+
 // Lower throw statement
 function lowerThrowStatement(ctx, stmt) {
-    // TODO: proper exception handling
+    // Lower the exception value
     let valueReg = lowerExpression(ctx, stmt.argument);
-    // For now, just return the error value
+    // For now, emit as a return with error flag
+    // In a full implementation, this would unwind the stack
     irBuilderEmitReturn(ctx.builder, valueReg);
 }
 
 // Lower try statement
 function lowerTryStatement(ctx, stmt) {
-    // TODO: proper exception handling with catch/finally
-    // For now, just lower the try block
+    // Basic try/catch lowering (without full exception handling)
+    // This lowers try block, and if there's a catch, sets up the handler
+    let builder = ctx.builder;
+
+    let tryBlock = irBuilderAddBlock(builder, "try_body");
+    let catchBlock = null;
+    let finallyBlock = null;
+    let exitBlock = irBuilderAddBlock(builder, "try_exit");
+
+    if (stmt.handler != null) {
+        catchBlock = irBuilderAddBlock(builder, "catch_body");
+    }
+    if (stmt.finalizer != null) {
+        finallyBlock = irBuilderAddBlock(builder, "finally_body");
+    }
+
+    // Jump to try block
+    irBuilderEmitJump(builder, tryBlock);
+
+    // Try body
+    irBuilderSetBlock(builder, tryBlock);
     if (stmt.block != null) {
         lowerBlockStatement(ctx, stmt.block);
     }
+    // Jump to finally or exit
+    if (finallyBlock != null) {
+        irBuilderEmitJump(builder, finallyBlock);
+    } else {
+        irBuilderEmitJump(builder, exitBlock);
+    }
+
+    // Catch handler (if present)
+    if (catchBlock != null && stmt.handler != null) {
+        irBuilderSetBlock(builder, catchBlock);
+        // Declare the catch parameter if present
+        if (stmt.handler.param != null) {
+            let paramName = stmt.handler.param.name;
+            if (paramName == null && typeof stmt.handler.param === "string") {
+                paramName = stmt.handler.param;
+            }
+            if (paramName != null) {
+                let slot = contextDeclareVariable(ctx, paramName);
+                ctx.builder.currentFunction.locals.push({
+                    index: slot,
+                    name: paramName,
+                    type: IrType.ANY
+                });
+            }
+        }
+        // Lower catch body
+        if (stmt.handler.body != null) {
+            lowerBlockStatement(ctx, stmt.handler.body);
+        }
+        if (finallyBlock != null) {
+            irBuilderEmitJump(builder, finallyBlock);
+        } else {
+            irBuilderEmitJump(builder, exitBlock);
+        }
+    }
+
+    // Finally block (if present)
+    if (finallyBlock != null && stmt.finalizer != null) {
+        irBuilderSetBlock(builder, finallyBlock);
+        lowerBlockStatement(ctx, stmt.finalizer);
+        irBuilderEmitJump(builder, exitBlock);
+    }
+
+    // Continue after try/catch/finally
+    irBuilderSetBlock(builder, exitBlock);
 }
 
 // Lower an expression and return the register holding the result
@@ -600,8 +801,21 @@ function lowerExpression(ctx, node) {
             if (slot >= 0) {
                 irBuilderEmitStoreLocal(builder, slot, valueReg);
             }
+        } else if (node.left.type == "MemberExpression") {
+            let objReg = lowerExpression(ctx, node.left.object);
+            if (node.left.computed) {
+                // obj[index] = value
+                let indexReg = lowerExpression(ctx, node.left.property);
+                irBuilderEmitStoreElement(builder, objReg, indexReg, valueReg);
+            } else {
+                // obj.prop = value
+                let propName = node.left.property.name;
+                if (propName == null) {
+                    propName = String(node.left.property);
+                }
+                irBuilderEmitStoreProp(builder, objReg, propName, valueReg);
+            }
         }
-        // TODO: handle member expressions, array access
 
         return valueReg;
     }
@@ -632,23 +846,57 @@ function lowerExpression(ctx, node) {
     }
 
     if (node.type == "CallExpression") {
-        // Lower arguments first
-        let argc = node.arguments.length;
+        // Lower arguments first and collect their registers
+        let argRegs: number[] = [];
         let i = 0;
-        while (i < argc) {
-            lowerExpression(ctx, node.arguments[i]);
+        while (i < node.arguments.length) {
+            let argReg = lowerExpression(ctx, node.arguments[i]);
+            argRegs.push(argReg);
             i = i + 1;
+        }
+
+        // Check for console.log pattern
+        if (node.callee.type == "MemberExpression") {
+            let objNode = node.callee.object;
+            let propNode = node.callee.property;
+            let objName = null;
+            let propName = null;
+
+            if (objNode.type == "Identifier") {
+                objName = objNode.name;
+            }
+            if (propNode.type == "Identifier") {
+                propName = propNode.name;
+            }
+
+            // Detect console.log
+            if (objName == "console" && propName == "log") {
+                return irBuilderEmitMethodCall(builder, "console", "log", argRegs);
+            }
         }
 
         // Lower callee
         let calleeReg = lowerExpression(ctx, node.callee);
-        return irBuilderEmitCall(builder, calleeReg, argc);
+        return irBuilderEmitCall(builder, calleeReg, argRegs);
     }
 
     if (node.type == "MemberExpression") {
         let objReg = lowerExpression(ctx, node.object);
-        // TODO: emit LOAD_PROP or LOAD_ELEMENT
-        return objReg;
+        if (node.computed) {
+            // obj[index] - computed property access
+            let indexReg = lowerExpression(ctx, node.property);
+            return irBuilderEmitLoadElement(builder, objReg, indexReg);
+        } else {
+            // obj.prop - dot notation
+            let propName = node.property.name;
+            if (propName == null && node.property.type == "Identifier") {
+                propName = node.property.name;
+            }
+            if (propName == null) {
+                propName = String(node.property);
+            }
+            return irBuilderEmitLoadProp(builder, objReg, propName);
+        }
     }
 
     if (node.type == "ConditionalExpression") {
@@ -659,39 +907,117 @@ function lowerExpression(ctx, node) {
         let elseBlock = irBuilderAddBlock(builder, "ternary_else");
         let mergeBlock = irBuilderAddBlock(builder, "ternary_merge");
 
+        // Allocate a temporary slot to hold the result
+        let resultSlot = contextDeclareVariable(ctx, "__ternary_result");
+        ctx.builder.currentFunction.locals.push({
+            index: resultSlot,
+            name: "__ternary_result",
+            type: IrType.ANY
+        });
+
         irBuilderEmitJumpIfFalse(builder, testReg, elseBlock);
         irBuilderEmitJump(builder, thenBlock);
 
+        // Then branch - store result
         irBuilderSetBlock(builder, thenBlock);
         let thenVal = lowerExpression(ctx, node.consequent);
+        irBuilderEmitStoreLocal(builder, resultSlot, thenVal);
         irBuilderEmitJump(builder, mergeBlock);
 
+        // Else branch - store result
         irBuilderSetBlock(builder, elseBlock);
         let elseVal = lowerExpression(ctx, node.alternate);
+        irBuilderEmitStoreLocal(builder, resultSlot, elseVal);
         irBuilderEmitJump(builder, mergeBlock);
 
+        // Merge block - load result
         irBuilderSetBlock(builder, mergeBlock);
-        // TODO: emit phi node to merge values
-        return thenVal;
+        return irBuilderEmitLoadLocal(builder, resultSlot);
     }
 
     if (node.type == "ArrayExpression") {
-        // TODO: emit NEW_ARRAY and STORE_ELEMENT
+        // Create array
         let dest = allocateRegister(builder.ra);
-        emitIrOp(builder.currentBlock, IrOpCode.NEW_ARRAY, dest, [], node.elements.length);
+        let elemCount = 0;
+        if (node.elements != null) {
+            elemCount = node.elements.length;
+        }
+        emitIrOp(builder.currentBlock, IrOpCode.NEW_ARRAY, dest, [], elemCount);
+
+        // Initialize elements
+        if (node.elements != null) {
+            let i = 0;
+            while (i < node.elements.length) {
+                let elem = node.elements[i];
+                if (elem != null) {
+                    let indexReg = irBuilderEmitConst(builder, i);
+                    let valueReg = lowerExpression(ctx, elem);
+                    irBuilderEmitStoreElement(builder, dest, indexReg, valueReg);
+                }
+                i = i + 1;
+            }
+        }
         return dest;
     }
 
     if (node.type == "ObjectExpression") {
-        // TODO: emit NEW_OBJECT and STORE_PROP
+        // Create object
         let dest = allocateRegister(builder.ra);
         emitIrOp(builder.currentBlock, IrOpCode.NEW_OBJECT, dest, [], null);
+
+        // Initialize properties
+        if (node.properties != null) {
+            let i = 0;
+            while (i < node.properties.length) {
+                let prop = node.properties[i];
+                let propName = null;
+
+                // Get property key name
+                if (prop.key != null) {
+                    if (prop.key.type == "Identifier") {
+                        propName = prop.key.name;
+                    } else if (prop.key.type == "Literal" || prop.key.type == "StringLiteral") {
+                        propName = String(prop.key.value);
+                    }
+                }
+
+                if (propName != null && prop.value != null) {
+                    let valueReg = lowerExpression(ctx, prop.value);
+                    irBuilderEmitStoreProp(builder, dest, propName, valueReg);
+                }
+                i = i + 1;
+            }
+        }
         return dest;
     }
 
     if (node.type == "ArrowFunctionExpression" || node.type == "FunctionExpression") {
-        // TODO: implement closures
-        return irBuilderEmitConst(builder, 0);
+        // Generate a unique name for the anonymous function
+        let funcName = "__anon_" + ctx.nextSlot;
+        ctx.nextSlot = ctx.nextSlot + 1;
+
+        // Lower the function as a separate declaration
+        let funcNode = {
+            type: "FunctionDeclaration",
+            name: funcName,
+            params: node.params,
+            body: node.body,
+            returnType: node.returnType
+        };
+
+        // Save current function context
+        let savedFunc = builder.currentFunction;
+        let savedBlock = builder.currentBlock;
+
+        // Lower the function
+        lowerFunctionDeclarationFull(builder, funcNode);
+
+        // Restore context
+        builder.currentFunction = savedFunc;
+        builder.currentBlock = savedBlock;
+
+        // Return reference to the function (as a string constant for now)
+        return irBuilderEmitConstString(builder, funcName);
     }
 
     // Default: return zero
