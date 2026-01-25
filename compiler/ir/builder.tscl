@@ -479,12 +479,17 @@ function lowerReturnStatement(ctx, stmt) {
 // Lower if statement
 function lowerIfStatement(ctx, stmt) {
     let builder = ctx.builder;
+
+    // IMPORTANT: Save the current block BEFORE creating new blocks
+    // irBuilderAddBlock sets currentBlock, so we must save first
+    let condBlock = builder.currentBlock;
+
     let thenBlock = irBuilderAddBlock(builder, "if_then");
     let elseBlock = irBuilderAddBlock(builder, "if_else");
     let mergeBlock = irBuilderAddBlock(builder, "if_merge");
 
-    let currentBlock = builder.currentBlock;
-    irBuilderSetBlock(builder, currentBlock);
+    // Go back to the condition block to emit the condition check
+    irBuilderSetBlock(builder, condBlock);
 
     // Evaluate condition
     let cond = lowerExpression(ctx, stmt.test);
@@ -522,6 +527,10 @@ function lowerIfStatement(ctx, stmt) {
 // Lower while statement
 function lowerWhileStatement(ctx, stmt) {
     let builder = ctx.builder;
+
+    // Save current block before creating new ones
+    let entryBlock = builder.currentBlock;
+
     let loopBlock = irBuilderAddBlock(builder, "while_cond");
     let bodyBlock = irBuilderAddBlock(builder, "while_body");
     let exitBlock = irBuilderAddBlock(builder, "while_exit");
@@ -529,7 +538,8 @@ function lowerWhileStatement(ctx, stmt) {
     // Push loop context for break/continue
     contextPushLoop(ctx, exitBlock, loopBlock, null);
 
-    // Jump to condition check
+    // Jump to condition check from entry block
+    irBuilderSetBlock(builder, entryBlock);
     irBuilderEmitJump(builder, loopBlock);
 
     // Condition check
@@ -558,7 +568,7 @@ function lowerWhileStatement(ctx, stmt) {
 function lowerForStatement(ctx, stmt) {
     let builder = ctx.builder;
 
-    // Initialize
+    // Initialize (in current block)
     if (stmt.init != null) {
         if (stmt.init.type == "VariableDeclaration") {
             lowerVariableDeclaration(ctx, stmt.init);
@@ -566,6 +576,9 @@ function lowerForStatement(ctx, stmt) {
             lowerExpression(ctx, stmt.init);
         }
     }
+
+    // Save current block before creating new ones
+    let entryBlock = builder.currentBlock;
 
     let loopBlock = irBuilderAddBlock(builder, "for_cond");
     let bodyBlock = irBuilderAddBlock(builder, "for_body");
@@ -575,7 +588,8 @@ function lowerForStatement(ctx, stmt) {
     // Push loop context for break/continue (continue goes to update, not cond)
     contextPushLoop(ctx, exitBlock, updateBlock, null);
 
-    // Jump to condition check
+    // Jump to condition check from entry block
+    irBuilderSetBlock(builder, entryBlock);
     irBuilderEmitJump(builder, loopBlock);
 
     // Condition check
@@ -612,6 +626,10 @@ function lowerForStatement(ctx, stmt) {
 // Lower do-while statement
 function lowerDoWhileStatement(ctx, stmt) {
     let builder = ctx.builder;
+
+    // Save current block before creating new ones
+    let entryBlock = builder.currentBlock;
+
     let bodyBlock = irBuilderAddBlock(builder, "dowhile_body");
     let condBlock = irBuilderAddBlock(builder, "dowhile_cond");
     let exitBlock = irBuilderAddBlock(builder, "dowhile_exit");
@@ -619,7 +637,8 @@ function lowerDoWhileStatement(ctx, stmt) {
     // Push loop context for break/continue (continue goes to condition)
     contextPushLoop(ctx, exitBlock, condBlock, null);
 
-    // Jump to body (execute at least once)
+    // Jump to body from entry (execute at least once)
+    irBuilderSetBlock(builder, entryBlock);
     irBuilderEmitJump(builder, bodyBlock);
 
     // Body
@@ -683,6 +702,9 @@ function lowerTryStatement(ctx, stmt) {
     // This lowers try block, and if there's a catch, sets up the handler
     let builder = ctx.builder;
 
+    // Save current block before creating new ones
+    let entryBlock = builder.currentBlock;
+
     let tryBlock = irBuilderAddBlock(builder, "try_body");
     let catchBlock = null;
     let finallyBlock = null;
@@ -695,7 +717,8 @@ function lowerTryStatement(ctx, stmt) {
         finallyBlock = irBuilderAddBlock(builder, "finally_body");
     }
 
-    // Jump to try block
+    // Jump to try block from entry
+    irBuilderSetBlock(builder, entryBlock);
     irBuilderEmitJump(builder, tryBlock);
 
     // Try body
@@ -903,6 +926,9 @@ function lowerExpression(ctx, node) {
         // Ternary: test ? consequent : alternate
         let testReg = lowerExpression(ctx, node.test);
 
+        // Save current block before creating new ones
+        let condBlock = builder.currentBlock;
+
         let thenBlock = irBuilderAddBlock(builder, "ternary_then");
         let elseBlock = irBuilderAddBlock(builder, "ternary_else");
         let mergeBlock = irBuilderAddBlock(builder, "ternary_merge");
@@ -915,6 +941,8 @@ function lowerExpression(ctx, node) {
             type: IrType.ANY
         });
 
+        // Emit branch from the original condition block
+        irBuilderSetBlock(builder, condBlock);
         irBuilderEmitJumpIfFalse(builder, testReg, elseBlock);
         irBuilderEmitJump(builder, thenBlock);
 

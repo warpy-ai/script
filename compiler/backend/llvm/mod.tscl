@@ -376,10 +376,41 @@ function emitLlvmBlock(emitter: LlvmEmitter, block: IrBlock): void {
     // Emit all instructions
     let i = 0;
     while (i < block.ops.length) {
-        emitLlvmInstruction(emitter, block.ops[i]);
-        i = i + 1;
+        let inst = block.ops[i];
+        let nextInst = null;
+        if (i + 1 < block.ops.length) {
+            nextInst = block.ops[i + 1];
+        }
+
+        // Check for JUMP_IF_FALSE + JUMP pattern (conditional branch)
+        if (inst.opcode == 25 && nextInst != null && nextInst.opcode == 24) {
+            // Combine into single conditional branch
+            emitConditionalBranch(emitter, inst, nextInst);
+            i = i + 2;  // Skip both instructions
+        } else {
+            emitLlvmInstruction(emitter, inst);
+            i = i + 1;
+        }
     }
     return;
+}
+
+// Emit a conditional branch from JUMP_IF_FALSE + JUMP pattern
+function emitConditionalBranch(emitter: LlvmEmitter, jumpIfFalse: IrInstruction, jump: IrInstruction): void {
+    let condReg = getRegForValue(emitter, jumpIfFalse.args[0]);
+    let falseLabel = jumpIfFalse.label;  // Where to go if condition is false
+    let trueLabel = jump.label;          // Where to go if condition is true
+
+    // Check if condition is truthy (extract low bit for booleans, or check non-zero for numbers)
+    let tmp1 = allocReg(emitter);
+    let tmp2 = allocReg(emitter);
+
+    // For NaN-boxed booleans: true = ...0001, false = ...0000
+    // For numbers: need to check if non-zero
+    // Simple approach: check if low bit is set (works for booleans)
+    emit(emitter, "  " + tmp1 + " = and i64 " + condReg + ", 1");
+    emit(emitter, "  " + tmp2 + " = icmp ne i64 " + tmp1 + ", 0");
+    emit(emitter, "  br i1 " + tmp2 + ", label %" + trueLabel + ", label %" + falseLabel);
 }
 
 // ============================================================================
@@ -669,19 +700,11 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
         return;
     }
 
-    // JUMP_IF_FALSE (BRANCH)
+    // JUMP_IF_FALSE (standalone - shouldn't happen often, handled in emitLlvmBlock)
     if (opcode == 25) {  // IrOpCode.JUMP_IF_FALSE
-        let condReg = getRegForValue(emitter, inst.args[0]);
-        let targetLabel = inst.label;
-        // Extract boolean from NaN-boxed value
-        let tmp1 = allocReg(emitter);
-        let tmp2 = allocReg(emitter);
-        emit(emitter, "  " + tmp1 + " = and i64 " + condReg + ", 1");
-        emit(emitter, "  " + tmp2 + " = icmp eq i64 " + tmp1 + ", 0");
-        // Note: we need to know the fall-through block for a proper branch
-        // For now, assume the next block is the fall-through
-        emit(emitter, "  br i1 " + tmp2 + ", label %" + targetLabel + ", label %fallthrough_" + String(emitter.blockCounter));
-        emitter.blockCounter = emitter.blockCounter + 1;
+        // This case is handled in emitLlvmBlock when combined with JUMP
+        // If we get here, emit a warning comment
+        emit(emitter, "  ; WARNING: standalone JUMP_IF_FALSE without following JUMP");
         return;
     }
 
