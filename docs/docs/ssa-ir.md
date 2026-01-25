@@ -1,5 +1,8 @@
 ---
 sidebar_position: 6
+title: SSA IR - Script's Intermediate Representation
+description: Learn about Script's Static Single Assignment (SSA) intermediate representation used for optimization and native code generation.
+keywords: [ssa, intermediate representation, ir, compiler optimization, code generation]
 ---
 
 # SSA IR

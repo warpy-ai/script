@@ -1,5 +1,8 @@
 ---
 sidebar_position: 5
+title: Script Memory Model - Ownership and Borrow Checking
+description: Understand Script's Rust-inspired memory model with ownership rules, borrow checking, and memory safety without garbage collection.
+keywords: [memory model, ownership, borrow checker, memory safety, no gc, rust-inspired]
 ---
 
 # Memory Model

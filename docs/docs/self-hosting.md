@@ -1,3 +1,10 @@
+---
+sidebar_position: 9
+title: Script Self-Hosting Compiler Roadmap
+description: Learn about Script's journey to self-hosting, where the Script compiler is written entirely in Script itself. Includes bootstrap strategy and milestones.
+keywords: [self-hosting, bootstrap, compiler, scriptc, self-compiling]
+---
+
 # Script Self-Hosting Roadmap
 
 This document outlines the path to full self-hosting where the Script compiler (`scriptc`) is written entirely in Script.

@@ -10,8 +10,8 @@ export default function Home(): ReactNode {
   const {siteConfig} = useDocusaurusContext();
   return (
     <Layout
-      title={siteConfig.title}
-      description={siteConfig.tagline}>
+      title="Script - High Performance JavaScript Alternative"
+      description="Script is a native programming language for building high-performance systems with JavaScript-inspired syntax, memory safety, and a zero-compromise toolchain.">
       <main className={clsx(styles.page)}>
         <section className={clsx(styles.heroShell)}>
           <div className="container">

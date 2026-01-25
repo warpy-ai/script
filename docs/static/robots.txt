@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+
+# Sitemap
+Sitemap: https://docs.script-lang.org/sitemap.xml
+
+# Crawl-delay
+Crawl-delay: 1

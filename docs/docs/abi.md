@@ -1,6 +1,13 @@
+---
+sidebar_position: 11
+title: Script ABI Specification
+description: Technical specification of Script's Application Binary Interface (ABI) including calling conventions, value representation, and runtime contracts.
+keywords: [abi, application binary interface, calling convention, runtime, low-level]
+---
+
 # tscl ABI Specification
 
-**Version:** 1  
+**Version:** 1
 **Last Updated:** January 2026
 
 This document defines the **Application Binary Interface (ABI)** for the tscl runtime. The ABI is the contract between compiled tscl code and the runtime library.
