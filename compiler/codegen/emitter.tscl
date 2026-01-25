@@ -386,6 +386,7 @@ function emitProgram(emitter, node) {
         i = i + 1;
     }
     emitU8(emitter, OP.HALT);
+    return;
 }
 
 function emitBlockStatement(emitter, node) {
@@ -394,11 +395,13 @@ function emitBlockStatement(emitter, node) {
         emit(emitter, node.body[i]);
         i = i + 1;
     }
+    return;
 }
 
 function emitExpressionStatement(emitter, node) {
     emit(emitter, node.expression);
     emitU8(emitter, OP.POP);
+    return;
 }
 
 function emitVariableDeclaration(emitter, node) {
@@ -431,6 +434,7 @@ function emitVariableDeclaration(emitter, node) {
         }
         i = i + 1;
     }
+    return;
 }
 
 function emitFunctionDeclaration(emitter, node) {
@@ -697,6 +701,7 @@ function emitBinaryExpression(emitter, node) {
         return;
     }
     emitU8(emitter, opcode);
+    return;
 }
 
 function emitUnaryExpression(emitter, node) {
@@ -708,6 +713,7 @@ function emitUnaryExpression(emitter, node) {
         return;
     }
     emitU8(emitter, opcode);
+    return;
 }
 
 function emitUpdateExpression(emitter, node) {
@@ -911,6 +917,7 @@ function emitLiteral(emitter, node) {
         emitU8(emitter, TYPE.STRING);
         emitString(emitter, String(value));
     }
+    return;
 }
 
 function emitArrayExpression(emitter, node) {

@@ -319,6 +319,12 @@ fn main() {
             let offset = vm.append_program(main_bytecode);
             // Update the current module path to the main script for relative imports
             vm.set_current_module_path(PathBuf::from(filename));
+
+            // Set script arguments (__args__) for the script
+            // Arguments after the filename are passed to the script
+            let script_args: Vec<String> = args[2..].to_vec();
+            vm.set_script_args(script_args);
+
             println!("Running from offset {}...", offset);
             vm.run_event_loop();
         }

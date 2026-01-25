@@ -591,6 +591,7 @@ function removeUnreachableBlocks(func: IrFunction): void {
         }
         i = i + 1;
     }
+    return;
 }
 
 // ============================================================================
