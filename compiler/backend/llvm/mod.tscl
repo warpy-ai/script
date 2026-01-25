@@ -455,6 +455,118 @@ function emitRuntimeFunctions(emitter: LlvmEmitter): void {
     emit(emitter, "}");
     emit(emitter, "");
 
+    // ============================================================
+    // Array runtime functions
+    // ============================================================
+    // Array layout: [capacity: i64, length: i64, elements: i64*]
+    // Array tag: 0xFFFB (65531) in high 16 bits
+    // 0xFFFB000000000000 = 18444492273895866368
+
+    // tscl_alloc_array - allocate an array with given initial capacity
+    emit(emitter, "define i64 @tscl_alloc_array(i64 %cap) {");
+    emit(emitter, "entry:");
+    emit(emitter, "  ; Allocate: 2 header i64s + cap elements");
+    emit(emitter, "  %header_size = add i64 16, 0");  // 2 * 8 bytes for capacity and length
+    emit(emitter, "  %elem_bytes = mul i64 %cap, 8");
+    emit(emitter, "  %total_size = add i64 %header_size, %elem_bytes");
+    emit(emitter, "  %ptr = call i8* @malloc(i64 %total_size)");
+    emit(emitter, "  %arr = bitcast i8* %ptr to i64*");
+    emit(emitter, "  ; Store capacity at offset 0");
+    emit(emitter, "  store i64 %cap, i64* %arr");
+    emit(emitter, "  ; Store length (0) at offset 1");
+    emit(emitter, "  %len_ptr = getelementptr i64, i64* %arr, i64 1");
+    emit(emitter, "  store i64 0, i64* %len_ptr");
+    emit(emitter, "  ; Tag pointer as array (0xFFFB prefix)");
+    emit(emitter, "  %ptr_int = ptrtoint i64* %arr to i64");
+    emit(emitter, "  %masked = and i64 %ptr_int, 281474976710655");  // 0x0000FFFFFFFFFFFF
+    emit(emitter, "  %tagged = or i64 %masked, 18444492273895866368");  // 0xFFFB...
+    emit(emitter, "  ret i64 %tagged");
+    emit(emitter, "}");
+    emit(emitter, "");
+
+    // tscl_array_set - set element at index
+    emit(emitter, "define void @tscl_array_set(i64 %arr_tagged, i64 %idx_val, i64 %value) {");
+    emit(emitter, "entry:");
+    emit(emitter, "  ; Extract array pointer");
+    emit(emitter, "  %ptr_int = and i64 %arr_tagged, 281474976710655");
+    emit(emitter, "  %arr = inttoptr i64 %ptr_int to i64*");
+    emit(emitter, "  ; Convert index from NaN-boxed double to integer");
+    emit(emitter, "  %idx_fp = bitcast i64 %idx_val to double");
+    emit(emitter, "  %idx = fptosi double %idx_fp to i64");
+    emit(emitter, "  ; Elements start at offset 2 (after capacity and length)");
+    emit(emitter, "  %elem_offset = add i64 %idx, 2");
+    emit(emitter, "  %elem_ptr = getelementptr i64, i64* %arr, i64 %elem_offset");
+    emit(emitter, "  store i64 %value, i64* %elem_ptr");
+    emit(emitter, "  ; Update length if needed (idx + 1 > length)");
+    emit(emitter, "  %len_ptr = getelementptr i64, i64* %arr, i64 1");
+    emit(emitter, "  %curr_len = load i64, i64* %len_ptr");
+    emit(emitter, "  %new_len = add i64 %idx, 1");
+    emit(emitter, "  %need_update = icmp sgt i64 %new_len, %curr_len");
+    emit(emitter, "  br i1 %need_update, label %update_len, label %done");
+    emit(emitter, "update_len:");
+    emit(emitter, "  store i64 %new_len, i64* %len_ptr");
+    emit(emitter, "  br label %done");
+    emit(emitter, "done:");
+    emit(emitter, "  ret void");
+    emit(emitter, "}");
+    emit(emitter, "");
+
+    // tscl_array_get - get element at index
+    emit(emitter, "define i64 @tscl_array_get(i64 %arr_tagged, i64 %idx_val) {");
+    emit(emitter, "entry:");
+    emit(emitter, "  ; Extract array pointer");
+    emit(emitter, "  %ptr_int = and i64 %arr_tagged, 281474976710655");
+    emit(emitter, "  %arr = inttoptr i64 %ptr_int to i64*");
+    emit(emitter, "  ; Convert index from NaN-boxed double to integer");
+    emit(emitter, "  %idx_fp = bitcast i64 %idx_val to double");
+    emit(emitter, "  %idx = fptosi double %idx_fp to i64");
+    emit(emitter, "  ; Elements start at offset 2");
+    emit(emitter, "  %elem_offset = add i64 %idx, 2");
+    emit(emitter, "  %elem_ptr = getelementptr i64, i64* %arr, i64 %elem_offset");
+    emit(emitter, "  %value = load i64, i64* %elem_ptr");
+    emit(emitter, "  ret i64 %value");
+    emit(emitter, "}");
+    emit(emitter, "");
+
+    // tscl_array_length - get array length
+    emit(emitter, "define i64 @tscl_array_length(i64 %arr_tagged) {");
+    emit(emitter, "entry:");
+    emit(emitter, "  ; Extract array pointer");
+    emit(emitter, "  %ptr_int = and i64 %arr_tagged, 281474976710655");
+    emit(emitter, "  %arr = inttoptr i64 %ptr_int to i64*");
+    emit(emitter, "  ; Length is at offset 1");
+    emit(emitter, "  %len_ptr = getelementptr i64, i64* %arr, i64 1");
+    emit(emitter, "  %len = load i64, i64* %len_ptr");
+    emit(emitter, "  ; Convert to NaN-boxed double");
+    emit(emitter, "  %len_fp = sitofp i64 %len to double");
+    emit(emitter, "  %result = bitcast double %len_fp to i64");
+    emit(emitter, "  ret i64 %result");
+    emit(emitter, "}");
+    emit(emitter, "");
+
+    // tscl_array_push - push element to array (returns new length)
+    emit(emitter, "define i64 @tscl_array_push(i64 %arr_tagged, i64 %value) {");
+    emit(emitter, "entry:");
+    emit(emitter, "  ; Extract array pointer");
+    emit(emitter, "  %ptr_int = and i64 %arr_tagged, 281474976710655");
+    emit(emitter, "  %arr = inttoptr i64 %ptr_int to i64*");
+    emit(emitter, "  ; Get current length");
+    emit(emitter, "  %len_ptr = getelementptr i64, i64* %arr, i64 1");
+    emit(emitter, "  %len = load i64, i64* %len_ptr");
+    emit(emitter, "  ; Store element at length index (offset 2 + len)");
+    emit(emitter, "  %elem_offset = add i64 %len, 2");
+    emit(emitter, "  %elem_ptr = getelementptr i64, i64* %arr, i64 %elem_offset");
+    emit(emitter, "  store i64 %value, i64* %elem_ptr");
+    emit(emitter, "  ; Increment length");
+    emit(emitter, "  %new_len = add i64 %len, 1");
+    emit(emitter, "  store i64 %new_len, i64* %len_ptr");
+    emit(emitter, "  ; Return new length as NaN-boxed double");
+    emit(emitter, "  %len_fp = sitofp i64 %new_len to double");
+    emit(emitter, "  %result = bitcast double %len_fp to i64");
+    emit(emitter, "  ret i64 %result");
+    emit(emitter, "}");
+    emit(emitter, "");
+
     return;
 }
 
@@ -847,9 +959,18 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
     if (opcode == 20) {  // IrOpCode.LOAD_PROP
         let dest = inst.dest;
         let objReg = getRegForValue(emitter, inst.args[0]);
+        let propName = inst.immediate;
         let resultReg = allocReg(emitter);
-        // For now, return undefined - actual property access needs runtime support
-        emit(emitter, "  ; LOAD_PROP from " + objReg);
+
+        // Handle "length" property for arrays
+        if (propName == "length") {
+            emit(emitter, "  " + resultReg + " = call i64 @tscl_array_length(i64 " + objReg + ")");
+            setRegForValue(emitter, dest, resultReg);
+            return;
+        }
+
+        // For other properties, return undefined for now
+        emit(emitter, "  ; LOAD_PROP '" + String(propName) + "' from " + objReg);
         emit(emitter, "  " + resultReg + " = add i64 0, 9221120237041090561");
         setRegForValue(emitter, dest, resultReg);
         return;
@@ -865,15 +986,20 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
     // LOAD_ELEMENT
     if (opcode == 22) {  // IrOpCode.LOAD_ELEMENT
         let dest = inst.dest;
+        let arrReg = getRegForValue(emitter, inst.args[0]);
+        let idxReg = getRegForValue(emitter, inst.args[1]);
         let resultReg = allocReg(emitter);
-        emit(emitter, "  " + resultReg + " = add i64 0, 9221120237041090561");
+        emit(emitter, "  " + resultReg + " = call i64 @tscl_array_get(i64 " + arrReg + ", i64 " + idxReg + ")");
         setRegForValue(emitter, dest, resultReg);
         return;
     }
 
     // STORE_ELEMENT
     if (opcode == 23) {  // IrOpCode.STORE_ELEMENT
-        emit(emitter, "  ; STORE_ELEMENT (no-op)");
+        let arrReg = getRegForValue(emitter, inst.args[0]);
+        let idxReg = getRegForValue(emitter, inst.args[1]);
+        let valueReg = getRegForValue(emitter, inst.args[2]);
+        emit(emitter, "  call void @tscl_array_set(i64 " + arrReg + ", i64 " + idxReg + ", i64 " + valueReg + ")");
         return;
     }
 
@@ -937,20 +1063,42 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
 
     // CALL_METHOD
     if (opcode == 27) {  // IrOpCode.CALL_METHOD
-        // Format: args = [argc, arg0, arg1, ...], immediate = "object.method"
         let dest = inst.dest;
         let methodPath = inst.immediate;
-        let argc = inst.args[0];
         let resultReg = allocReg(emitter);
 
-        // Handle console.log
+        // Handle console.log (old format: immediate = "object.method", args = [argc, ...])
         if (methodPath == "console.log") {
+            let argc = inst.args[0];
             if (argc >= 1) {
                 let argReg = getRegForValue(emitter, inst.args[1]);
                 emit(emitter, "  " + resultReg + " = call i64 @tscl_console_log(i64 " + argReg + ")");
             } else {
                 emit(emitter, "  " + resultReg + " = add i64 0, 9221120237041090561");
             }
+            setRegForValue(emitter, dest, resultReg);
+            return;
+        }
+
+        // Handle object method calls (new format: immediate = "method", args = [objReg, argc, ...])
+        // Array.push
+        if (methodPath == "push") {
+            let objReg = getRegForValue(emitter, inst.args[0]);
+            let argc = inst.args[1];
+            if (argc >= 1) {
+                let valueReg = getRegForValue(emitter, inst.args[2]);
+                emit(emitter, "  " + resultReg + " = call i64 @tscl_array_push(i64 " + objReg + ", i64 " + valueReg + ")");
+            } else {
+                emit(emitter, "  " + resultReg + " = add i64 0, 9221120237041090561");
+            }
+            setRegForValue(emitter, dest, resultReg);
+            return;
+        }
+
+        // Array.pop - not yet implemented, return undefined
+        if (methodPath == "pop" || methodPath == "shift" || methodPath == "unshift") {
+            emit(emitter, "  ; TODO: implement " + String(methodPath));
+            emit(emitter, "  " + resultReg + " = add i64 0, 9221120237041090561");
             setRegForValue(emitter, dest, resultReg);
             return;
         }
@@ -995,8 +1143,15 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
     // NEW_ARRAY
     if (opcode == 31) {  // IrOpCode.NEW_ARRAY
         let dest = inst.dest;
+        // Initial capacity is in immediate field (element count)
+        let capacity = inst.immediate;
+        if (capacity == null || capacity < 8) {
+            capacity = 8;  // Minimum capacity
+        }
         let resultReg = allocReg(emitter);
-        emit(emitter, "  " + resultReg + " = add i64 0, 9221120237041090561");  // placeholder
+        let capReg = allocReg(emitter);
+        emit(emitter, "  " + capReg + " = add i64 0, " + String(capacity));
+        emit(emitter, "  " + resultReg + " = call i64 @tscl_alloc_array(i64 " + capReg + ")");
         setRegForValue(emitter, dest, resultReg);
         return;
     }

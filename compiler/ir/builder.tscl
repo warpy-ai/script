@@ -181,6 +181,29 @@ function irBuilderEmitMethodCall(builder, objName, methodName, argRegs) {
     return dest;
 }
 
+// Emit a method call on an object register (for arr.push, etc.)
+function irBuilderEmitObjMethodCall(builder, objReg, methodName, argRegs) {
+    let dest = allocateRegister(builder.ra);
+    let block = builder.currentBlock;
+    // Format: args = [objReg, argc, arg0, arg1, ...]
+    // immediate = method name
+    let args = [objReg, argRegs.length];
+    let i = 0;
+    while (i < argRegs.length) {
+        args.push(argRegs[i]);
+        i = i + 1;
+    }
+    let inst = {
+        opcode: IrOpCode.CALL_METHOD,
+        dest: dest,
+        args: args,
+        immediate: methodName,
+        label: null
+    };
+    block.ops.push(inst);
+    return dest;
+}
+
 function irBuilderEmitLoad(builder, address) {
     let dest = allocateRegister(builder.ra);
     emitIrOp(builder.currentBlock, IrOpCode.LOAD, dest, [address], null);
@@ -917,6 +940,13 @@ function lowerExpression(ctx, node) {
             // Detect console.log
             if (objName == "console" && propName == "log") {
                 return irBuilderEmitMethodCall(builder, "console", "log", argRegs);
+            }
+
+            // Handle array/object methods (push, pop, etc.)
+            // Lower the object first and emit a method call instruction
+            if (propName == "push" || propName == "pop" || propName == "shift" || propName == "unshift") {
+                let objReg = lowerExpression(ctx, objNode);
+                return irBuilderEmitObjMethodCall(builder, objReg, propName, argRegs);
             }
         }
 
