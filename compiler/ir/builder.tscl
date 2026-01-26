@@ -13,7 +13,8 @@ function createIrBuilder() {
         currentFunction: null,
         currentBlock: null,
         ra: createRegisterAllocator(),
-        functions: []
+        functions: [],
+        blockCounter: 0
     };
 }
 
@@ -30,6 +31,7 @@ function irBuilderEnterFunction(builder, name, returnType) {
     builder.currentFunction = func;
     builder.functions.push(func);
     resetRegisterAllocator(builder.ra);
+    builder.blockCounter = 0;  // Reset block counter for each function
     return func;
 }
 
@@ -52,7 +54,10 @@ function irBuilderCreateEntryBlock(builder) {
 
 function irBuilderAddBlock(builder, label) {
     let func = builder.currentFunction;
-    let block = createIrBlock(label);
+    // Make label unique by appending block counter
+    let uniqueLabel = label + "_" + String(builder.blockCounter);
+    builder.blockCounter = builder.blockCounter + 1;
+    let block = createIrBlock(uniqueLabel);
     func.blocks.push(block);
     builder.currentBlock = block;
     return block;
