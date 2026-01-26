@@ -28,6 +28,12 @@ use std::thread;
 #[cfg(target_os = "macos")]
 use libc::{EV_ADD, EV_CLEAR, EV_DELETE, EV_ENABLE, EVFILT_READ, EVFILT_WRITE, kevent, kqueue};
 
+#[cfg(target_os = "linux")]
+use libc::{
+    EPOLL_CTL_ADD, EPOLL_CTL_DEL, EPOLLET, EPOLLIN, EPOLLOUT, epoll_create1, epoll_ctl,
+    epoll_event, epoll_wait,
+};
+
 const HTTP_RESPONSE: &[u8] = b"HTTP/1.1 200 OK\r\n\
 Content-Type: text/plain\r\n\
 Content-Length: 13\r\n\
@@ -55,7 +61,7 @@ impl Connection {
         stream.set_nodelay(true)?;
 
         // Increase socket buffers
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         unsafe {
             let buf_size: i32 = 65536;
             libc::setsockopt(
@@ -63,14 +69,14 @@ impl Connection {
                 libc::SOL_SOCKET,
                 libc::SO_RCVBUF,
                 &buf_size as *const i32 as *const _,
-                std::mem::size_of::<i32>() as u32,
+                std::mem::size_of::<i32>() as libc::socklen_t,
             );
             libc::setsockopt(
                 stream.as_raw_fd(),
                 libc::SOL_SOCKET,
                 libc::SO_SNDBUF,
                 &buf_size as *const i32 as *const _,
-                std::mem::size_of::<i32>() as u32,
+                std::mem::size_of::<i32>() as libc::socklen_t,
             );
         }
 
@@ -264,6 +270,67 @@ impl Worker {
             libc::close(kq);
         }
     }
+
+    #[cfg(target_os = "linux")]
+    fn run(self) {
+        let epfd = unsafe { epoll_create1(0) };
+        if epfd < 0 {
+            return;
+        }
+
+        let mut connections: HashMap<RawFd, Connection> = HashMap::with_capacity(1024);
+        let mut events: Vec<epoll_event> = vec![unsafe { std::mem::zeroed() }; MAX_EVENTS];
+
+        while !self.shutdown.load(Ordering::Relaxed) {
+            // Non-blocking receive of new connections
+            while let Ok(stream) = self.receiver.try_recv() {
+                if let Ok(conn) = Connection::new(stream) {
+                    let fd = conn.fd();
+                    register_epoll_rw(epfd, fd).ok();
+                    connections.insert(fd, conn);
+                }
+            }
+
+            let n = unsafe { epoll_wait(epfd, events.as_mut_ptr(), MAX_EVENTS as i32, 1) }; // 1ms timeout
+
+            if n <= 0 {
+                continue;
+            }
+
+            for i in 0..n as usize {
+                let fd = events[i].u64 as RawFd;
+                let ev = events[i].events;
+
+                if let Some(conn) = connections.get_mut(&fd) {
+                    let mut should_close = false;
+
+                    if ev & (EPOLLIN as u32) != 0 {
+                        match conn.read_all() {
+                            Ok(_) => {
+                                conn.process_requests(&self.count);
+                            }
+                            Err(_) => should_close = true,
+                        }
+                    }
+
+                    if ((ev & (EPOLLOUT as u32) != 0) || conn.write_len > 0)
+                        && conn.write_all().is_err()
+                    {
+                        should_close = true;
+                    }
+
+                    if should_close {
+                        deregister_epoll(epfd, fd);
+                        connections.remove(&fd);
+                    }
+                }
+            }
+        }
+
+        unsafe {
+            libc::close(epfd);
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -335,6 +402,123 @@ fn deregister_kqueue(kq: RawFd, fd: RawFd) {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn register_epoll_rw(epfd: RawFd, fd: RawFd) -> io::Result<()> {
+    let mut event = epoll_event {
+        events: (EPOLLIN | EPOLLOUT | EPOLLET) as u32,
+        u64: fd as u64,
+    };
+    if unsafe { epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &mut event) } < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn deregister_epoll(epfd: RawFd, fd: RawFd) {
+    unsafe {
+        epoll_ctl(epfd, EPOLL_CTL_DEL, fd, std::ptr::null_mut());
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn run_accept_loop(listener: TcpListener, senders: Vec<mpsc::Sender<TcpStream>>) -> io::Result<()> {
+    let kq = unsafe { kqueue() };
+    if kq < 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    let listener_fd = listener.as_raw_fd();
+    let event = libc::kevent {
+        ident: listener_fd as usize,
+        filter: EVFILT_READ,
+        flags: EV_ADD | EV_ENABLE | EV_CLEAR,
+        fflags: 0,
+        data: 0,
+        udata: std::ptr::null_mut(),
+    };
+    unsafe {
+        kevent(kq, &event, 1, std::ptr::null_mut(), 0, std::ptr::null());
+    }
+
+    let mut events: Vec<libc::kevent> = vec![unsafe { std::mem::zeroed() }; 64];
+    let mut next_worker = 0usize;
+    let num_workers = senders.len();
+
+    loop {
+        let n = unsafe {
+            kevent(
+                kq,
+                std::ptr::null(),
+                0,
+                events.as_mut_ptr(),
+                64,
+                std::ptr::null(),
+            )
+        };
+
+        if n <= 0 {
+            continue;
+        }
+
+        for _ in 0..n {
+            loop {
+                match listener.accept() {
+                    Ok((stream, _)) => {
+                        let _ = senders[next_worker].send(stream);
+                        next_worker = (next_worker + 1) % num_workers;
+                    }
+                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn run_accept_loop(listener: TcpListener, senders: Vec<mpsc::Sender<TcpStream>>) -> io::Result<()> {
+    let epfd = unsafe { epoll_create1(0) };
+    if epfd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    let listener_fd = listener.as_raw_fd();
+    let mut event = epoll_event {
+        events: (EPOLLIN | EPOLLET) as u32,
+        u64: listener_fd as u64,
+    };
+    if unsafe { epoll_ctl(epfd, EPOLL_CTL_ADD, listener_fd, &mut event) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    let mut events: Vec<epoll_event> = vec![unsafe { std::mem::zeroed() }; 64];
+    let mut next_worker = 0usize;
+    let num_workers = senders.len();
+
+    loop {
+        let n = unsafe { epoll_wait(epfd, events.as_mut_ptr(), 64, -1) };
+
+        if n <= 0 {
+            continue;
+        }
+
+        for _ in 0..n as usize {
+            loop {
+                match listener.accept() {
+                    Ok((stream, _)) => {
+                        let _ = senders[next_worker].send(stream);
+                        next_worker = (next_worker + 1) % num_workers;
+                    }
+                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+}
+
 fn main() -> io::Result<()> {
     // Use only performance cores (6 on M2 Pro)
     let num_workers = std::cmp::min(
@@ -394,57 +578,5 @@ fn main() -> io::Result<()> {
         }
     });
 
-    // Fast acceptor with kqueue
-    let kq = unsafe { kqueue() };
-    if kq < 0 {
-        return Err(io::Error::last_os_error());
-    }
-
-    // Register listener
-    let listener_fd = listener.as_raw_fd();
-    let event = libc::kevent {
-        ident: listener_fd as usize,
-        filter: EVFILT_READ,
-        flags: EV_ADD | EV_ENABLE | EV_CLEAR,
-        fflags: 0,
-        data: 0,
-        udata: std::ptr::null_mut(),
-    };
-    unsafe {
-        kevent(kq, &event, 1, std::ptr::null_mut(), 0, std::ptr::null());
-    }
-
-    let mut events: Vec<libc::kevent> = vec![unsafe { std::mem::zeroed() }; 64];
-    let mut next_worker = 0usize;
-
-    loop {
-        let n = unsafe {
-            kevent(
-                kq,
-                std::ptr::null(),
-                0,
-                events.as_mut_ptr(),
-                64,
-                std::ptr::null(),
-            )
-        };
-
-        if n <= 0 {
-            continue;
-        }
-
-        for _ in 0..n {
-            // Drain all pending accepts
-            loop {
-                match listener.accept() {
-                    Ok((stream, _)) => {
-                        senders[next_worker].send(stream).is_err();
-                        next_worker = (next_worker + 1) % num_workers;
-                    }
-                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
-                    Err(_) => break,
-                }
-            }
-        }
-    }
+    run_accept_loop(listener, senders)
 }
