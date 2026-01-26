@@ -3,7 +3,11 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
+
+# Restrict permissions - only release job needs write access
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -12,6 +16,7 @@ jobs:
   build:
     name: Build (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -33,17 +38,20 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable # stable
         with:
+          toolchain: stable
           targets: ${{ matrix.target }}
 
       - name: Install LLVM 18 (Ubuntu)
         if: runner.os == 'Linux'
         run: |
-          wget https://apt.llvm.org/llvm.sh
+          wget -qO- https://apt.llvm.org/llvm.sh -O llvm.sh
           chmod +x llvm.sh
           sudo ./llvm.sh 18
           sudo apt-get install -y libzstd-dev
@@ -58,11 +66,10 @@ jobs:
       - name: Install cross-compilation tools (macOS x86_64)
         if: matrix.target == 'x86_64-apple-darwin'
         run: |
-          # Ensure x86_64 target is available
           rustup target add x86_64-apple-darwin
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v4 # v4.2.3
         with:
           path: |
             ~/.cargo/registry
@@ -94,29 +101,34 @@ jobs:
           cd ../../..
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4 # v4.6.2
         with:
           name: ${{ matrix.asset_name }}
           path: ${{ matrix.asset_name }}.tar.gz
+          retention-days: 1
 
   release:
     name: Create Release
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Only this job needs write permissions
     permissions:
       contents: write
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v4 # v4.3.0
         with:
           path: artifacts
 
       - name: List artifacts
-        run: ls -la artifacts/
+        run: ls -laR artifacts/
 
       - name: Generate checksums
         run: |
@@ -137,7 +149,7 @@ jobs:
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v2 # v2.2.2
         with:
           name: Script ${{ steps.version.outputs.VERSION }}
           draft: false

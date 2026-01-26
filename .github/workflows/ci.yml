@@ -6,6 +6,15 @@ on:
   pull_request:
     branches: [master]
 
+# Restrict default permissions - principle of least privilege
+permissions:
+  contents: read
+
+# Cancel in-progress runs for same PR/branch to save resources
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -14,6 +23,8 @@ jobs:
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # Limit job execution time to prevent resource abuse
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -21,15 +32,19 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # stable
+        with:
+          toolchain: stable
 
       - name: Install LLVM 18 (Ubuntu)
         if: runner.os == 'Linux'
         run: |
-          wget https://apt.llvm.org/llvm.sh
+          wget -qO- https://apt.llvm.org/llvm.sh -O llvm.sh
           chmod +x llvm.sh
           sudo ./llvm.sh 18
           echo "LLVM_SYS_180_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
@@ -41,7 +56,7 @@ jobs:
           echo "LLVM_SYS_180_PREFIX=$(brew --prefix llvm@18)" >> $GITHUB_ENV
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
             ~/.cargo/registry
@@ -65,25 +80,29 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable # stable
         with:
+          toolchain: stable
           components: rustfmt, clippy
 
       - name: Install LLVM 18
         run: |
-          wget https://apt.llvm.org/llvm.sh
+          wget -qO- https://apt.llvm.org/llvm.sh -O llvm.sh
           chmod +x llvm.sh
           sudo ./llvm.sh 18
           echo "LLVM_SYS_180_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v4 # v4.2.3
         with:
           path: |
             ~/.cargo/registry
