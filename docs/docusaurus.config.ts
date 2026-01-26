@@ -131,7 +131,7 @@ const config: Config = {
 
   themeConfig: {
     // SEO: Open Graph / Social card image (must be PNG/JPG, not SVG)
-    image: "img/logo_bg.png",
+    image: "img/owl_light.png",
     // SEO: Site metadata
     metadata: [
       {
@@ -155,7 +155,7 @@ const config: Config = {
       title: "Script",
       logo: {
         alt: "Script Logo",
-        src: "img/owl.svg",
+        src: "img/owl_light.png",
         srcDark: "img/owl-light.svg",
       },
       hideOnScroll: false,

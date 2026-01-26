@@ -1064,6 +1064,12 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
     if (opcode == 18) {  // IrOpCode.LOAD_LOCAL
         let dest = inst.dest;
         let slot = inst.args[0];
+        // Allocate slot if it doesn't exist yet (shouldn't normally happen)
+        while (emitter.localSlots.length <= slot) {
+            let newSlotReg = "%local" + String(emitter.localSlots.length);
+            emit(emitter, "  " + newSlotReg + " = alloca i64");
+            emitter.localSlots.push(newSlotReg);
+        }
         let slotReg = emitter.localSlots[slot];
         let resultReg = allocReg(emitter);
         emit(emitter, "  " + resultReg + " = load i64, i64* " + slotReg);
@@ -1075,6 +1081,12 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
     if (opcode == 19) {  // IrOpCode.STORE_LOCAL
         let slot = inst.args[0];
         let valueReg = getRegForValue(emitter, inst.args[1]);
+        // Allocate slot if it doesn't exist yet
+        while (emitter.localSlots.length <= slot) {
+            let newSlotReg = "%local" + String(emitter.localSlots.length);
+            emit(emitter, "  " + newSlotReg + " = alloca i64");
+            emitter.localSlots.push(newSlotReg);
+        }
         let slotReg = emitter.localSlots[slot];
         emit(emitter, "  store i64 " + valueReg + ", i64* " + slotReg);
         return;
@@ -1205,7 +1217,12 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
             i = i + 1;
         }
         // Call through function pointer
-        emit(emitter, "  " + resultReg + " = call i64 " + funcReg + "(" + args + ")");
+        // First, extract the raw pointer from the NaN-boxed i64 and cast to function pointer
+        let ptrIntReg = allocReg(emitter);
+        emit(emitter, "  " + ptrIntReg + " = and i64 " + funcReg + ", 281474976710655");
+        let funcPtrReg = allocReg(emitter);
+        emit(emitter, "  " + funcPtrReg + " = inttoptr i64 " + ptrIntReg + " to ptr");
+        emit(emitter, "  " + resultReg + " = call i64 " + funcPtrReg + "(" + args + ")");
         setRegForValue(emitter, dest, resultReg);
         return;
     }
