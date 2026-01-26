@@ -17,7 +17,7 @@ Script's core language is complete. Library functionality (HTTP, TLS, fs, etc.) 
 | Phase 1 | ✅ Complete | SSA IR (lowering, type inference, optimizations)  |
 | Phase 2 | ✅ Complete | Native Backend (Cranelift JIT + LLVM AOT)         |
 | Phase 3 | ✅ Complete | Language Completion (full TypeScript syntax)      |
-| Phase 4 | ✅ Complete | Self-Hosting Compiler (compiles itself to native) |
+| Phase 4 | 🚧 Working  | Self-Hosting Compiler (compiles itself to native) |
 | Phase 5 | 📋 Planned  | Rolls Ecosystem (HTTP, TLS, fs, crypto libraries) |
 | Phase 6 | 📋 Planned  | Tooling (fmt, lint, LSP, profiler)                |
 | Phase 7 | 📋 Planned  | Distribution (Unroll package manager)             |
