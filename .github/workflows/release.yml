@@ -95,6 +95,8 @@ jobs:
         if: matrix.target == 'x86_64-apple-darwin'
         run: |
           export MACOSX_DEPLOYMENT_TARGET=14.0
+          # Override LIBRARY_PATH to only use x86_64 libraries, preventing arm64 fallback
+          export LIBRARY_PATH="/usr/local/opt/zstd/lib:/usr/local/opt/llvm@18/lib"
           CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER=clang \
           CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS="-C link-arg=-arch -C link-arg=x86_64 -C link-arg=-L/usr/local/opt/zstd/lib -C link-arg=-lzstd -C link-arg=-L/usr/local/opt/llvm@18/lib -C link-arg=-mmacosx-version-min=14.0" \
           cargo build --release --target ${{ matrix.target }}
