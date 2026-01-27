@@ -94,11 +94,11 @@ jobs:
       - name: Build release binary (x86_64 macOS)
         if: matrix.target == 'x86_64-apple-darwin'
         run: |
-          export MACOSX_DEPLOYMENT_TARGET=14.0
-          # Override LIBRARY_PATH to only use x86_64 libraries, preventing arm64 fallback
-          export LIBRARY_PATH="/usr/local/opt/zstd/lib:/usr/local/opt/llvm@18/lib"
-          CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER=clang \
-          CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS="-C link-arg=-arch -C link-arg=x86_64 -C link-arg=-L/usr/local/opt/zstd/lib -C link-arg=-lzstd -C link-arg=-L/usr/local/opt/llvm@18/lib -C link-arg=-mmacosx-version-min=14.0" \
+          # Set deployment target for x86_64 target linking only (not build scripts)
+          export CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER=clang
+          export CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS="-C link-arg=-arch -C link-arg=x86_64 -C link-arg=-L/usr/local/opt/zstd/lib -C link-arg=-lzstd -C link-arg=-L/usr/local/opt/llvm@18/lib -C link-arg=-mmacosx-version-min=14.0"
+          # MACOSX_DEPLOYMENT_TARGET applies to target, use target-specific env var
+          export CARGO_TARGET_X86_64_APPLE_DARWIN_MACOSX_DEPLOYMENT_TARGET=14.0
           cargo build --release --target ${{ matrix.target }}
 
       - name: Build release binary
