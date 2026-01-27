@@ -87,6 +87,17 @@ jobs:
           echo "LLVM_SYS_180_PREFIX=/usr/local/opt/llvm@18" >> $GITHUB_ENV
           rustup target add x86_64-apple-darwin
 
+          # Create a linker wrapper that forces clang to run under x86_64 (Rosetta)
+          # This ensures the linker itself runs as x86_64 and properly links x86_64 libraries
+          sudo tee /usr/local/bin/clang-x86_64 >/dev/null <<'EOF'
+          #!/bin/sh
+          exec arch -x86_64 /usr/local/opt/llvm@18/bin/clang "$@"
+          EOF
+          sudo chmod +x /usr/local/bin/clang-x86_64
+
+          # Debug: show installed zstd architecture
+          file /usr/local/opt/zstd/lib/libzstd.dylib || true
+
       - name: Cache cargo registry
         uses: actions/cache@v4 # v4.2.3
         with:
@@ -103,10 +114,16 @@ jobs:
           # Clean any cached artifacts that might have wrong architecture
           cargo clean
 
-          # Set deployment target and linker flags for x86_64 target only
-          # Note: LIBRARY_PATH is intentionally NOT set globally to avoid breaking arm64 build scripts
+          # Remove arm64 zstd to prevent linker from finding it
+          sudo rm -rf /opt/homebrew/opt/zstd
+
           export MACOSX_DEPLOYMENT_TARGET=14.0
-          export CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER=clang
+
+          # Use x86_64 clang wrapper so the linker runs as x86_64 and picks up x86_64 libs
+          export CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER=/usr/local/bin/clang-x86_64
+
+          # Ensure the linker sees the x86_64 zstd and llvm libs
+          export LIBRARY_PATH="/usr/local/opt/zstd/lib:/usr/local/opt/llvm@18/lib"
           export CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS="-C link-arg=-arch -C link-arg=x86_64 -C link-arg=-L/usr/local/opt/zstd/lib -C link-arg=-lzstd -C link-arg=-L/usr/local/opt/llvm@18/lib -C link-arg=-mmacosx-version-min=14.0"
 
           cargo build --release --target ${{ matrix.target }}
