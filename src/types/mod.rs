@@ -773,4 +773,55 @@ mod tests {
         let substituted = ctx.substitute(&ty);
         assert_eq!(substituted, Type::Array(Box::new(Type::Number)));
     }
+
+    #[test]
+    fn test_lifetime_id() {
+        // Test 'static lifetime
+        assert_eq!(LifetimeId::STATIC.0, 0);
+        assert!(LifetimeId::STATIC.is_static());
+        assert_eq!(format!("{}", LifetimeId::STATIC), "'static");
+
+        // Test fresh lifetime IDs
+        let lt1 = fresh_lifetime_id();
+        let lt2 = fresh_lifetime_id();
+        assert!(!lt1.is_static());
+        assert!(!lt2.is_static());
+        assert_ne!(lt1, lt2); // Fresh IDs should be unique
+        assert!(lt1.0 > 0); // Fresh IDs start at 1
+        assert!(lt2.0 > 0);
+    }
+
+    #[test]
+    fn test_lifetime_param() {
+        let lt = fresh_lifetime_id();
+        let param = LifetimeParam::new(lt, "a".to_string());
+        assert_eq!(param.name, "a");
+        assert_eq!(param.id, lt);
+        assert!(param.bounds.is_empty());
+        assert_eq!(format!("{}", param), "'a");
+
+        // Test with bounds
+        let lt2 = fresh_lifetime_id();
+        let param_with_bounds = LifetimeParam::new(lt, "a".to_string())
+            .with_bounds(vec![lt2]);
+        assert_eq!(param_with_bounds.bounds.len(), 1);
+    }
+
+    #[test]
+    fn test_lifetime_display() {
+        // Static lifetime
+        assert_eq!(format!("{}", LifetimeId::STATIC), "'static");
+
+        // Non-static lifetimes show their ID
+        let lt = LifetimeId(5);
+        assert_eq!(format!("{}", lt), "'l5");
+
+        // Lifetime param with bounds
+        let param = LifetimeParam {
+            id: LifetimeId(1),
+            name: "a".to_string(),
+            bounds: vec![LifetimeId::STATIC],
+        };
+        assert_eq!(format!("{}", param), "'a: 'static");
+    }
 }
