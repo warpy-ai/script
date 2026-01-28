@@ -7,6 +7,8 @@ tags: [release, announcement, performance, memory-safety, typescript]
 image: /img/owl-light.png
 ---
 
+NOTE: A lot of good feedback has been received about the name Script. I've decided to keep it at the moment until mid February, while looking into a new name. There are a lot to consider, and I'm open to suggestions. You can give your suggestions about the name change here: https://github.com/warpy-ai/script/discussions/20
+
 After years of starting, killing, restarting, and refining, I finally realised a dream: operating JavaScript at the low level. And I'm giving it to the world!
 
 Script compiles JavaScript and TypeScript to native machine code, without garbage collection, featuring:
@@ -56,16 +58,29 @@ Script doesn't use a virtual machine or JIT compilation. Instead, it compiles di
 
 ### Rust-Inspired Memory Safety
 
-Script brings Rust's ownership model to JavaScript:
+Script brings Rust's ownership model to JavaScript with moves and borrows:
 
 ```typescript
-// Ownership and borrowing prevent memory errors
+// Move: ownership transfers, original becomes invalid
 let data = [1, 2, 3];
-let borrowed = data; // Move ownership
-// data is no longer accessible here
+let newOwner = data;      // Move ownership
+// console.log(data);     // ✗ Compile error: use after move
+console.log(newOwner);    // ✓ Works fine
+
+// Borrow: reference without taking ownership
+let items = [4, 5, 6];
+let ref = &items;         // Immutable borrow
+console.log(ref[0]);      // ✓ Can read through reference
+console.log(items[0]);    // ✓ Original still valid
+
+// Mutable borrow: exclusive write access
+let buffer = [0, 0, 0];
+let mutRef = &mut buffer;
+mutRef[0] = 42;           // ✓ Can mutate through &mut
+// let other = &buffer;   // ✗ Compile error: already mutably borrowed
 ```
 
-This eliminates entire classes of bugs:
+No lifetime annotations needed—Script infers them automatically. This eliminates entire classes of bugs:
 
 - Use-after-free
 - Double-free
@@ -101,47 +116,98 @@ const doubled = numbers.map((x) => x * 2);
 
 ## Current Status
 
-Script is in **preview** status. Here's what works:
+Script has reached a **major milestone**: the compiler is now **fully self-hosting** and can generate native binaries!
 
-✅ **Core Language Features**
+✅ **Core Language Complete (Phases 0-4)**
 
-- Variables, functions, classes
-- TypeScript syntax and type inference
-- Modules and imports
-- Control flow (if/else, loops, switch)
+**Phase 0: Runtime Kernel**
 
-✅ **Standard Library**
+- NaN-boxed values for efficient memory representation
+- Unified heap allocator
+- FFI stubs for native backends
 
-- `console`, `fs`, `path`, `math`, `date`
-- `Promise` for async operations
+**Phase 1: SSA IR System**
+
+- Register-based SSA intermediate representation
+- Flow-sensitive type inference
+- Dead code elimination, constant folding, CSE
+- Borrow checking for memory safety
+
+**Phase 2: Native Backend**
+
+- Cranelift JIT for fast development builds
+- LLVM AOT with ThinLTO and Full LTO
+- Multi-function JIT with tiered compilation
+- VM interpreter for debugging
+
+**Phase 3: Language Completion**
+
+- Full TypeScript syntax support (types, interfaces, enums)
+- ES6 classes with inheritance and private fields
+- Async/await with Promise support
+- Try/catch/finally error handling
+- ES module system (import/export)
+
+**Phase 4: Self-Hosting Compiler** ✅ **COMPLETE**
+
+- Bootstrap compiler written in Script (~5,000 lines)
+- Modular compiler architecture (~3,500 lines)
+- Generates LLVM IR from Script source
+- Native binaries ~30x faster than VM
+- 113 tests passing
+
+✅ **What You Can Do Today**
+
+```bash
+# Self-hosted compiler generates LLVM IR
+./script compiler/main.tscl llvm myapp.tscl
+
+# Compile to native binary
+clang myapp.tscl.ll -o myapp
+
+# Run at native speed!
+./myapp
+```
+
+✅ **Minimal Standard Library**
+
+Script core is intentionally minimal (like C without libc):
+
+- `console.log`, `console.error`
 - `ByteStream` for binary data
-- 100+ methods across 10 modules
+- Basic `fs` operations (readFileSync, writeFileSync)
+- Everything else comes from the Rolls ecosystem (coming soon)
 
-✅ **Compiler Features**
+🚀 **Next Phase: Rolls Ecosystem**
 
-- LLVM backend for optimized native code
-- Cranelift backend for fast development builds
-- SSA-based IR for optimization
-- Deterministic builds
-
-🚧 **In Progress**
-
-- Self-hosting compiler (Phase 4)
-- More standard library modules
-- Error handling improvements
-- Performance optimizations
+- Standard libraries (`@rolls/http`, `@rolls/tls`, `@rolls/fs`)
+- Package manager and build system (Unroll)
+- Language server and developer tools
+- Production-ready performance optimizations
 
 ## Performance Benchmarks
 
-Early benchmarks show Script's potential:
+Real-world performance with the self-hosted compiler:
 
-| Operation        | Node.js   | Bun       | Script     | Speedup  |
-| ---------------- | --------- | --------- | ---------- | -------- |
-| HTTP Server      | 20k req/s | 88k req/s | 90k+ req/s | **4.5x** |
-| Fibonacci (n=40) | 1.2s      | 0.8s      | 0.15s      | **8x**   |
-| Array Operations | Baseline  | 1.2x      | 2.5x       | **2.5x** |
+| Execution Mode       | Description                      | Performance             |
+| -------------------- | -------------------------------- | ----------------------- |
+| **VM**               | Bytecode interpreter (debugging) | Baseline                |
+| **Cranelift JIT**    | Fast compilation for development | ~6x faster than VM      |
+| **Native (LLVM IR)** | Self-hosted compiler output      | **~30x faster than VM** |
 
-_Note: Benchmarks are preliminary and will improve as the compiler matures._
+**Compilation Performance:**
+
+- Arithmetic operations: 2.34 µs/iter (VM) → 0.39 µs/iter (JIT)
+- JIT compilation time: ~980 µs per function
+- Break-even point: ~500 iterations
+
+**Native Binary Examples:**
+
+- Fibonacci(25): Matches Rust performance
+- Object/array operations: Full native speed
+- Function calls and recursion: Zero overhead
+
+_Note: Full benchmarks against Node.js and Bun will come with the Rolls ecosystem (HTTP server, etc.)_
 
 ## Getting Started
 
@@ -171,13 +237,16 @@ And get a native binary that runs with Rust-like performance.
 
 ## What's Next
 
-Script is just getting started. Here's what's coming:
+With the core language complete and self-hosting achieved, the focus shifts to the ecosystem:
 
-- **Self-hosting**: The compiler will compile itself
-- **More modules**: `crypto`, `os`, `process`, `buffer`
-- **Better tooling**: Language server, debugger, profiler
-- **Package ecosystem**: Module registry and package manager
-- **Production readiness**: Stability, documentation, examples
+- **Rolls System Libraries**: `@rolls/http`, `@rolls/tls`, `@rolls/fs`, `@rolls/crypto`, `@rolls/async`
+- **Unroll Tooling**: Package manager, build system, and project scaffolding
+- **Developer Experience**: Language server (LSP), debugger, profiler
+- **Performance Tuning**: Further LLVM optimizations, profile-guided optimization
+- **Production Hardening**: Comprehensive test coverage, real-world validation
+- **Documentation**: Complete API reference, tutorials, and examples
+
+The self-hosted compiler opens the door to rapid iteration—now we can improve Script by writing Script!
 
 ## Conclusion
 

@@ -68,6 +68,7 @@ const MODULAR_COMPILER_FILES: &[&str] = &[
     "compiler/parser/expr.tscl",
     "compiler/parser/stmt.tscl",
     "compiler/ir/builder.tscl",
+    "compiler/passes/types.tscl",
     "compiler/passes/typecheck.tscl",
     "compiler/passes/opt.tscl",
     "compiler/passes/borrow_ck.tscl",
