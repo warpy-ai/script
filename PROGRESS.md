@@ -8,15 +8,15 @@ High-performance systems language with **TypeScript syntax** compiling to **nati
 
 ## Quick Status
 
-| Phase   | Status      | Description                       |
-| ------- | ----------- | --------------------------------- |
-| Phase 0 | ✅ Complete | Runtime Kernel Foundation         |
-| Phase 1 | ✅ Complete | SSA IR System                     |
-| Phase 2 | ✅ Complete | Native Backend (Cranelift + LLVM) |
-| Phase 3 | ✅ Complete | Language Completion               |
-| Phase 4 | ✅ Complete | Self-Hosting Compiler             |
+**Core language complete.** Library functionality (HTTP, TLS, fs, etc.) will be developed in the **Rolls** ecosystem (separate repository).
 
-**Current Focus:** Language core is complete. Library functionality (HTTP, TLS, fs, etc.) will be developed in the **Rolls** ecosystem (separate repository).
+| Component | Status |
+|-----------|--------|
+| Runtime kernel (NaN-boxing, allocator) | ✅ Complete |
+| SSA IR + optimizations | ✅ Complete |
+| Native backends (Cranelift JIT, LLVM AOT) | ✅ Complete |
+| Language features | ✅ Complete |
+| Self-hosting compiler | ✅ Complete |
 
 ---
 
@@ -64,9 +64,9 @@ tscl source → Compiler → SSA IR → Native Backend → CPU
 
 ---
 
-## Phase Details
+## Implementation Details
 
-### Phase 0: Runtime Kernel ✅
+### Runtime Kernel ✅
 
 Unified runtime primitives shared across VM/JIT/AOT backends.
 
@@ -80,7 +80,7 @@ Unified runtime primitives shared across VM/JIT/AOT backends.
 
 ---
 
-### Phase 1: SSA IR System ✅
+### SSA IR System ✅
 
 Register-based SSA IR with type tracking and optimizations.
 
@@ -97,7 +97,7 @@ Register-based SSA IR with type tracking and optimizations.
 
 ---
 
-### Phase 2: Native Backend ✅
+### Native Backend ✅
 
 #### 2A: Cranelift JIT
 
@@ -132,7 +132,7 @@ script build app.tscl --dist -o app     # Full LTO
 
 ---
 
-### Phase 3: Language Completion ✅
+### Language Features ✅
 
 Full TypeScript-style language with ownership semantics.
 
@@ -185,7 +185,7 @@ Script core includes only essential primitives:
 
 ---
 
-### Phase 4: Self-Hosting Compiler ✅
+### Self-Hosting Compiler ✅
 
 Fully self-hosted compiler (`scriptc`) written in Script with TypeScript support.
 
@@ -238,14 +238,14 @@ The bootstrap compiler now supports TypeScript syntax:
 
 See `docs/SELF_HOSTING.md` for detailed plan.
 
-**Phase 1:** Foundation ✅
+**Foundation** ✅
 
 ```
 Source → bootstrap/*.tscl → Bytecode → Rust VM
 Source → src/compiler/ (Rust) → Native Binary ← Production builds
 ```
 
-**Phase 2 (Complete):** Feature Parity ✅
+**Feature Parity** ✅
 
 ```
 Source → compiler/*.tscl → Bytecode → Rust VM
@@ -253,7 +253,7 @@ Source → compiler/*.tscl → Bytecode → Rust VM
          + All CLI commands working: ast, ir, check, build, run
 ```
 
-**Phase 3 (Complete):** Native Code Generation ✅
+**Native Code Generation** ✅
 
 ```
 Source → compiler/*.tscl → LLVM IR (.ll) → clang → Native Binary
@@ -287,7 +287,7 @@ clang input.o -o output                                     # → native binary
 - Control flow (if/else, while, for)
 - No external runtime library needed
 
-**Phase 4:** Bootstrap Verification ✅
+**Bootstrap Verification** ✅
 
 ```
 tscl₀ (Rust) ──► tscl₁ (native scriptc)
