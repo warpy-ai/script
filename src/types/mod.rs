@@ -67,11 +67,8 @@ impl fmt::Display for InferId {
 pub struct LifetimeId(pub u32);
 
 impl LifetimeId {
-    /// The 'static lifetime - lives for the entire program duration.
-    /// Reserved as ID 0.
     pub const STATIC: LifetimeId = LifetimeId(0);
 
-    /// Check if this is the 'static lifetime.
     pub fn is_static(self) -> bool {
         self.0 == 0
     }
@@ -87,16 +84,12 @@ impl fmt::Display for LifetimeId {
     }
 }
 
-/// A lifetime parameter with a name binding.
-/// Used in function signatures like `fn find<'a>(...)`.
+/// A lifetime parameter in function/struct signatures (e.g., 'a in `fn find<'a>(...)`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LifetimeParam {
-    /// Unique identifier for this lifetime.
     pub id: LifetimeId,
-    /// The name as written in source (e.g., "a" for 'a).
     pub name: String,
-    /// Bounds: lifetimes this must outlive (for 'a: 'b syntax).
-    pub bounds: Vec<LifetimeId>,
+    pub bounds: Vec<LifetimeId>, // For 'a: 'b bounds
 }
 
 impl LifetimeParam {
@@ -130,12 +123,10 @@ impl fmt::Display for LifetimeParam {
     }
 }
 
-/// Global counter for generating unique type IDs.
 static NEXT_TYPE_ID: AtomicU32 = AtomicU32::new(0);
 static NEXT_TYPE_VAR_ID: AtomicU32 = AtomicU32::new(0);
 static NEXT_INFER_ID: AtomicU32 = AtomicU32::new(0);
-/// Starts at 1 because 0 is reserved for 'static.
-static NEXT_LIFETIME_ID: AtomicU32 = AtomicU32::new(1);
+static NEXT_LIFETIME_ID: AtomicU32 = AtomicU32::new(1); // 0 reserved for 'static
 
 pub fn fresh_type_id() -> TypeId {
     TypeId(NEXT_TYPE_ID.fetch_add(1, Ordering::SeqCst))
@@ -149,7 +140,6 @@ pub fn fresh_infer_id() -> InferId {
     InferId(NEXT_INFER_ID.fetch_add(1, Ordering::SeqCst))
 }
 
-/// Generate a fresh lifetime ID. ID 0 is reserved for 'static.
 pub fn fresh_lifetime_id() -> LifetimeId {
     LifetimeId(NEXT_LIFETIME_ID.fetch_add(1, Ordering::SeqCst))
 }
@@ -196,10 +186,16 @@ pub enum Type {
     Generic(TypeId, Vec<Type>),
 
     // === References (Borrow semantics) ===
-    /// Immutable borrow: Ref<T> compiles to &T semantics.
+    /// Immutable borrow: Ref<T> compiles to &T semantics (lifetime inferred).
     Ref(Box<Type>),
-    /// Mutable borrow: MutRef<T> compiles to &mut T semantics.
+    /// Mutable borrow: MutRef<T> compiles to &mut T semantics (lifetime inferred).
     MutRef(Box<Type>),
+    /// Immutable borrow with explicit lifetime: &'a T.
+    RefWithLifetime(LifetimeId, Box<Type>),
+    /// Mutable borrow with explicit lifetime: &'a mut T.
+    MutRefWithLifetime(LifetimeId, Box<Type>),
+    /// Lifetime as a type (for lifetime bounds and parameters).
+    Lifetime(LifetimeId),
 
     // === Special ===
     /// Dynamic type (escape hatch, disables optimizations).
@@ -232,7 +228,13 @@ impl Type {
 
     /// Check if this type is a reference (borrow).
     pub fn is_reference(&self) -> bool {
-        matches!(self, Type::Ref(_) | Type::MutRef(_))
+        matches!(
+            self,
+            Type::Ref(_)
+                | Type::MutRef(_)
+                | Type::RefWithLifetime(_, _)
+                | Type::MutRefWithLifetime(_, _)
+        )
     }
 
     /// Check if this type is a primitive.
@@ -261,7 +263,11 @@ impl Type {
                 func.params.iter().all(|(_, t)| t.is_concrete()) && func.return_ty.is_concrete()
             }
             Type::Ref(inner) | Type::MutRef(inner) => inner.is_concrete(),
+            Type::RefWithLifetime(_, inner) | Type::MutRefWithLifetime(_, inner) => {
+                inner.is_concrete()
+            }
             Type::Generic(_, args) => args.iter().all(|t| t.is_concrete()),
+            Type::Lifetime(_) => true, // Lifetimes are always concrete
             _ => true,
         }
     }
@@ -269,9 +275,26 @@ impl Type {
     /// Get the inner type for reference types.
     pub fn deref(&self) -> Option<&Type> {
         match self {
-            Type::Ref(inner) | Type::MutRef(inner) => Some(inner),
+            Type::Ref(inner)
+            | Type::MutRef(inner)
+            | Type::RefWithLifetime(_, inner)
+            | Type::MutRefWithLifetime(_, inner) => Some(inner),
             _ => None,
         }
+    }
+
+    /// Get the lifetime of a reference type, if it has one.
+    pub fn lifetime(&self) -> Option<LifetimeId> {
+        match self {
+            Type::RefWithLifetime(lt, _) | Type::MutRefWithLifetime(lt, _) => Some(*lt),
+            Type::Lifetime(lt) => Some(*lt),
+            _ => None,
+        }
+    }
+
+    /// Check if this is a mutable reference.
+    pub fn is_mut_ref(&self) -> bool {
+        matches!(self, Type::MutRef(_) | Type::MutRefWithLifetime(_, _))
     }
 
     /// Get element type for array types.
@@ -319,6 +342,9 @@ impl fmt::Display for Type {
             }
             Type::Ref(inner) => write!(f, "Ref<{}>", inner),
             Type::MutRef(inner) => write!(f, "MutRef<{}>", inner),
+            Type::RefWithLifetime(lt, inner) => write!(f, "&{} {}", lt, inner),
+            Type::MutRefWithLifetime(lt, inner) => write!(f, "&{} mut {}", lt, inner),
+            Type::Lifetime(lt) => write!(f, "{}", lt),
             Type::Any => write!(f, "any"),
             Type::Infer(id) => write!(f, "{}", id),
             Type::Error => write!(f, "<error>"),
@@ -675,6 +701,12 @@ impl TypeContext {
             Type::Array(inner) => Type::Array(Box::new(self.substitute(inner))),
             Type::Ref(inner) => Type::Ref(Box::new(self.substitute(inner))),
             Type::MutRef(inner) => Type::MutRef(Box::new(self.substitute(inner))),
+            Type::RefWithLifetime(lt, inner) => {
+                Type::RefWithLifetime(*lt, Box::new(self.substitute(inner)))
+            }
+            Type::MutRefWithLifetime(lt, inner) => {
+                Type::MutRefWithLifetime(*lt, Box::new(self.substitute(inner)))
+            }
             Type::Object(obj) => Type::Object(ObjectType {
                 fields: obj
                     .fields
@@ -822,5 +854,64 @@ mod tests {
             bounds: vec![LifetimeId::STATIC],
         };
         assert_eq!(format!("{}", param), "'a: 'static");
+    }
+
+    #[test]
+    fn test_ref_with_lifetime() {
+        let lt = fresh_lifetime_id();
+
+        // RefWithLifetime
+        let ref_ty = Type::RefWithLifetime(lt, Box::new(Type::Number));
+        assert!(ref_ty.is_reference());
+        assert!(!ref_ty.is_mut_ref());
+        assert_eq!(ref_ty.deref(), Some(&Type::Number));
+        assert_eq!(ref_ty.lifetime(), Some(lt));
+        assert!(ref_ty.is_concrete());
+
+        // MutRefWithLifetime
+        let mut_ref_ty = Type::MutRefWithLifetime(lt, Box::new(Type::String));
+        assert!(mut_ref_ty.is_reference());
+        assert!(mut_ref_ty.is_mut_ref());
+        assert_eq!(mut_ref_ty.deref(), Some(&Type::String));
+        assert_eq!(mut_ref_ty.lifetime(), Some(lt));
+
+        // Lifetime type
+        let lt_ty = Type::Lifetime(LifetimeId::STATIC);
+        assert_eq!(lt_ty.lifetime(), Some(LifetimeId::STATIC));
+        assert!(lt_ty.is_concrete());
+    }
+
+    #[test]
+    fn test_ref_with_lifetime_display() {
+        let lt = LifetimeId(1);
+
+        let ref_ty = Type::RefWithLifetime(lt, Box::new(Type::Number));
+        assert_eq!(format!("{}", ref_ty), "&'l1 number");
+
+        let mut_ref_ty = Type::MutRefWithLifetime(lt, Box::new(Type::String));
+        assert_eq!(format!("{}", mut_ref_ty), "&'l1 mut string");
+
+        let static_ref = Type::RefWithLifetime(LifetimeId::STATIC, Box::new(Type::String));
+        assert_eq!(format!("{}", static_ref), "&'static string");
+    }
+
+    #[test]
+    fn test_ref_with_lifetime_substitute() {
+        let mut ctx = TypeContext::new();
+        let var = fresh_type_var_id();
+        ctx.bind_type_var(var, Type::Number);
+
+        let lt = fresh_lifetime_id();
+        let ty = Type::RefWithLifetime(lt, Box::new(Type::TypeVar(var)));
+        let substituted = ctx.substitute(&ty);
+
+        // Should substitute inner type but preserve lifetime
+        match substituted {
+            Type::RefWithLifetime(sub_lt, inner) => {
+                assert_eq!(sub_lt, lt);
+                assert_eq!(*inner, Type::Number);
+            }
+            _ => panic!("Expected RefWithLifetime"),
+        }
     }
 }
