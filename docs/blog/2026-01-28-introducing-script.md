@@ -7,6 +7,8 @@ tags: [release, announcement, performance, memory-safety, typescript]
 image: /img/owl-light.png
 ---
 
+NOTE: A lot of good feedback has been received about the name Script. I've decided to keep it at the moment until mid February, while looking into a new name. There are a lot to consider, and I'm open to suggestions. You can give your suggestions about the name change [here](https://github.com/warpy-ai/script/discussions/20)
+
 After years of starting, killing, restarting, and refining, I finally realised a dream: operating JavaScript at the low level. And I'm giving it to the world!
 
 Script compiles JavaScript and TypeScript to native machine code, without garbage collection, featuring:
