@@ -1,0 +1,170 @@
+// ============================================================================
+// Test: Structural Type Checking
+// ============================================================================
+
+// ============================================================================
+// Test Utilities
+// ============================================================================
+
+let testsPassed = 0;
+let testsFailed = 0;
+
+function runTest(name, fn) {
+    let result = fn();
+    if (result) {
+        console.log("[PASS] " + name);
+        testsPassed = testsPassed + 1;
+    } else {
+        console.log("[FAIL] " + name);
+        testsFailed = testsFailed + 1;
+    }
+}
+
+function expectNoErrors(source) {
+    let ast = parseSource(source);
+    if (ast == null) {
+        console.log("  Parse failed");
+        return false;
+    }
+    let result = Passes.structuralTypeCheck(ast);
+    if (result.errors.length > 0) {
+        console.log("  Unexpected errors:");
+        let i = 0;
+        while (i < result.errors.length) {
+            console.log("    " + result.errors[i].message);
+            i = i + 1;
+        }
+        return false;
+    }
+    return true;
+}
+
+function expectErrorContaining(source, substring) {
+    let ast = parseSource(source);
+    if (ast == null) {
+        console.log("  Parse failed");
+        return false;
+    }
+    let result = Passes.structuralTypeCheck(ast);
+    if (result.errors.length == 0) {
+        console.log("  Expected error containing '" + substring + "', but no errors");
+        return false;
+    }
+    let i = 0;
+    while (i < result.errors.length) {
+        if (result.errors[i].message.indexOf(substring) >= 0) {
+            return true;
+        }
+        i = i + 1;
+    }
+    console.log("  No error containing '" + substring + "'");
+    console.log("  Got errors:");
+    i = 0;
+    while (i < result.errors.length) {
+        console.log("    " + result.errors[i].message);
+        i = i + 1;
+    }
+    return false;
+}
+
+// ============================================================================
+// Tests: Basic Type Checking
+// ============================================================================
+
+console.log("");
+console.log("=== Basic Type Checking ===");
+console.log("");
+
+runTest("Variable with matching type annotation", function() {
+    return expectNoErrors("let x: number = 42; let y: string = \"hello\"; let z: boolean = true;");
+});
+
+runTest("Variable type mismatch", function() {
+    return expectErrorContaining("let x: number = \"hello\";", "not assignable");
+});
+
+runTest("String assigned to number", function() {
+    return expectErrorContaining("let x: number = \"oops\";", "string");
+});
+
+runTest("Number assigned to string", function() {
+    return expectErrorContaining("let x: string = 123;", "number");
+});
+
+// ============================================================================
+// Tests: Interface and Structural Typing
+// ============================================================================
+
+console.log("");
+console.log("=== Structural Typing ===");
+console.log("");
+
+runTest("Object literal matches interface", function() {
+    return expectNoErrors("interface Point { x: number; y: number; } let p: Point = { x: 10, y: 20 };");
+});
+
+runTest("Object literal missing required field", function() {
+    return expectErrorContaining("interface Point { x: number; y: number; } let p: Point = { x: 10 };", "not assignable");
+});
+
+runTest("Object literal with extra fields (width subtyping)", function() {
+    return expectNoErrors("interface Point { x: number; y: number; } let p: Point = { x: 10, y: 20, z: 30 };");
+});
+
+runTest("Object literal with wrong field type", function() {
+    return expectErrorContaining("interface Point { x: number; y: number; } let p: Point = { x: \"wrong\", y: 20 };", "not assignable");
+});
+
+runTest("Optional fields can be omitted", function() {
+    return expectNoErrors("interface Config { name: string; debug?: boolean; } let c: Config = { name: \"test\" };");
+});
+
+// ============================================================================
+// Tests: Function Types
+// ============================================================================
+
+console.log("");
+console.log("=== Function Types ===");
+console.log("");
+
+runTest("Function with correct return type", function() {
+    return expectNoErrors("function add(a: number, b: number): number { return a + b; }");
+});
+
+runTest("Function with wrong return type", function() {
+    return expectErrorContaining("function getName(): string { return 42; }", "not assignable");
+});
+
+// ============================================================================
+// Tests: Any Type
+// ============================================================================
+
+console.log("");
+console.log("=== Any Type ===");
+console.log("");
+
+runTest("Any accepts anything", function() {
+    return expectNoErrors("let x: any = 42; let y: any = \"hello\";");
+});
+
+runTest("Anything accepts any", function() {
+    return expectNoErrors("let x: any = 42; let y: number = x; let z: string = x;");
+});
+
+// ============================================================================
+// Summary
+// ============================================================================
+
+console.log("");
+console.log("=== Summary ===");
+console.log("");
+console.log("Passed: " + testsPassed);
+console.log("Failed: " + testsFailed);
+
+if (testsFailed == 0) {
+    console.log("");
+    console.log("All tests passed!");
+} else {
+    console.log("");
+    console.log("Some tests failed.");
+}

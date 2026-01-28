@@ -3,6 +3,7 @@
 // Type checking, optimization, and borrow checking
 // ============================================================================
 
+require ./types;
 require ./typecheck;
 require ./opt;
 require ./borrow_ck;
@@ -44,10 +45,26 @@ function runBorrowCheck(module: IrModule): any[] {
 }
 
 // Run passes on AST (before IR lowering)
-function runAstPasses(ast: any): { errors: any[] } {
+function runAstPasses(ast: any): { errors: any[], typeErrors: any[] } {
+    // 1. Structural type checking on AST
+    let typeChecker = Types.check(ast);
+    let typeErrors = Types.getErrors(typeChecker);
+
+    // 2. Borrow checking on AST
     let borrowErrors = BorrowCheck.checkAst(ast);
+
     return {
-        errors: borrowErrors
+        errors: borrowErrors,
+        typeErrors: typeErrors
+    };
+}
+
+// Run structural type checking on AST
+function runStructuralTypeCheck(ast: any): { checker: any, errors: any[] } {
+    let checker = Types.check(ast);
+    return {
+        checker: checker,
+        errors: Types.getErrors(checker)
     };
 }
 
@@ -57,18 +74,20 @@ function runAstPasses(ast: any): { errors: any[] } {
 
 let Passes = {
     // Individual passes
-    TypeCheck: TypeCheck,
+    Types: Types,           // Structural type checking (AST level)
+    TypeCheck: TypeCheck,   // IR-level type inference
     Optimizer: Optimizer,
     BorrowCheck: BorrowCheck,
 
     // Pipeline functions
     runAll: runAllPasses,
     typecheck: runTypeCheck,
+    structuralTypeCheck: runStructuralTypeCheck,
     optimize: runOptimize,
     borrowCheck: runBorrowCheck,
     checkAst: runAstPasses,
 
-    version: "0.1.0"
+    version: "0.2.0"
 };
 
 console.log("Compiler passes loaded");
