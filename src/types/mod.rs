@@ -802,8 +802,7 @@ mod tests {
 
         // Test with bounds
         let lt2 = fresh_lifetime_id();
-        let param_with_bounds = LifetimeParam::new(lt, "a".to_string())
-            .with_bounds(vec![lt2]);
+        let param_with_bounds = LifetimeParam::new(lt, "a".to_string()).with_bounds(vec![lt2]);
         assert_eq!(param_with_bounds.bounds.len(), 1);
     }
 
