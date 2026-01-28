@@ -32,18 +32,20 @@ So I developed a solution, and the initial benchmarks were... honest: **31,136 r
 
 Not bad! I was able to beat Express.js by 55%. But I wanted more. I wanted to hit **88,000 req/sec**, where fast JavaScript libraries, like Fastify, usually sit. But I was never able to achieve it.
 
+I've even tried to use LLM's to improve the performance, which fails miserably, and you can read more about it -> [here](https://medium.com/@jucasoliveira/llm-tried-to-cheat-benchmarks-it-failed-c0f5b42400db).
+
 Then I turned to the runtimes, primarily Node.js and then Bun. I studied how they work, and how Bun excels in performance and where to achieve it, and I realized that the best way to achieve it was to create a language that is a mix of Rust and JavaScript/TypeScript.
 
 ## Philosophy
 
 Script was born from four core principles:
 
-- **Performance** — I want to have the same performance as Rust and Go, but with the ease of use of JavaScript/TypeScript.
-- **Memory Safety** — I want to have the same memory safety as Rust, but with the ease of use of JavaScript/TypeScript.
-- **Type Safety** — I want to have the same type safety as Rust, but with the ease of use of JavaScript/TypeScript.
-- **Ease of Use** — I want to have the same ease of use of JavaScript/TypeScript, but with the performance of Rust and Go.
+- **Performance** - I want to have the same performance as Rust and Go, but with the ease of use of JavaScript/TypeScript.
+- **Memory Safety** - I want to have the same memory safety as Rust, but with the ease of use of JavaScript/TypeScript.
+- **Type Safety** - I want to have the same type safety as Rust, but with the ease of use of JavaScript/TypeScript.
+- **Ease of Use** - I want to have the same ease of use of JavaScript/TypeScript, but with the performance of Rust and Go.
 
-And then Script was born. It's still in its early stages—I call it a preview, and not yet production ready—but I've been able to achieve the performance I wanted, and the memory safety I wanted, and the type safety I wanted, and the ease of use I wanted.
+And then Script was born. It's still in its early stages, I call it a preview, and not yet production ready, but I've been able to achieve the performance I wanted, the memory safety I wanted, the type safety I wanted, and the ease of use I wanted.
 
 ## What Makes Script Different
 
@@ -148,7 +150,7 @@ Script has reached a **major milestone**: the compiler is now **fully self-hosti
 - Try/catch/finally error handling
 - ES module system (import/export)
 
-**Phase 4: Self-Hosting Compiler** ✅ **COMPLETE**
+**Phase 4: Self-Hosting Compiler**
 
 - Bootstrap compiler written in Script (~5,000 lines)
 - Modular compiler architecture (~3,500 lines)
@@ -156,7 +158,7 @@ Script has reached a **major milestone**: the compiler is now **fully self-hosti
 - Native binaries ~30x faster than VM
 - 113 tests passing
 
-✅ **What You Can Do Today**
+  **What You Can Do Today**
 
 ```bash
 # Self-hosted compiler generates LLVM IR
@@ -169,7 +171,7 @@ clang myapp.tscl.ll -o myapp
 ./myapp
 ```
 
-✅ **Minimal Standard Library**
+**Minimal Standard Library**
 
 Script core is intentionally minimal (like C without libc):
 
@@ -178,7 +180,7 @@ Script core is intentionally minimal (like C without libc):
 - Basic `fs` operations (readFileSync, writeFileSync)
 - Everything else comes from the Rolls ecosystem (coming soon)
 
-🚀 **Next Phase: Rolls Ecosystem**
+**Next Phase: Rolls Ecosystem**
 
 - Standard libraries (`@rolls/http`, `@rolls/tls`, `@rolls/fs`)
 - Package manager and build system (Unroll)
@@ -228,9 +230,10 @@ cargo build --release
 
 Write your code in TypeScript:
 
-```typescript
-// hello.tscl
-console.log("Hello, Script!");
+```javascript
+// hello.ts
+const name: string = "Script";
+console.log(`Hello, ${name}!`);
 ```
 
 And get a native binary that runs with Rust-like performance.
