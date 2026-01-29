@@ -1,14 +1,4 @@
-// ============================================================================
-// Borrow Checker for tscl Compiler
-// Ownership and borrowing analysis with type information
-// ============================================================================
-
-// Dependencies loaded by runtime (require ../ syntax not supported)
-// require ../ir/mod;
-
-// ============================================================================
-// Variable Kind (Determines Ownership Semantics)
-// ============================================================================
+// Borrow Checker - Ownership and borrowing analysis with lifetime tracking
 
 enum VarKind {
     PRIMITIVE = 0,  // Numbers, Booleans (Copy semantics)
@@ -17,10 +7,6 @@ enum VarKind {
     BORROW_MUT = 3  // Mutable borrow (MutRef<T>)
 }
 
-// ============================================================================
-// Variable State (Ownership State)
-// ============================================================================
-
 enum VarState {
     OWNED = 0,           // Currently valid and owned
     MOVED = 1,           // Data has been moved
@@ -28,10 +14,6 @@ enum VarState {
     BORROWED = 3,        // Borrowed immutably
     BORROWED_MUT = 4     // Borrowed mutably
 }
-
-// ============================================================================
-// Variable Information
-// ============================================================================
 
 interface VarInfo {
     name: string;
@@ -42,9 +24,12 @@ interface VarInfo {
     mutBorrow: boolean;
     defLocation: string;
     movedLocation: string | null;
+    lifetime: string | null;
+    borrowedFrom: string | null;
+    scopeDepth: number;
 }
 
-function createVarInfo(name: string, irType: IrType, location: string): VarInfo {
+function createVarInfo(name: string, irType: IrType, location: string, scopeDepth: number): VarInfo {
     return {
         name: name,
         irType: irType,
@@ -53,7 +38,26 @@ function createVarInfo(name: string, irType: IrType, location: string): VarInfo 
         immutBorrows: 0,
         mutBorrow: false,
         defLocation: location,
-        movedLocation: null
+        movedLocation: null,
+        lifetime: null,
+        borrowedFrom: null,
+        scopeDepth: scopeDepth
+    };
+}
+
+function createBorrowVarInfo(name: string, irType: IrType, location: string, scopeDepth: number, borrowedFrom: string, mutable: boolean, lifetime: string | null): VarInfo {
+    return {
+        name: name,
+        irType: irType,
+        kind: mutable ? VarKind.BORROW_MUT : VarKind.BORROW,
+        state: VarState.OWNED,
+        immutBorrows: 0,
+        mutBorrow: false,
+        defLocation: location,
+        movedLocation: null,
+        lifetime: lifetime,
+        borrowedFrom: borrowedFrom,
+        scopeDepth: scopeDepth
     };
 }
 
@@ -65,7 +69,6 @@ function kindFromType(irType: IrType): VarKind {
         irType == IrType.OBJECT || irType == IrType.FUNCTION) {
         return VarKind.HEAP;
     }
-    // Default to HEAP for safety (conservative)
     return VarKind.HEAP;
 }
 
@@ -76,10 +79,6 @@ function isCopy(info: VarInfo): boolean {
 function isMove(info: VarInfo): boolean {
     return info.kind == VarKind.HEAP;
 }
-
-// ============================================================================
-// Borrow Error Types
-// ============================================================================
 
 interface BorrowError {
     kind: string;
@@ -102,15 +101,13 @@ function formatBorrowError(error: BorrowError): string {
            " (variable: " + error.variable + ", at: " + error.location + ")";
 }
 
-// ============================================================================
-// Borrow Checker
-// ============================================================================
-
 interface BorrowChecker {
     symbols: { [name: string]: VarInfo };
     errors: BorrowError[];
     scopeDepth: number;
-    scopeStack: string[][];  // Each scope tracks variable names
+    scopeStack: string[][];
+    lifetimeScopes: { [name: string]: number };
+    currentFunctionLifetime: string | null;
 }
 
 function createBorrowChecker(): BorrowChecker {
@@ -118,13 +115,11 @@ function createBorrowChecker(): BorrowChecker {
         symbols: {},
         errors: [],
         scopeDepth: 0,
-        scopeStack: [[]]  // Start with global scope
+        scopeStack: [[]],
+        lifetimeScopes: { "static": 0 },
+        currentFunctionLifetime: null
     };
 }
-
-// ============================================================================
-// Scope Management
-// ============================================================================
 
 function enterScope(checker: BorrowChecker): void {
     checker.scopeDepth = checker.scopeDepth + 1;
@@ -145,37 +140,46 @@ function exitScope(checker: BorrowChecker): void {
     }
 }
 
-// ============================================================================
-// Variable Management
-// ============================================================================
-
 function defineVariable(checker: BorrowChecker, name: string, irType: IrType, location: string): void {
-    let info = createVarInfo(name, irType, location);
+    let info = createVarInfo(name, irType, location, checker.scopeDepth);
     checker.symbols[name] = info;
 
-    // Track in current scope
     let currentScope = checker.scopeStack[checker.scopeStack.length - 1];
     if (currentScope != null) {
         currentScope.push(name);
     }
 }
 
+function defineLifetime(checker: BorrowChecker, name: string): void {
+    checker.lifetimeScopes[name] = checker.scopeDepth;
+}
+
+function getLifetimeScope(checker: BorrowChecker, name: string): number {
+    if (checker.lifetimeScopes[name] != null) {
+        return checker.lifetimeScopes[name];
+    }
+    return -1;
+}
+
+function lifetimeOutlives(checker: BorrowChecker, longer: string, shorter: string): boolean {
+    let longerScope = getLifetimeScope(checker, longer);
+    let shorterScope = getLifetimeScope(checker, shorter);
+    if (longerScope == -1 || shorterScope == -1) {
+        return true;
+    }
+    return longerScope <= shorterScope;
+}
+
 function lookupVariable(checker: BorrowChecker, name: string): VarInfo | null {
     return checker.symbols[name];
 }
 
-// ============================================================================
-// Ownership Operations
-// ============================================================================
-
-// Process a variable use (potential move or copy)
 function processUse(checker: BorrowChecker, name: string, location: string): boolean {
     let info = lookupVariable(checker, name);
     if (info == null) {
-        return true;  // Unknown variable, let type checker handle it
+        return true;
     }
 
-    // Check for use-after-move
     if (info.state == VarState.MOVED) {
         let error = createBorrowError(
             "UseAfterMove",
@@ -198,7 +202,6 @@ function processUse(checker: BorrowChecker, name: string, location: string): boo
         return false;
     }
 
-    // If it's a move type and not borrowed, this is a move
     if (isMove(info) && info.immutBorrows == 0 && !info.mutBorrow) {
         info.state = VarState.MOVED;
         info.movedLocation = location;
@@ -207,14 +210,12 @@ function processUse(checker: BorrowChecker, name: string, location: string): boo
     return true;
 }
 
-// Process a borrow (immutable or mutable)
 function processBorrow(checker: BorrowChecker, name: string, mutable: boolean, location: string): boolean {
     let info = lookupVariable(checker, name);
     if (info == null) {
-        return true;  // Unknown variable
+        return true;
     }
 
-    // Check for borrow of moved variable
     if (info.state == VarState.MOVED) {
         let error = createBorrowError(
             "BorrowAfterMove",
@@ -238,7 +239,6 @@ function processBorrow(checker: BorrowChecker, name: string, mutable: boolean, l
     }
 
     if (mutable) {
-        // Mutable borrow: no other borrows allowed
         if (info.immutBorrows > 0) {
             let error = createBorrowError(
                 "BorrowConflict",
@@ -262,7 +262,6 @@ function processBorrow(checker: BorrowChecker, name: string, mutable: boolean, l
         info.mutBorrow = true;
         info.state = VarState.BORROWED_MUT;
     } else {
-        // Immutable borrow: no mutable borrows allowed
         if (info.mutBorrow) {
             let error = createBorrowError(
                 "BorrowConflict",
@@ -282,7 +281,6 @@ function processBorrow(checker: BorrowChecker, name: string, mutable: boolean, l
     return true;
 }
 
-// Release a borrow
 function releaseBorrow(checker: BorrowChecker, name: string, mutable: boolean): void {
     let info = lookupVariable(checker, name);
     if (info == null) {
@@ -304,7 +302,46 @@ function releaseBorrow(checker: BorrowChecker, name: string, mutable: boolean): 
     }
 }
 
-// Process assignment (check if target is borrowed)
+function checkBorrowOutlives(checker: BorrowChecker, borrowInfo: VarInfo, location: string): boolean {
+    if (borrowInfo.borrowedFrom == null) {
+        return true;
+    }
+
+    let sourceInfo = lookupVariable(checker, borrowInfo.borrowedFrom);
+    if (sourceInfo == null) {
+        return true;
+    }
+
+    if (borrowInfo.scopeDepth < sourceInfo.scopeDepth) {
+        let error = createBorrowError(
+            "BorrowOutlives",
+            "Borrow of '" + borrowInfo.borrowedFrom + "' outlives its source",
+            borrowInfo.name,
+            location
+        );
+        checker.errors.push(error);
+        return false;
+    }
+
+    return true;
+}
+
+function defineBorrowVariable(checker: BorrowChecker, name: string, irType: IrType, location: string, borrowedFrom: string, mutable: boolean, lifetime: string | null): void {
+    let info = createBorrowVarInfo(name, irType, location, checker.scopeDepth, borrowedFrom, mutable, lifetime);
+    checker.symbols[name] = info;
+
+    let currentScope = checker.scopeStack[checker.scopeStack.length - 1];
+    if (currentScope != null) {
+        currentScope.push(name);
+    }
+
+    if (!processBorrow(checker, borrowedFrom, mutable, location)) {
+        return;
+    }
+
+    checkBorrowOutlives(checker, info, location);
+}
+
 function processAssignment(checker: BorrowChecker, name: string, location: string): boolean {
     let info = lookupVariable(checker, name);
     if (info == null) {
@@ -325,14 +362,12 @@ function processAssignment(checker: BorrowChecker, name: string, location: strin
     return true;
 }
 
-// Process capture by closure
 function processCapture(checker: BorrowChecker, name: string, location: string): boolean {
     let info = lookupVariable(checker, name);
     if (info == null) {
         return true;
     }
 
-    // Check if already moved or captured
     if (info.state == VarState.MOVED || info.state == VarState.CAPTURED) {
         let error = createBorrowError(
             "CaptureAfterMove",
@@ -344,7 +379,6 @@ function processCapture(checker: BorrowChecker, name: string, location: string):
         return false;
     }
 
-    // Check for active borrows
     if (info.immutBorrows > 0 || info.mutBorrow) {
         let error = createBorrowError(
             "CaptureWhileBorrowed",
@@ -356,17 +390,12 @@ function processCapture(checker: BorrowChecker, name: string, location: string):
         return false;
     }
 
-    // Move into closure if it's a move type
     if (isMove(info)) {
         info.state = VarState.CAPTURED;
     }
 
     return true;
 }
-
-// ============================================================================
-// AST Analysis
-// ============================================================================
 
 function analyzeStatement(checker: BorrowChecker, stmt: any): boolean {
     if (stmt == null) {
@@ -465,19 +494,14 @@ function analyzeStatement(checker: BorrowChecker, stmt: any): boolean {
 
 function analyzeVariableDeclaration(checker: BorrowChecker, decl: any): boolean {
     let ok = true;
-
-    // Handle parser's single-variable format: {name, init, kind}
-    // (different from ESTree's {declarations: [{id, init}], kind})
     let name = decl.name;
     if (name != null) {
-        // Analyze initializer first (may move values)
         if (decl.init != null) {
             if (!analyzeExpression(checker, decl.init)) {
                 ok = false;
             }
         }
 
-        // Determine type and register variable
         let irType = inferIrType(decl);
         defineVariable(checker, name, irType, "decl");
     }
@@ -498,7 +522,6 @@ function analyzeExpression(checker: BorrowChecker, expr: any): boolean {
     }
 
     if (exprType == "MemberExpression") {
-        // Member access is an implicit borrow
         if (expr.object.type == "Identifier") {
             return processBorrow(checker, expr.object.name, false, "member");
         }
@@ -506,7 +529,6 @@ function analyzeExpression(checker: BorrowChecker, expr: any): boolean {
     }
 
     if (exprType == "AssignmentExpression") {
-        // Check if assigning to a borrowed variable
         if (expr.left.type == "Identifier") {
             let name = expr.left.name;
             if (!processAssignment(checker, name, "assign")) {
@@ -529,7 +551,6 @@ function analyzeExpression(checker: BorrowChecker, expr: any): boolean {
     }
 
     if (exprType == "CallExpression") {
-        // Function arguments are implicit borrows
         let ok = true;
         let i = 0;
         while (i < expr.arguments.length) {
@@ -599,10 +620,8 @@ function analyzeExpression(checker: BorrowChecker, expr: any): boolean {
 }
 
 function analyzeFunctionDeclaration(checker: BorrowChecker, func: any): boolean {
-    // Create new scope for function body
     enterScope(checker);
 
-    // Register parameters
     let i = 0;
     while (i < func.params.length) {
         let paramName = getIdentifierName(func.params[i]);
@@ -612,7 +631,6 @@ function analyzeFunctionDeclaration(checker: BorrowChecker, func: any): boolean 
         i = i + 1;
     }
 
-    // Analyze body
     let ok = true;
     if (func.body != null) {
         if (func.body.type == "BlockStatement") {
@@ -636,7 +654,6 @@ function analyzeFunctionDeclaration(checker: BorrowChecker, func: any): boolean 
 }
 
 function analyzeClosureCaptures(checker: BorrowChecker, closure: any): boolean {
-    // Collect parameter names
     let paramNames: { [name: string]: boolean } = {};
     let i = 0;
     while (i < closure.params.length) {
@@ -647,11 +664,9 @@ function analyzeClosureCaptures(checker: BorrowChecker, closure: any): boolean {
         i = i + 1;
     }
 
-    // Scan for captured variables
     let captured: string[] = [];
     scanForCaptures(checker, closure.body, paramNames, captured);
 
-    // Process captures
     let ok = true;
     i = 0;
     while (i < captured.length) {
@@ -672,7 +687,6 @@ function scanForCaptures(checker: BorrowChecker, node: any, localVars: { [name: 
     if (node.type == "Identifier") {
         let name = node.name;
         if (!localVars[name] && checker.symbols[name] != null) {
-            // Check if already captured
             let found = false;
             let i = 0;
             while (i < captured.length) {
@@ -741,10 +755,6 @@ function scanForCaptures(checker: BorrowChecker, node: any, localVars: { [name: 
     }
 }
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
 function getIdentifierName(node: any): string | null {
     if (node == null) {
         return null;
@@ -783,13 +793,7 @@ function inferIrType(decl: any): IrType {
     return IrType.ANY;
 }
 
-// ============================================================================
-// Public API
-// ============================================================================
-
 function checkFunction(func: IrFunction): BorrowError[] {
-    // For IR-based checking, we would analyze the IR instructions
-    // This is a simplified version that focuses on the AST
     let checker = createBorrowChecker();
     return checker.errors;
 }
@@ -823,16 +827,17 @@ function checkAst(ast: any): BorrowError[] {
     return checker.errors;
 }
 
-// ============================================================================
-// Export
-// ============================================================================
-
 let BorrowCheck = {
     createChecker: createBorrowChecker,
     defineVariable: defineVariable,
+    defineBorrowVariable: defineBorrowVariable,
+    defineLifetime: defineLifetime,
+    getLifetimeScope: getLifetimeScope,
+    lifetimeOutlives: lifetimeOutlives,
     processUse: processUse,
     processBorrow: processBorrow,
     releaseBorrow: releaseBorrow,
+    checkBorrowOutlives: checkBorrowOutlives,
     processAssignment: processAssignment,
     processCapture: processCapture,
     checkFunction: checkFunction,
