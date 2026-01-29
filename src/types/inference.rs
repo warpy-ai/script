@@ -745,7 +745,10 @@ pub fn count_input_reference_params(func: &FunctionType) -> usize {
 fn is_reference_type(ty: &Type) -> bool {
     matches!(
         ty,
-        Type::Ref(_) | Type::MutRef(_) | Type::RefWithLifetime(_, _) | Type::MutRefWithLifetime(_, _)
+        Type::Ref(_)
+            | Type::MutRef(_)
+            | Type::RefWithLifetime(_, _)
+            | Type::MutRefWithLifetime(_, _)
     )
 }
 
