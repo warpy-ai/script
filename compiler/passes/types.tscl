@@ -42,6 +42,8 @@ let BuiltinTypes = {
     unknown: { kind: "unknown" }
 };
 
+let STATIC_LIFETIME = "static";
+
 function findField(fields, name) {
     if (fields == null) return null;
     let i = 0;
@@ -651,6 +653,18 @@ function needsLifetimeElision(funcType) {
     }
     return hasReferenceType(funcType.returnType);
 }
+
+function isStaticLifetime(lifetime) {
+    return lifetime == "static" || lifetime == "'static";
+}
+
+function staticOutlivesAll(lifetime) {
+    if(isStaticLifetime(lifetime)) {
+        return true;
+    }
+    return false;
+}
+
 
 function hasReferenceType(type) {
     if (type == null) {
@@ -1697,7 +1711,10 @@ let Types = {
     applyLifetimeToRefs: applyLifetimeToRefs,
     countInputReferenceParams: countInputReferenceParams,
     isReferenceType: isReferenceType,
-    ElisionResultKind: ElisionResultKind
+    ElisionResultKind: ElisionResultKind,
+    isStaticLifetime: isStaticLifetime,
+    staticOutlivesAll: staticOutlivesAll,
+    STATIC_LIFETIME: STATIC_LIFETIME
 };
 
 console.log("Structural type checker loaded");
