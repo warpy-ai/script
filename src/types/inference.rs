@@ -9,11 +9,10 @@ use std::collections::HashMap;
 
 use super::error::{Span, TypeError, TypeErrors};
 use super::registry::TypeRegistry;
-use super::{FunctionType, InferId, ObjectType, Type, TypeContext, fresh_infer_id};
-
-// ============================================================================
-// Constraints
-// ============================================================================
+use super::{
+    FunctionType, InferId, LifetimeId, LifetimeParam, ObjectType, Type, TypeContext,
+    fresh_infer_id, fresh_lifetime_id,
+};
 
 /// Type constraints generated during inference.
 #[derive(Debug, Clone)]
@@ -45,10 +44,6 @@ impl Constraint {
         }
     }
 }
-
-// ============================================================================
-// Type Inference Engine
-// ============================================================================
 
 /// The type inference engine.
 pub struct InferenceEngine<'a> {
@@ -128,10 +123,6 @@ impl<'a> InferenceEngine<'a> {
             self.context = *parent;
         }
     }
-
-    // ========================================================================
-    // Unification
-    // ========================================================================
 
     /// Solve all constraints using unification.
     pub fn solve(&mut self) -> Result<(), TypeErrors> {
@@ -423,10 +414,6 @@ impl<'a> InferenceEngine<'a> {
         }
     }
 
-    // ========================================================================
-    // Substitution
-    // ========================================================================
-
     /// Apply current substitutions to a type.
     pub fn apply_substitutions(&self, ty: &Type) -> Type {
         match ty {
@@ -504,10 +491,6 @@ impl<'a> InferenceEngine<'a> {
     }
 }
 
-// ============================================================================
-// Flow-Sensitive Type Narrowing
-// ============================================================================
-
 /// Type narrowing for control flow.
 pub struct TypeNarrower {
     /// Stack of narrowing contexts (for nested conditionals).
@@ -565,9 +548,284 @@ impl Default for TypeNarrower {
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
+#[derive(Debug, Clone)]
+pub enum ElisionResult {
+    Applied(FunctionType),
+    NoElisionNeeded(FunctionType),
+    AmbiguousLifetime { span: Span },
+}
+
+pub fn apply_lifetime_elision(func: &FunctionType, span: Span) -> ElisionResult {
+    if !func.lifetime_params.is_empty() {
+        return ElisionResult::NoElisionNeeded(func.clone());
+    }
+
+    if !needs_lifetime_elision(func) {
+        return ElisionResult::NoElisionNeeded(func.clone());
+    }
+
+    let input_lifetimes = collect_input_lifetimes(func);
+
+    if func.is_method {
+        return apply_method_elision(func, &input_lifetimes);
+    }
+
+    match input_lifetimes.len() {
+        0 => ElisionResult::NoElisionNeeded(func.clone()),
+        1 => apply_single_input_elision(func, input_lifetimes[0]),
+        _ => ElisionResult::AmbiguousLifetime { span },
+    }
+}
+
+fn needs_lifetime_elision(func: &FunctionType) -> bool {
+    has_reference_type(&func.return_ty)
+}
+
+fn has_reference_type(ty: &Type) -> bool {
+    match ty {
+        Type::Ref(_) | Type::MutRef(_) => true,
+        Type::RefWithLifetime(_, _) | Type::MutRefWithLifetime(_, _) => true,
+        Type::Array(inner) => has_reference_type(inner),
+        Type::Object(obj) => obj.fields.values().any(has_reference_type),
+        Type::Function(f) => {
+            f.params.iter().any(|(_, t)| has_reference_type(t)) || has_reference_type(&f.return_ty)
+        }
+        Type::Generic(_, args) => args.iter().any(has_reference_type),
+        _ => false,
+    }
+}
+
+fn collect_input_lifetimes(func: &FunctionType) -> Vec<LifetimeId> {
+    let mut lifetimes = Vec::new();
+    for (_, ty) in &func.params {
+        collect_lifetimes_from_type(ty, &mut lifetimes);
+    }
+    lifetimes
+}
+
+fn collect_lifetimes_from_type(ty: &Type, lifetimes: &mut Vec<LifetimeId>) {
+    match ty {
+        Type::Ref(_) | Type::MutRef(_) => {
+            let fresh = fresh_lifetime_id();
+            if !lifetimes.contains(&fresh) {
+                lifetimes.push(fresh);
+            }
+        }
+        Type::RefWithLifetime(id, _) | Type::MutRefWithLifetime(id, _) => {
+            if !lifetimes.contains(id) {
+                lifetimes.push(*id);
+            }
+        }
+        Type::Array(inner) => collect_lifetimes_from_type(inner, lifetimes),
+        Type::Object(obj) => {
+            for ty in obj.fields.values() {
+                collect_lifetimes_from_type(ty, lifetimes);
+            }
+        }
+        Type::Function(f) => {
+            for (_, t) in &f.params {
+                collect_lifetimes_from_type(t, lifetimes);
+            }
+            collect_lifetimes_from_type(&f.return_ty, lifetimes);
+        }
+        Type::Generic(_, args) => {
+            for arg in args {
+                collect_lifetimes_from_type(arg, lifetimes);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn apply_single_input_elision(func: &FunctionType, input_lifetime: LifetimeId) -> ElisionResult {
+    let lifetime_param = LifetimeParam {
+        id: input_lifetime,
+        name: "a".to_string(),
+        bounds: Vec::new(),
+    };
+
+    let new_return_ty = apply_lifetime_to_refs(&func.return_ty, input_lifetime);
+
+    let new_params: Vec<(String, Type)> = func
+        .params
+        .iter()
+        .map(|(name, ty)| (name.clone(), apply_lifetime_to_refs(ty, input_lifetime)))
+        .collect();
+
+    ElisionResult::Applied(FunctionType {
+        lifetime_params: vec![lifetime_param],
+        type_params: func.type_params.clone(),
+        params: new_params,
+        return_ty: new_return_ty,
+        is_method: func.is_method,
+    })
+}
+
+fn apply_method_elision(func: &FunctionType, input_lifetimes: &[LifetimeId]) -> ElisionResult {
+    let self_lifetime = if input_lifetimes.is_empty() {
+        fresh_lifetime_id()
+    } else {
+        input_lifetimes[0]
+    };
+
+    let lifetime_param = LifetimeParam {
+        id: self_lifetime,
+        name: "self".to_string(),
+        bounds: Vec::new(),
+    };
+
+    let new_return_ty = apply_lifetime_to_refs(&func.return_ty, self_lifetime);
+
+    let new_params: Vec<(String, Type)> = func
+        .params
+        .iter()
+        .map(|(name, ty)| (name.clone(), apply_lifetime_to_refs(ty, self_lifetime)))
+        .collect();
+
+    ElisionResult::Applied(FunctionType {
+        lifetime_params: vec![lifetime_param],
+        type_params: func.type_params.clone(),
+        params: new_params,
+        return_ty: new_return_ty,
+        is_method: func.is_method,
+    })
+}
+
+fn apply_lifetime_to_refs(ty: &Type, lifetime: LifetimeId) -> Type {
+    match ty {
+        Type::Ref(inner) => {
+            Type::RefWithLifetime(lifetime, Box::new(apply_lifetime_to_refs(inner, lifetime)))
+        }
+        Type::MutRef(inner) => {
+            Type::MutRefWithLifetime(lifetime, Box::new(apply_lifetime_to_refs(inner, lifetime)))
+        }
+        Type::RefWithLifetime(_, inner) => {
+            Type::RefWithLifetime(lifetime, Box::new(apply_lifetime_to_refs(inner, lifetime)))
+        }
+        Type::MutRefWithLifetime(_, inner) => {
+            Type::MutRefWithLifetime(lifetime, Box::new(apply_lifetime_to_refs(inner, lifetime)))
+        }
+        Type::Array(inner) => Type::Array(Box::new(apply_lifetime_to_refs(inner, lifetime))),
+        Type::Object(obj) => Type::Object(ObjectType {
+            fields: obj
+                .fields
+                .iter()
+                .map(|(k, v)| (k.clone(), apply_lifetime_to_refs(v, lifetime)))
+                .collect(),
+            exact: obj.exact,
+        }),
+        Type::Function(f) => Type::Function(Box::new(FunctionType {
+            lifetime_params: f.lifetime_params.clone(),
+            type_params: f.type_params.clone(),
+            params: f
+                .params
+                .iter()
+                .map(|(n, t)| (n.clone(), apply_lifetime_to_refs(t, lifetime)))
+                .collect(),
+            return_ty: apply_lifetime_to_refs(&f.return_ty, lifetime),
+            is_method: f.is_method,
+        })),
+        Type::Generic(id, args) => Type::Generic(
+            *id,
+            args.iter()
+                .map(|a| apply_lifetime_to_refs(a, lifetime))
+                .collect(),
+        ),
+        _ => ty.clone(),
+    }
+}
+
+pub fn count_input_reference_params(func: &FunctionType) -> usize {
+    func.params
+        .iter()
+        .filter(|(_, ty)| is_reference_type(ty))
+        .count()
+}
+
+fn is_reference_type(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Ref(_) | Type::MutRef(_) | Type::RefWithLifetime(_, _) | Type::MutRefWithLifetime(_, _)
+    )
+}
+
+#[cfg(test)]
+mod elision_tests {
+    use super::*;
+
+    #[test]
+    fn test_single_input_elision() {
+        let func = FunctionType {
+            lifetime_params: Vec::new(),
+            type_params: Vec::new(),
+            params: vec![("arr".to_string(), Type::Ref(Box::new(Type::Number)))],
+            return_ty: Type::Ref(Box::new(Type::Number)),
+            is_method: false,
+        };
+
+        match apply_lifetime_elision(&func, Span::default()) {
+            ElisionResult::Applied(new_func) => {
+                assert_eq!(new_func.lifetime_params.len(), 1);
+                assert!(matches!(new_func.return_ty, Type::RefWithLifetime(_, _)));
+            }
+            _ => panic!("Expected elision to be applied"),
+        }
+    }
+
+    #[test]
+    fn test_method_elision() {
+        let func = FunctionType {
+            lifetime_params: Vec::new(),
+            type_params: Vec::new(),
+            params: vec![("self".to_string(), Type::Ref(Box::new(Type::Number)))],
+            return_ty: Type::Ref(Box::new(Type::Number)),
+            is_method: true,
+        };
+
+        match apply_lifetime_elision(&func, Span::default()) {
+            ElisionResult::Applied(new_func) => {
+                assert_eq!(new_func.lifetime_params.len(), 1);
+                assert_eq!(new_func.lifetime_params[0].name, "self");
+            }
+            _ => panic!("Expected method elision to be applied"),
+        }
+    }
+
+    #[test]
+    fn test_ambiguous_lifetime() {
+        let func = FunctionType {
+            lifetime_params: Vec::new(),
+            type_params: Vec::new(),
+            params: vec![
+                ("a".to_string(), Type::Ref(Box::new(Type::Number))),
+                ("b".to_string(), Type::Ref(Box::new(Type::Number))),
+            ],
+            return_ty: Type::Ref(Box::new(Type::Number)),
+            is_method: false,
+        };
+
+        match apply_lifetime_elision(&func, Span::default()) {
+            ElisionResult::AmbiguousLifetime { .. } => {}
+            _ => panic!("Expected ambiguous lifetime error"),
+        }
+    }
+
+    #[test]
+    fn test_no_elision_needed() {
+        let func = FunctionType {
+            lifetime_params: Vec::new(),
+            type_params: Vec::new(),
+            params: vec![("x".to_string(), Type::Number)],
+            return_ty: Type::Number,
+            is_method: false,
+        };
+
+        match apply_lifetime_elision(&func, Span::default()) {
+            ElisionResult::NoElisionNeeded(_) => {}
+            _ => panic!("Expected no elision needed"),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
