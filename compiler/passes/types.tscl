@@ -357,7 +357,6 @@ function resolveTypeAnnotation(checker, annotation) {
     }
 
     let iface = findInterface(checker.registry, typeKind);
-    let iface = findInterface(checker.registry, typeKind);
     if (iface != null) {
         return { kind: "object", name: typeKind, fields: iface.fields };
     }
@@ -603,6 +602,307 @@ function formatType(type) {
     }
 
     return "unknown";
+}
+
+let ElisionResultKind = {
+    APPLIED: "applied",
+    NO_ELISION_NEEDED: "no_elision_needed",
+    AMBIGUOUS_LIFETIME: "ambiguous_lifetime"
+};
+
+function createElisionResult(kind, funcType, error) {
+    return { kind: kind, funcType: funcType, error: error };
+}
+
+function applyLifetimeElision(funcType, isMethod) {
+    if (funcType == null) {
+        return createElisionResult(ElisionResultKind.NO_ELISION_NEEDED, funcType, null);
+    }
+
+    if (funcType.lifetimeParams != null && funcType.lifetimeParams.length > 0) {
+        return createElisionResult(ElisionResultKind.NO_ELISION_NEEDED, funcType, null);
+    }
+
+    if (!needsLifetimeElision(funcType)) {
+        return createElisionResult(ElisionResultKind.NO_ELISION_NEEDED, funcType, null);
+    }
+
+    let inputLifetimes = collectInputLifetimes(funcType);
+
+    if (isMethod == true) {
+        return applyMethodElision(funcType, inputLifetimes);
+    }
+
+    if (inputLifetimes.length == 0) {
+        return createElisionResult(ElisionResultKind.NO_ELISION_NEEDED, funcType, null);
+    }
+
+    if (inputLifetimes.length == 1) {
+        return applySingleInputElision(funcType, inputLifetimes[0]);
+    }
+
+    return createElisionResult(ElisionResultKind.AMBIGUOUS_LIFETIME, null,
+        "Cannot infer lifetime: multiple input references require explicit annotation");
+}
+
+function needsLifetimeElision(funcType) {
+    if (funcType.returnType == null) {
+        return false;
+    }
+    return hasReferenceType(funcType.returnType);
+}
+
+function hasReferenceType(type) {
+    if (type == null) {
+        return false;
+    }
+
+    if (type.kind == "ref" || type.kind == "mutref") {
+        return true;
+    }
+
+    if (type.kind == "array" && type.elementType != null) {
+        return hasReferenceType(type.elementType);
+    }
+
+    if (type.kind == "object" && type.fields != null) {
+        let i = 0;
+        while (i < type.fields.length) {
+            if (hasReferenceType(type.fields[i].type)) {
+                return true;
+            }
+            i = i + 1;
+        }
+    }
+
+    if (type.kind == "function") {
+        if (type.params != null) {
+            let i = 0;
+            while (i < type.params.length) {
+                if (hasReferenceType(type.params[i].type)) {
+                    return true;
+                }
+                i = i + 1;
+            }
+        }
+        if (hasReferenceType(type.returnType)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function collectInputLifetimes(funcType) {
+    let lifetimes = [];
+    if (funcType.params == null) {
+        return lifetimes;
+    }
+
+    let i = 0;
+    while (i < funcType.params.length) {
+        let param = funcType.params[i];
+        collectLifetimesFromType(param.type, lifetimes);
+        i = i + 1;
+    }
+    return lifetimes;
+}
+
+function collectLifetimesFromType(type, lifetimes) {
+    if (type == null) {
+        return;
+    }
+
+    if (type.kind == "ref" || type.kind == "mutref") {
+        let lt = type.lifetime;
+        if (lt == null) {
+            lt = "__fresh_" + lifetimes.length;
+        }
+        let found = false;
+        let i = 0;
+        while (i < lifetimes.length) {
+            if (lifetimes[i] == lt) {
+                found = true;
+            }
+            i = i + 1;
+        }
+        if (!found) {
+            lifetimes.push(lt);
+        }
+    }
+
+    if (type.kind == "array" && type.elementType != null) {
+        collectLifetimesFromType(type.elementType, lifetimes);
+    }
+
+    if (type.kind == "object" && type.fields != null) {
+        let i = 0;
+        while (i < type.fields.length) {
+            collectLifetimesFromType(type.fields[i].type, lifetimes);
+            i = i + 1;
+        }
+    }
+
+    if (type.kind == "function") {
+        if (type.params != null) {
+            let i = 0;
+            while (i < type.params.length) {
+                collectLifetimesFromType(type.params[i].type, lifetimes);
+                i = i + 1;
+            }
+        }
+        collectLifetimesFromType(type.returnType, lifetimes);
+    }
+}
+
+function applySingleInputElision(funcType, inputLifetime) {
+    let lifetimeParam = { name: inputLifetime, bounds: [] };
+    if (inputLifetime.indexOf("__fresh_") == 0) {
+        lifetimeParam.name = "a";
+    }
+
+    let newReturnType = applyLifetimeToRefs(funcType.returnType, lifetimeParam.name);
+
+    let newParams = [];
+    if (funcType.params != null) {
+        let i = 0;
+        while (i < funcType.params.length) {
+            let p = funcType.params[i];
+            newParams.push({
+                name: p.name,
+                type: applyLifetimeToRefs(p.type, lifetimeParam.name),
+                optional: p.optional
+            });
+            i = i + 1;
+        }
+    }
+
+    let newFuncType = {
+        kind: "function",
+        lifetimeParams: [lifetimeParam],
+        params: newParams,
+        returnType: newReturnType
+    };
+
+    return createElisionResult(ElisionResultKind.APPLIED, newFuncType, null);
+}
+
+function applyMethodElision(funcType, inputLifetimes) {
+    let selfLifetime = "self";
+    if (inputLifetimes.length > 0) {
+        selfLifetime = inputLifetimes[0];
+        if (selfLifetime.indexOf("__fresh_") == 0) {
+            selfLifetime = "self";
+        }
+    }
+
+    let lifetimeParam = { name: selfLifetime, bounds: [] };
+
+    let newReturnType = applyLifetimeToRefs(funcType.returnType, selfLifetime);
+
+    let newParams = [];
+    if (funcType.params != null) {
+        let i = 0;
+        while (i < funcType.params.length) {
+            let p = funcType.params[i];
+            newParams.push({
+                name: p.name,
+                type: applyLifetimeToRefs(p.type, selfLifetime),
+                optional: p.optional
+            });
+            i = i + 1;
+        }
+    }
+
+    let newFuncType = {
+        kind: "function",
+        lifetimeParams: [lifetimeParam],
+        params: newParams,
+        returnType: newReturnType
+    };
+
+    return createElisionResult(ElisionResultKind.APPLIED, newFuncType, null);
+}
+
+function applyLifetimeToRefs(type, lifetime) {
+    if (type == null) {
+        return null;
+    }
+
+    if (type.kind == "ref") {
+        let newInner = applyLifetimeToRefs(type.innerType, lifetime);
+        return { kind: "ref", innerType: newInner, lifetime: lifetime };
+    }
+
+    if (type.kind == "mutref") {
+        let newInner = applyLifetimeToRefs(type.innerType, lifetime);
+        return { kind: "mutref", innerType: newInner, lifetime: lifetime };
+    }
+
+    if (type.kind == "array" && type.elementType != null) {
+        return { kind: "array", elementType: applyLifetimeToRefs(type.elementType, lifetime) };
+    }
+
+    if (type.kind == "object" && type.fields != null) {
+        let newFields = [];
+        let i = 0;
+        while (i < type.fields.length) {
+            let f = type.fields[i];
+            newFields.push({
+                name: f.name,
+                type: applyLifetimeToRefs(f.type, lifetime),
+                optional: f.optional
+            });
+            i = i + 1;
+        }
+        return { kind: "object", name: type.name, fields: newFields };
+    }
+
+    if (type.kind == "function") {
+        let newParams = [];
+        if (type.params != null) {
+            let i = 0;
+            while (i < type.params.length) {
+                let p = type.params[i];
+                newParams.push({
+                    name: p.name,
+                    type: applyLifetimeToRefs(p.type, lifetime),
+                    optional: p.optional
+                });
+                i = i + 1;
+            }
+        }
+        return {
+            kind: "function",
+            lifetimeParams: type.lifetimeParams,
+            params: newParams,
+            returnType: applyLifetimeToRefs(type.returnType, lifetime)
+        };
+    }
+
+    return type;
+}
+
+function countInputReferenceParams(funcType) {
+    if (funcType == null || funcType.params == null) {
+        return 0;
+    }
+    let count = 0;
+    let i = 0;
+    while (i < funcType.params.length) {
+        if (isReferenceType(funcType.params[i].type)) {
+            count = count + 1;
+        }
+        i = i + 1;
+    }
+    return count;
+}
+
+function isReferenceType(type) {
+    if (type == null) {
+        return false;
+    }
+    return type.kind == "ref" || type.kind == "mutref";
 }
 
 function inferExprType(checker, expr) {
@@ -1390,7 +1690,14 @@ let Types = {
     inferExpr: inferExprType,
     envLookup: envLookup,
     envBind: envBind,
-    Builtins: BuiltinTypes
+    Builtins: BuiltinTypes,
+    applyLifetimeElision: applyLifetimeElision,
+    hasReferenceType: hasReferenceType,
+    collectInputLifetimes: collectInputLifetimes,
+    applyLifetimeToRefs: applyLifetimeToRefs,
+    countInputReferenceParams: countInputReferenceParams,
+    isReferenceType: isReferenceType,
+    ElisionResultKind: ElisionResultKind
 };
 
 console.log("Structural type checker loaded");
