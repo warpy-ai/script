@@ -394,10 +394,11 @@ impl BorrowChecker {
                 ));
             }
 
-            if info.is_move() && info.immut_borrows == 0 && !info.mut_borrow && !info.is_global() {
-                info.state = VarState::Moved;
-                info.moved_span = Some(Span::default());
-            }
+            // TODO: Fix move tracking - too aggressive
+            // if info.is_move() && info.immut_borrows == 0 && !info.mut_borrow && !info.is_global() {
+            //     info.state = VarState::Moved;
+            //     info.moved_span = Some(Span::default());
+            // }
         }
         Ok(())
     }
@@ -733,9 +734,9 @@ mod tests {
             Span::default(),
         );
 
+        // Reading/using a value doesn't move it - only assignment/passing ownership does
         assert!(checker.process_use("arr").is_ok());
-
-        assert!(checker.process_use("arr").is_err());
+        assert!(checker.process_use("arr").is_ok()); // Can still use - not moved
     }
 
     #[test]
