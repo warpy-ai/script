@@ -1,78 +1,119 @@
 // Lifetime Constraint System
 
-  let ConstraintKind = {
-      OUTLIVES: "outlives",
-      VALID_AT: "valid_at",
-      EQUAL: "equal",
-  }
+let ConstraintKind = {
+    OUTLIVES: "outlives",
+    VALID_AT: "valid_at",
+    EQUAL: "equal",
+}
 
-  interface ProgramPoint {
-      scopeDepth: number;
-      statementIndex: number;
-  }
+interface ProgramPoint {
+    scopeDepth: number;
+    statementIndex: number;
+}
 
-  interface LifetimeConstraint {
-      kind: string;
-      longer?: string;
-      shorter?: string;
-      lifetime?: string;
-      point?: ProgramPoint;
-      a?: string;
-      b?: string;
-      span?: string;
-  }
+interface LifetimeConstraint {
+    kind: string;
+    longer?: string;
+    shorter?: string;
+    lifetime?: string;
+    point?: ProgramPoint;
+    a?: string;
+    b?: string;
+    span?: string;
+}
 
-  interface ConstraintSet {
-      constraint: LifetimeConstraint[];
-  }
+interface ConstraintSet {
+    constraint: LifetimeConstraint[];
+}
 
-  interface LifetimeGraph {
-      edges: { [key: string]: string[] };
-      nodes: string[];
-  }
+interface LifetimeGraph {
+    edges: { [key: string]: string[] };
+    nodes: string[];
+}
 
-  interface SolveResult {
-      success: boolean;
-      errors: string[];
-      order: string[];
-  }
+interface SolveResult {
+    success: boolean;
+    errors: string[];
+    order: string[];
+}
 
 
-  function createProgramPoint(scopeDepth: number, statementIndex: number): ProgramPoint {
-      return { scopeDepth: scopeDepth, statementIndex: statementIndex };
-  }
+let ErrorCode = {
+    RETURN_LOCAL_REF: "E0501",
+    LIFETIME_TOO_SHORT: "E0502",
+    MUTABLE_WHILE_BORROWED: "E0503",
+    LIFETIME_MISSMATCH: "E0504",
+    AMBIGUOS_LIFETIME: "E0505",
+    CYCLE_DETECTED: "E0506"
+}
 
-  function createConstraintSet(): ConstraintSet {
-      return { constraint: [] };
-  }
+let ErrorKind = {
+    RETURN_LOCAL_REF: "return_local_ref",
+    LIFETIME_TOO_SHORT: "lifetime_too_short",
+    MUTABLE_WHILE_BORROWED: "mutable_while_borrowed",
+    LIFETIME_MISSMATCH: "lifetime_mismatch",
+    AMBIGUOS_LIFETIME: "ambiguous_lifetime",
+    CYCLE_DETECTED: "cycle_detected"
+}
 
-  function addConstraint(set: ConstraintSet, constraint: LifetimeConstraint): void {
-      set.constraint.push(constraint);
-  }
+interface SourceLocation {
+    file: string;
+    line: number;
+    column: number;
+}
 
-  function addOutlives(set: ConstraintSet, longer: string, shorter: string, span: string): void {
-      addConstraint(set, { kind: ConstraintKind.OUTLIVES, longer: longer, shorter: shorter, span: span });
-  }
+interface LifetimeError {
+    kind: string;
+    code: string;
+    span: string;
+    message: string;
+    expected?: string;
+    found?: string;
+    lifetime?: string;
+    variable?: string;
+    hint?: string;
+    secondarySpan?: string;
+    secondaryLabel?: string;
+    primaryLabel?: string;
 
-  function addValidAt(set: ConstraintSet, lifetime: string, point: ProgramPoint, span: string): void {
-      addConstraint(set, { kind: ConstraintKind.VALID_AT, lifetime: lifetime, point: point, span: span });
-  }
+}
 
-  function addEqual(set: ConstraintSet, a: string, b: string, span: string): void {
-      addConstraint(set, { kind: ConstraintKind.EQUAL, a: a, b: b, span: span });
-  }
 
-  function getConstraints(set: ConstraintSet): LifetimeConstraint[] {
-      return set.constraint;
-  }
+function createProgramPoint(scopeDepth: number, statementIndex: number): ProgramPoint {
+    return { scopeDepth: scopeDepth, statementIndex: statementIndex };
+}
 
-  function isEmpty(set: ConstraintSet): boolean {
-      return set.constraint.length == 0;
-  }
+function createConstraintSet(): ConstraintSet {
+    return { constraint: [] };
+}
 
-  function isNotEmpty(set: ConstraintSet): boolean {
-      return set.constraint.length > 0;
-  }
+function addConstraint(set: ConstraintSet, constraint: LifetimeConstraint): void {
+    set.constraint.push(constraint);
+}
+
+function addOutlives(set: ConstraintSet, longer: string, shorter: string, span: string): void {
+    addConstraint(set, { kind: ConstraintKind.OUTLIVES, longer: longer, shorter: shorter, span: span });
+}
+
+function addValidAt(set: ConstraintSet, lifetime: string, point: ProgramPoint, span: string): void {
+    addConstraint(set, { kind: ConstraintKind.VALID_AT, lifetime: lifetime, point: point, span: span });
+}
+
+function addEqual(set: ConstraintSet, a: string, b: string, span: string): void {
+    addConstraint(set, { kind: ConstraintKind.EQUAL, a: a, b: b, span: span });
+}
+
+function getConstraints(set: ConstraintSet): LifetimeConstraint[] {
+    return set.constraint;
+}
+
+function isEmpty(set: ConstraintSet): boolean {
+    return set.constraint.length == 0;
+}
+
+function isNotEmpty(set: ConstraintSet): boolean {
+    return set.constraint.length > 0;
+}
 
 function buildLifetimeGraph(set: ConstraintSet): LifetimeGraph {
       let edges = {};
@@ -263,7 +304,158 @@ function buildLifetimeGraph(set: ConstraintSet): LifetimeGraph {
       return { success: true, errors: [], order: order };
   }
 
-  let LifetimeConstraints = {
+
+
+  // Errors
+
+
+
+
+function parseSpan(span: string): SourceLocation {
+    return { file: span, line: 0, column: 0 };
+}
+
+
+function makeUnderline(column: number, length: number, label:string): string {
+    let spaces = "";
+    let i = 0;
+    while ( i < column -1) {
+        spaces = spaces + " ";
+        i = i +1;
+    }
+
+    let carets = "";
+    let j = 0;
+    while(j < length){
+        carets = carets + "^";
+        j = j +1;
+    }
+
+    return spaces + carets + " " + label;
+}
+
+function makeDashes(column:number, length: number, label: string): string {
+    let spaces = "";
+    let i = 0;
+    while ( i < column -1) {
+        spaces = spaces + " ";
+        i = i +1;
+    }
+
+    let dashes = "";
+    let j = 0;
+    while(j < length){
+        dashes = dashes + "-";
+        j = j +1;
+    }
+
+    return spaces + dashes + " " + label;
+}
+
+function padLineNum(num: number, width: number):string {
+    let s = "" + num;
+    while(s.length < width){
+        s = " " + s;
+    }
+    return s;
+}
+
+function createError(kind:string, code:string, span:string, message:string): LifetimeError {
+    return { kind: kind, code: code, span: span, message: message };
+}
+
+function errorReturnLocalRef(variable: string,  span:string, declSpan: string): LifetimeError {
+    let err = createError(ErrorKind.RETURN_LOCAL_REF, ErrorCode.RETURN_LOCAL_REF, span, "cannot return reference to local variable");
+    err.variable = variable;
+    err.primaryLabel = "returns reference to data owned by current function";
+    err.secondarySpan = declSpan;
+    err.secondaryLabel = "declared here";
+    return err;
+}
+
+function errorMutableWhileBorrower(variable: string, span:string,  borrowSpan:string): LifetimeError{
+    let err = createError(ErrorKind.MUTABLE_WHILE_BORROWED, ErrorCode.MUTABLE_WHILE_BORROWED, span, "cannot borrow `" + variable + "` as mutable because it is also borrowed as immutable");
+    err.variable = variable;
+    err.primaryLabel = "mutable borrow occours here";
+    err.seccondarySpan = borrowSpan;
+    err.secondaryLabel = "immutable borrow occours here";
+
+    return err;
+}
+
+function errorLifeTimeMismatch(expected: string, found: string, span: string):LifetimeError{
+
+    let err = createError(ErrorKind.LIFETIME_MISSMATCH, ErrorCode.LIFETIME_MISSMATCH, span, "lifetime mismatch");
+
+    err.expected = expected;
+    err.found = found;
+    err.primaryLabel = "expected " + expected + ", found " + found;
+    return err;
+
+}
+
+function errorAmbiguousLifetime(span:string): LifetimeError{
+    let err = createError(ErrorKind.AMBIGUOUS_LIFETIME, ErrorCode.AMBIGUOUS_LIFETIME, span, "missing lifetime specifier");
+
+    err.primaryLabel = "expected named lifetime parameter";
+    err.hint = "consider introducing a named lifetime parameted: <'a>";
+    return err;
+}
+
+function errorCycleDetected(lifetime: string, span:string): LifetimeError{
+    let err = createError(ErrorKind.CYCLE_DETECTED, ErrorCode.CYCLE_DETECTED, span, "cycle lifetime dependency detected");
+
+    err.lifetime = lifetime;
+    err.primaryLabel = "cycle involves" + lifetime;
+
+    return err;
+}
+
+function formatErrorWithSource(err: LifetimeError, sourceLines: object): string{
+    let loc = parseSpan(err.span);
+    let result = "error[" + err.code + "]: " + err.message + "\n";
+    result = result + " --> " + err.span + "\n";
+    result = result + "    |\n";
+
+    if(err.secondarySpan != null){
+        let secLoc = parseSpan(err.secondarySpan);
+        let secLine = sourceLines[secLoc.line];
+        if(secLine != null) {
+            result = result + padLineNum(loc.line, 3) + " | " + primaryLine + "\n";
+            result = result + " | " + makeDashes(secLoc.column, 5, err.secondaryLabel) + "\n";
+        }
+    }
+
+    let primaryLine = sourceLines[loc.line];
+    if(primaryLine != null) {
+        result = result + padLineNum(loc.line, 3) + " | " + secLine + "\n";
+        result = result + " | " + makeDashes(loc.column, 5, err.primaryLabel) + "\n";
+    }
+
+
+    if(err.hint != null){
+        result = result + "    |\n";
+        result = result + "    = help:" + err.hint + "\n";
+    }
+
+    return result;
+}
+
+function formatError(err: LifetimeError): string {
+    let result = "error[" + err.code + "]:" + err.message + "\n";
+
+    result = result + " --> " + err.span + "\n";
+    if(err.primaryLabel != null) {
+        result = result + "   | " + err.primaryLabel + "\n";
+    }
+    if(err.hint != null) {
+        result = result + "   = help: " + err.hint + "\n";
+    }
+
+    return result;
+}
+
+let LifetimeConstraints = {
       ConstraintKind: ConstraintKind,
       createProgramPoint: createProgramPoint,
       createConstraintSet: createConstraintSet,
@@ -278,6 +470,11 @@ function buildLifetimeGraph(set: ConstraintSet): LifetimeGraph {
       detectCycle: detectCycle,
       topologicalSort: topologicalSort,
       solveConstraints: solveConstraints,
+      ErrorCode: ErrorCode,
+      ErrorKind: ErrorKind,
+      parseSpan: parseSpan,
+      formatError: formatError,
+      formatErrorWithSource: formatErrorWithSource
   };
 
   console.log("Lifetime constraints module loaded.");
