@@ -98,6 +98,89 @@ if (errors3.length == 0) {
 }
 
 console.log("");
+console.log("=== Lifetime Variance Tests ===");
+
+console.log("");
+console.log("Test: Immutable ref is covariant");
+let refType = { kind: "ref", innerType: { kind: "primitive", name: "string" }, lifetime: "'a" };
+let refVariance = Types.computeTypeVariance(refType, "'a");
+if (refVariance == Types.Variance.COVARIANT) {
+    console.log("  PASS: &'a T is covariant in 'a");
+} else {
+    console.log("  FAIL: Expected covariant, got " + refVariance);
+}
+
+console.log("");
+console.log("Test: Mutable ref is invariant");
+let mutRefType = { kind: "mutref", innerType: { kind: "primitive", name: "string" }, lifetime: "'a" };
+let mutVariance = Types.computeTypeVariance(mutRefType, "'a");
+if (mutVariance == Types.Variance.INVARIANT) {
+    console.log("  PASS: &'a mut T is invariant in 'a");
+} else {
+    console.log("  FAIL: Expected invariant, got " + mutVariance);
+}
+
+console.log("");
+console.log("Test: Struct variance from fields");
+let covariantStruct = {
+    name: "CovariantView",
+    fields: [
+        { name: "data", type: { kind: "ref", innerType: { kind: "primitive", name: "string" }, lifetime: "'a" }, optional: false }
+    ],
+    lifetimeParams: [{ name: "'a" }]
+};
+console.log("  fields.length: " + covariantStruct.fields.length);
+console.log("  field type kind: " + covariantStruct.fields[0].type.kind);
+console.log("  field type lifetime: " + covariantStruct.fields[0].type.lifetime);
+let structVar = Types.computeStructVariance(covariantStruct, "'a");
+console.log("  Direct type variance: " + Types.computeTypeVariance(covariantStruct.fields[0].type, "'a"));
+if (structVar == Types.Variance.COVARIANT) {
+    console.log("  PASS: Struct with &'a field is covariant");
+} else {
+    console.log("  FAIL: Expected covariant, got " + structVar);
+}
+
+console.log("");
+console.log("Test: Lifetime substitution with covariance");
+let outlives = { "'long": ["'short"] };
+let canSub1 = Types.canSubstituteLifetime("'long", "'short", Types.Variance.COVARIANT, outlives);
+if (canSub1) {
+    console.log("  PASS: 'long -> 'short OK (covariant)");
+} else {
+    console.log("  FAIL: Should allow longer to shorter");
+}
+
+console.log("");
+console.log("Test: Debug variance value");
+console.log("  Variance.INVARIANT = " + Types.Variance.INVARIANT);
+
+
+console.log("");
+console.log("Test: Lifetime substitution blocked by invariance");
+let testVariance = Types.Variance.INVARIANT;
+console.log("  Using variance: " + testVariance);
+let canSub2 = Types.canSubstituteLifetime("'long", "'short", testVariance, outlives);
+console.log("  Result: " + canSub2);
+if (!canSub2) {
+    console.log("  PASS: 'long -> 'short blocked (invariant)");
+} else {
+    console.log("  FAIL: Invariant should block substitution");
+}
+
+
+console.log("");
+console.log("Test: Static outlives everything");
+let canSubStatic = Types.canSubstituteLifetime("static", "'any", Types.Variance.COVARIANT, {});
+if (canSubStatic) {
+    console.log("  PASS: 'static outlives any lifetime");
+} else {
+    console.log("  FAIL: Static should outlive everything");
+}
+
+console.log("");
+console.log("Lifetime variance tests complete!");
+
+console.log("");
 console.log("Struct lifetime tests complete!");
 
 console.log("");

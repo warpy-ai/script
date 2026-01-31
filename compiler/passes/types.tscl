@@ -44,6 +44,122 @@ let BuiltinTypes = {
 
 let STATIC_LIFETIME = "static";
 
+let Variance = {
+    COVARIANT: "covariant",
+    CONTRAVARIANT: "contravariant",
+    INVARIANT: "invariant",
+    BIVARIANT: "bivariant"
+};
+
+function combineVariance(outer, inner) {
+    if (outer == Variance.BIVARIANT) return inner;
+    if (inner == Variance.BIVARIANT) return outer;
+
+    if (outer == Variance.INVARIANT || inner == Variance.INVARIANT) {
+        return Variance.INVARIANT;
+    }
+
+    if (outer == inner) {
+        return outer;
+    }
+
+    return Variance.INVARIANT;
+}
+
+function computeTypeVariance(type, lifetimeParam) {
+    if (type == null) return Variance.BIVARIANT;
+
+    if (type.kind == "ref") {
+        if (type.lifetime == lifetimeParam) {
+            return Variance.COVARIANT;
+        }
+        return computeTypeVariance(type.innerType, lifetimeParam);
+    }
+
+    if (type.kind == "mutref") {
+        if (type.lifetime == lifetimeParam) {
+            return Variance.INVARIANT;
+        }
+        let innerVariance = computeTypeVariance(type.innerType, lifetimeParam);
+        if (innerVariance != Variance.BIVARIANT) {
+            return Variance.INVARIANT;
+        }
+        return Variance.BIVARIANT;
+    }
+
+    if (type.kind == "array") {
+        return computeTypeVariance(type.elementType, lifetimeParam);
+    }
+
+    if (type.kind == "function") {
+        // Parameters are contravariant, return is covariant
+        let paramVariance = Variance.BIVARIANT;
+        if (type.params != null) {
+            let i = 0;
+            while (i < type.params.length) {
+                let pv = computeTypeVariance(type.params[i].type, lifetimeParam);
+                if (pv != Variance.BIVARIANT) {
+                    if (pv == Variance.COVARIANT) pv = Variance.CONTRAVARIANT;
+                    else if (pv == Variance.CONTRAVARIANT) pv = Variance.COVARIANT;
+                    paramVariance = combineVariance(paramVariance, pv);
+                }
+                i = i + 1;
+            }
+        }
+        let retVariance = computeTypeVariance(type.returnType, lifetimeParam);
+        return combineVariance(paramVariance, retVariance);
+    }
+
+    return Variance.BIVARIANT;
+}
+
+function computeStructVariance(iface, lifetimeParam) {
+    let result = Variance.BIVARIANT;
+
+    let i = 0;
+    while (i < iface.fields.length) {
+        let fieldVariance = computeTypeVariance(iface.fields[i].type, lifetimeParam);
+        result = combineVariance(result, fieldVariance);
+        i = i + 1;
+    }
+
+    return result;
+}
+
+function canSubstituteLifetime(from, to, variance, outlives) {
+    if (from == to) return true;
+
+    if (variance == Variance.BIVARIANT) return true;
+
+    if (variance == Variance.COVARIANT) {
+        return lifetimeOutlives(from, to, outlives);
+    }
+
+    if (variance == Variance.CONTRAVARIANT) {
+        return lifetimeOutlives(to, from, outlives);
+    }
+
+    return false;
+}
+
+function lifetimeOutlives(a, b, outlives) {
+    if (a == b) return true;
+    if (a == "static") return true;  // 'static outlives everything
+
+    if (outlives == null) return false;
+    if (outlives[a] == null) return false;
+
+    let direct = outlives[a];
+    let i = 0;
+    while (i < direct.length) {
+        if (direct[i] == b) return true;
+        if (lifetimeOutlives(direct[i], b, outlives)) return true;
+        i = i + 1;
+    }
+
+    return false;
+}
+
 function findField(fields, name) {
     if (fields == null) return null;
     let i = 0;
@@ -1791,7 +1907,13 @@ let Types = {
     isStaticLifetime: isStaticLifetime,
     staticOutlivesAll: staticOutlivesAll,
     STATIC_LIFETIME: STATIC_LIFETIME,
-    validateStructLifetimes: validateStructLifetimes
+    validateStructLifetimes: validateStructLifetimes,
+    Variance: Variance,
+    combineVariance: combineVariance,
+    computeTypeVariance: computeTypeVariance,
+    computeStructVariance: computeStructVariance,
+    canSubstituteLifetime: canSubstituteLifetime,
+    lifetimeOutlives: lifetimeOutlives,
 };
 
 console.log("Structural type checker loaded");
