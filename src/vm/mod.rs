@@ -429,6 +429,8 @@ impl VM {
         // Save IP BEFORE appending program, because append_program modifies IP
         let saved_ip = self.ip;
         let saved_module_path = self.current_module_path.clone();
+        // Save stack to prevent module execution from corrupting caller's stack
+        let saved_stack = self.stack.clone();
 
         let start_offset = self.append_program(bytecode);
         let end_offset = self.program.len();
@@ -460,6 +462,8 @@ impl VM {
 
         self.ip = saved_ip;
         self.current_module_path = saved_module_path;
+        // Restore stack to prevent module execution from corrupting caller's stack
+        self.stack = saved_stack;
 
         let mut exports = HashMap::new();
         let global_locals = &self.call_stack[0].locals;
@@ -1047,8 +1051,6 @@ impl VM {
             OpCode::Push(v) => self.stack.push(v),
 
             OpCode::Let(name) => {
-                // Create a new binding in the CURRENT frame only (let declaration)
-                // This shadows any outer variable with the same name
                 let val = self.stack.pop().unwrap_or(JsValue::Undefined);
                 if self.call_stack.is_empty() {
                     eprintln!("ERROR: Let opcode with empty call_stack at ip={}", self.ip);
@@ -3687,17 +3689,14 @@ impl VM {
                 }
             }
 
-            // === ES Modules ===
             OpCode::ImportAsync(_specifier) => {
                 let specifier_str = match self.stack.pop() {
                     Some(JsValue::String(s)) => s,
                     Some(_) => {
-                        eprintln!("Error: ImportAsync expected string specifier");
                         self.stack.push(JsValue::Undefined);
                         return ExecResult::Continue;
                     }
                     None => {
-                        eprintln!("Error: ImportAsync missing specifier on stack");
                         self.stack.push(JsValue::Undefined);
                         return ExecResult::Continue;
                     }
@@ -3783,77 +3782,58 @@ impl VM {
                 if let Some(cached) = self.module_cache.get(&canonical_path) {
                     // Cache hit - return cached namespace object
                     self.stack.push(JsValue::Object(cached.namespace_object));
-                    return ExecResult::Continue;
-                }
+                    // Fall through to ip += 1 at end of exec_one
+                } else {
+                    // Cache miss - load the module
+                    let result = fs::read_to_string(&canonical_path)
+                        .map_err(|e| format!("Failed to read module: {}", e));
 
-                // Check if file exists but hash doesn't match (stale cache entry)
-                let _current_hash = ModuleCache::compute_hash(&canonical_path);
-                if self.module_cache.has_content_hash(&canonical_path) {
-                    // Hash mismatch - stale cache, invalidate
-                    self.module_cache.invalidate(&canonical_path);
-                }
-
-                // Cache miss or stale - load the module
-                let result = fs::read_to_string(&canonical_path)
-                    .map_err(|e| format!("Failed to read module: {}", e));
-
-                match result {
-                    Ok(source) => {
-                        let hash = ModuleCache::compute_hash(&canonical_path);
-
-                        // Parse module and extract exports
-                        let exports =
-                            parse_module_exports(&source, &canonical_path.to_string_lossy());
-
-                        let export_names: Vec<String> = exports.keys().cloned().collect();
-
-                        let mut namespace_props = HashMap::new();
-
-                        // Add metadata
-                        namespace_props.insert(
-                            "__path__".to_string(),
-                            JsValue::String(canonical_path.to_string_lossy().into_owned()),
-                        );
-                        namespace_props
-                            .insert("__source__".to_string(), JsValue::String(source.clone()));
-                        namespace_props
-                            .insert("__hash__".to_string(), JsValue::String(hash.clone()));
-
-                        // Execute the module to populate exports
-                        match self.execute_module(&source, &canonical_path, &export_names) {
-                            Ok(module_exports) => {
-                                for (name, value) in module_exports {
-                                    namespace_props.insert(name, value);
+                    match result {
+                        Ok(source) => {
+                            let hash = ModuleCache::compute_hash(&canonical_path);
+                            let exports =
+                                parse_module_exports(&source, &canonical_path.to_string_lossy());
+                            let export_names: Vec<String> = exports.keys().cloned().collect();
+                            let mut namespace_props = HashMap::new();
+                            namespace_props.insert(
+                                "__path__".to_string(),
+                                JsValue::String(canonical_path.to_string_lossy().into_owned()),
+                            );
+                            namespace_props
+                                .insert("__source__".to_string(), JsValue::String(source.clone()));
+                            namespace_props
+                                .insert("__hash__".to_string(), JsValue::String(hash.clone()));
+                            match self.execute_module(&source, &canonical_path, &export_names) {
+                                Ok(module_exports) => {
+                                    for (name, value) in module_exports {
+                                        namespace_props.insert(name, value);
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("Error executing module '{}': {}", specifier_str, e);
+                                    for name in &export_names {
+                                        namespace_props.insert(name.clone(), JsValue::Undefined);
+                                    }
                                 }
                             }
-                            Err(e) => {
-                                eprintln!("Error executing module '{}': {}", specifier_str, e);
-                                for name in &export_names {
-                                    namespace_props.insert(name.clone(), JsValue::Undefined);
-                                }
-                            }
+                            let namespace_ptr = self.heap.len();
+                            self.heap.push(HeapObject {
+                                data: HeapData::Object(namespace_props),
+                            });
+                            let cached_module = CachedModule {
+                                path: canonical_path.clone(),
+                                source,
+                                hash,
+                                load_time: std::time::SystemTime::now(),
+                                namespace_object: namespace_ptr,
+                            };
+                            self.module_cache.insert(cached_module);
+                            self.stack.push(JsValue::Object(namespace_ptr));
                         }
-
-                        let namespace_ptr = self.heap.len();
-                        self.heap.push(HeapObject {
-                            data: HeapData::Object(namespace_props),
-                        });
-
-                        // Cache the module
-                        let cached_module = CachedModule {
-                            path: canonical_path.clone(),
-                            source,
-                            hash,
-                            load_time: std::time::SystemTime::now(),
-                            namespace_object: namespace_ptr,
-                        };
-                        self.module_cache.insert(cached_module);
-
-                        self.stack.push(JsValue::Object(namespace_ptr));
-                    }
-                    Err(e) => {
-                        eprintln!("Error loading module '{}': {}", specifier_str, e);
-                        self.stack.push(JsValue::Undefined);
+                        Err(e) => {
+                            eprintln!("Error loading module '{}': {}", specifier_str, e);
+                            self.stack.push(JsValue::Undefined);
+                        }
                     }
                 }
             }
