@@ -237,7 +237,12 @@ impl BorrowChecker {
         let ty = self.determine_type(decl);
 
         if let Some(init) = &decl.init {
-            self.analyze_expr(init)?;
+            // Bare identifier = ownership transfer; member access = borrow
+            if let Expr::Ident(id) = init.as_ref() {
+                self.process_move(id.sym.as_ref())?;
+            } else {
+                self.analyze_expr(init)?;
+            }
         }
 
         self.define(name, ty, Span::default());
@@ -298,7 +303,6 @@ impl BorrowChecker {
                 }
             }
             Expr::Assign(assign) => {
-                // Check if assigning to a borrowed variable
                 if let AssignTarget::Simple(SimpleAssignTarget::Ident(id)) = &assign.left {
                     let name = id.id.sym.to_string();
                     if let Some(info) = self.symbols.get(&name)
@@ -310,7 +314,11 @@ impl BorrowChecker {
                         ));
                     }
                 }
-                self.analyze_expr(&assign.right)?;
+                if let Expr::Ident(id) = assign.right.as_ref() {
+                    self.process_move(id.sym.as_ref())?;
+                } else {
+                    self.analyze_expr(&assign.right)?;
+                }
             }
             Expr::Bin(bin) => {
                 self.analyze_expr(&bin.left)?;
@@ -369,7 +377,29 @@ impl BorrowChecker {
 
     fn process_use(&mut self, name: &str) -> Result<(), String> {
         if let Some(info) = self.symbols.get_mut(name) {
-            // Check for use-after-move
+            if info.state == VarState::Moved {
+                let moved_at = info.moved_span.unwrap_or_default();
+                self.errors.push(TypeError::UseAfterMove {
+                    var: name.to_string(),
+                    moved_at,
+                    used_at: Span::default(),
+                });
+                return Err(format!("BORROW ERROR: Use of moved variable '{}'", name));
+            }
+
+            if info.state == VarState::CapturedByAsync {
+                return Err(format!(
+                    "BORROW ERROR: '{}' was moved into an async closure! Cannot use after capture.",
+                    name
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Mark variable as moved. Only for actual ownership transfers (e.g., `let y = x;`).
+    fn process_move(&mut self, name: &str) -> Result<(), String> {
+        if let Some(info) = self.symbols.get_mut(name) {
             if info.state == VarState::Moved {
                 let moved_at = info.moved_span.unwrap_or_default();
                 self.errors.push(TypeError::UseAfterMove {
@@ -387,11 +417,10 @@ impl BorrowChecker {
                 ));
             }
 
-            // TODO: Fix move tracking - too aggressive
-            // if info.is_move() && info.immut_borrows == 0 && !info.mut_borrow && !info.is_global() {
-            //     info.state = VarState::Moved;
-            //     info.moved_span = Some(Span::default());
-            // }
+            if info.is_move() && info.immut_borrows == 0 && !info.mut_borrow && !info.is_global() {
+                info.state = VarState::Moved;
+                info.moved_span = Some(Span::default());
+            }
         }
         Ok(())
     }
@@ -692,11 +721,11 @@ mod tests {
         checker.define("x".to_string(), Type::Number, Span::default());
 
         assert!(checker.process_use("x").is_ok());
-        assert!(checker.process_use("x").is_ok()); // Can use again
+        assert!(checker.process_use("x").is_ok());
     }
 
     #[test]
-    fn test_heap_move() {
+    fn test_heap_use_does_not_move() {
         let mut checker = BorrowChecker::new();
         checker.enter_scope();
         checker.define(
@@ -705,9 +734,51 @@ mod tests {
             Span::default(),
         );
 
-        // Reading/using a value doesn't move it - only assignment/passing ownership does
         assert!(checker.process_use("arr").is_ok());
-        assert!(checker.process_use("arr").is_ok()); // Can still use - not moved
+        assert!(checker.process_use("arr").is_ok());
+        assert!(checker.process_borrow("arr", false).is_ok());
+    }
+
+    #[test]
+    fn test_heap_move_then_use_fails() {
+        let mut checker = BorrowChecker::new();
+        checker.enter_scope();
+        checker.define(
+            "arr".to_string(),
+            Type::Array(Box::new(Type::Number)),
+            Span::default(),
+        );
+
+        assert!(checker.process_move("arr").is_ok());
+        assert!(checker.process_use("arr").is_err());
+    }
+
+    #[test]
+    fn test_heap_move_then_borrow_fails() {
+        let mut checker = BorrowChecker::new();
+        checker.enter_scope();
+        checker.define(
+            "arr".to_string(),
+            Type::Array(Box::new(Type::Number)),
+            Span::default(),
+        );
+
+        assert!(checker.process_move("arr").is_ok());
+        assert!(checker.process_borrow("arr", false).is_err());
+    }
+
+    #[test]
+    fn test_double_move_fails() {
+        let mut checker = BorrowChecker::new();
+        checker.enter_scope();
+        checker.define(
+            "arr".to_string(),
+            Type::Array(Box::new(Type::Number)),
+            Span::default(),
+        );
+
+        assert!(checker.process_move("arr").is_ok());
+        assert!(checker.process_move("arr").is_err());
     }
 
     #[test]
@@ -716,7 +787,6 @@ mod tests {
         checker.define("x".to_string(), Type::String, Span::default());
 
         assert!(checker.process_borrow("x", false).is_ok());
-
         assert!(checker.process_borrow("x", true).is_err());
     }
 
@@ -732,16 +802,138 @@ mod tests {
     #[test]
     fn test_global_variables_not_moved() {
         let mut checker = BorrowChecker::new();
+        checker.define("Pipeline".to_string(), Type::Any, Span::default());
+
+        assert!(checker.process_use("Pipeline").is_ok());
+        assert!(checker.process_use("Pipeline").is_ok());
+        assert!(checker.process_borrow("Pipeline", false).is_ok());
+        assert!(checker.process_move("Pipeline").is_ok());
+        assert!(checker.process_use("Pipeline").is_ok()); // Globals aren't moved
+    }
+
+    #[test]
+    fn test_primitive_move_is_copy() {
+        let mut checker = BorrowChecker::new();
+        checker.enter_scope();
+        checker.define("x".to_string(), Type::Number, Span::default());
+
+        assert!(checker.process_move("x").is_ok());
+        assert!(checker.process_use("x").is_ok()); // Primitives are Copy
+    }
+
+    #[test]
+    fn test_cannot_move_while_borrowed() {
+        let mut checker = BorrowChecker::new();
+        checker.enter_scope();
         checker.define(
-            "Pipeline".to_string(),
-            Type::Any, // Module objects are typically Any type
+            "arr".to_string(),
+            Type::Array(Box::new(Type::Number)),
             Span::default(),
         );
 
-        assert!(checker.process_use("Pipeline").is_ok());
-
-        assert!(checker.process_use("Pipeline").is_ok());
-
-        assert!(checker.process_borrow("Pipeline", false).is_ok());
+        assert!(checker.process_borrow("arr", false).is_ok());
+        assert!(checker.process_move("arr").is_ok()); // Blocked by borrow
+        assert!(checker.process_use("arr").is_ok()); // Still valid
     }
+
+    #[test]
+    fn test_property_access_does_not_move() {
+        let mut checker = BorrowChecker::new();
+        checker.enter_scope();
+        checker.define(
+            "arr".to_string(),
+            Type::Array(Box::new(Type::Any)),
+            Span::default(),
+        );
+        checker.define("c".to_string(), Type::Any, Span::default());
+
+        assert!(checker.process_borrow("arr", false).is_ok());
+        assert!(checker.process_borrow("c", false).is_ok());
+        assert!(checker.process_use("c").is_ok());
+        assert!(checker.process_borrow("c", false).is_ok());
+    }
+}
+
+#[test]
+fn test_move_tracking_full_flow() {
+    use swc_common::{FileName, SourceMap, sync::Lrc};
+    use swc_ecma_parser::{Parser, StringInput, Syntax, lexer::Lexer};
+
+    let source = r#"
+        let data = [1, 2, 3];
+        let other = data;
+        console.log(data.length);
+    "#;
+
+    let cm: Lrc<SourceMap> = Default::default();
+    let fm = cm.new_source_file(
+        FileName::Custom("test.tscl".into()).into(),
+        source.to_string(),
+    );
+    let syntax = Syntax::Typescript(Default::default());
+    let lexer = Lexer::new(syntax, Default::default(), StringInput::from(&*fm), None);
+    let mut parser = Parser::new_from(lexer);
+    let program = parser.parse_program().unwrap();
+
+    let mut checker = BorrowChecker::new();
+    checker.enter_scope();
+
+    let mut found_error = false;
+    match &program {
+        swc_ecma_ast::Program::Script(script) => {
+            for stmt in &script.body {
+                if let Err(e) = checker.analyze_stmt(stmt) {
+                    assert!(e.contains("Cannot borrow moved variable"));
+                    found_error = true;
+                    break;
+                }
+            }
+        }
+        _ => panic!("Expected Script"),
+    }
+
+    checker.exit_scope();
+    assert!(
+        found_error,
+        "Expected borrow error for use of moved variable"
+    );
+}
+
+#[test]
+fn test_member_access_borrows_not_moves() {
+    use swc_common::{FileName, SourceMap, sync::Lrc};
+    use swc_ecma_parser::{Parser, StringInput, Syntax, lexer::Lexer};
+
+    let source = r#"
+        let arr = [{kind: "test"}];
+        let c = arr[0];
+        console.log(c.kind);
+        console.log(arr.length);
+    "#;
+
+    let cm: Lrc<SourceMap> = Default::default();
+    let fm = cm.new_source_file(
+        FileName::Custom("test.tscl".into()).into(),
+        source.to_string(),
+    );
+    let syntax = Syntax::Typescript(Default::default());
+    let lexer = Lexer::new(syntax, Default::default(), StringInput::from(&*fm), None);
+    let mut parser = Parser::new_from(lexer);
+    let program = parser.parse_program().unwrap();
+
+    let mut checker = BorrowChecker::new();
+    checker.enter_scope();
+
+    match &program {
+        swc_ecma_ast::Program::Script(script) => {
+            for stmt in &script.body {
+                checker
+                    .analyze_stmt(stmt)
+                    .expect("Member access should borrow, not move");
+            }
+        }
+        _ => panic!("Expected Script"),
+    }
+
+    checker.exit_scope();
 }
