@@ -57,10 +57,10 @@ tscl source → Compiler → SSA IR → Native Backend → CPU
 
 | Mode        | Command                                  | Use Case                        |
 | ----------- | ---------------------------------------- | ------------------------------- |
-| JIT         | `oitejit app.ot`                    | Fast development, benchmarking  |
-| AOT Release | `oitebuild app.ot --release -o app` | Production (ThinLTO)            |
-| AOT Dist    | `oitebuild app.ot --dist -o app`    | Maximum optimization (Full LTO) |
-| VM          | `oiterun app.ot`                    | Debugging, REPL, compatibility  |
+| JIT         | `oite jit app.ot`                    | Fast development, benchmarking  |
+| AOT Release | `oite build app.ot --release -o app` | Production (ThinLTO)            |
+| AOT Dist    | `oite build app.ot --dist -o app`    | Maximum optimization (Full LTO) |
+| VM          | `oite run app.ot`                    | Debugging, REPL, compatibility  |
 
 ---
 
@@ -93,7 +93,7 @@ Register-based SSA IR with type tracking and optimizations.
 
 **Optimization Passes:** Dead code elimination, constant folding, common subexpression elimination, copy propagation, branch simplification.
 
-**CLI:** `oiteir app.ot` - Inspect IR before/after optimization
+**CLI:** `oite ir app.ot` - Inspect IR before/after optimization
 
 ---
 
@@ -104,7 +104,7 @@ Register-based SSA IR with type tracking and optimizations.
 Fast compilation for development. Each `IrOp` becomes Cranelift instructions or runtime stub calls.
 
 ```bash
-oitejit app.ot
+oite jit app.ot
 ```
 
 #### 2B: Multi-Function JIT + Tiered Compilation
@@ -124,8 +124,8 @@ brew install llvm@18 zstd
 export LLVM_SYS_180_PREFIX=$(brew --prefix llvm@18)
 
 # Build
-oitebuild app.ot --release -o app  # ThinLTO
-oitebuild app.ot --dist -o app     # Full LTO
+oite build app.ot --release -o app  # ThinLTO
+oite build app.ot --dist -o app     # Full LTO
 ```
 
 **Key Files:** `src/backend/llvm/codegen.rs`, `src/backend/llvm/optimizer.rs`, `src/backend/llvm/linker.rs`
@@ -273,7 +273,7 @@ The self-hosted compiler now generates LLVM IR that compiles to native binaries:
 **Build Pipeline:**
 
 ```bash
-./target/release/oitecompiler/main.ot llvm input.ot  # → input.ot.ll
+./target/release/oite compiler/main.ot llvm input.ot  # → input.ot.ll
 clang input.ot.ll -c -o input.o                          # → input.o
 clang input.o -o output                                     # → native binary
 ```
@@ -305,7 +305,7 @@ tscl₀ (Rust) ──► tscl₁ (native oitec)
 
 **Verification Tools:**
 - `tests/compiler/bootstrap_verify.ot` - Comprehensive verification test suite
-- `scripts/bootstrap_verify.sh` - Shell oitefor end-to-end verification
+- `scripts/bootstrap_verify.sh` - Shell script for end-to-end verification
 
 #### Bootstrap Compiler (Working - `bootstrap/`)
 
@@ -514,13 +514,13 @@ cargo build --release
 
 ```bash
 # JIT execution
-./target/release/oitejit app.ot
+./target/release/oite jit app.ot
 
 # VM execution
-./target/release/oiterun app.ot
+./target/release/oite run app.ot
 
 # Build native binary
-./target/release/oitebuild app.ot --release -o app
+./target/release/oite build app.ot --release -o app
 
 # Run tests
 cargo test

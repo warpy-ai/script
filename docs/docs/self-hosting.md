@@ -157,12 +157,12 @@ Source (.ot) ──► compiler/*.ot ──► Bytecode ──► Rust VM
 ### CLI Commands (All Working)
 
 ```bash
-oiteast <file>               # Output JSON AST
-oiteir <file>                # Output SSA IR
-oitecheck <file>             # Type + borrow check
-oitebuild <file>             # Compile to bytecode
-oiterun <file>               # Generate bytecode for VM
-oitellvm <file>              # Generate LLVM IR (.ll)
+oite ast <file>               # Output JSON AST
+oite ir <file>                # Output SSA IR
+oite check <file>             # Type + borrow check
+oite build <file>             # Compile to bytecode
+oite run <file>               # Generate bytecode for VM
+oite llvm <file>              # Generate LLVM IR (.ll)
 ```
 
 ---
@@ -212,7 +212,7 @@ compiler/
 
 ```bash
 # Generate LLVM IR
-./target/release/oitecompiler/main.ot llvm input.ot
+./target/release/oite compiler/main.ot llvm input.ot
 
 # Compile to native
 clang input.ot.ll -c -o input.o
@@ -272,7 +272,7 @@ clang input.o -o output
 # bootstrap_verify.sh
 
 # Stage 1: Build oitec with Rust compiler
-./target/release/oitebuild compiler/main.ot -o oitec1 --dist
+./target/release/oite build compiler/main.ot -o oitec1 --dist
 
 # Stage 2: Build oitec with oitec1
 ./oitec1 build compiler/main.ot -o oitec2 --dist

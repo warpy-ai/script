@@ -142,7 +142,7 @@ export LLVM_SYS_180_PREFIX=$(brew --prefix llvm@18)
 # Build
 cargo build --release
 
-# Run a oite
+# Run an Oite program
 ./target/release/oite myprogram.ot
 
 # Dump SSA IR (for debugging)
