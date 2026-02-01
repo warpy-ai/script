@@ -1764,23 +1764,36 @@ impl Codegen {
                 }
             }
             Expr::Await(await_expr) => {
-                // await expression: await <promise>
-                // Compilation strategy:
-                // 1. Compile the promise expression
-                // 2. Emit Await opcode to suspend and wait for resolution
-
-                // Check if we're in an async function
                 if !self.in_async_function {
-                    // await outside async function - just compile the inner expression
-                    // This is technically a syntax error in strict mode, but we allow it
                     self.gen_expr(&await_expr.arg);
                 } else {
-                    // Compile the promise expression
                     self.gen_expr(&await_expr.arg);
-                    // Stack: [promise]
-                    // Emit Await opcode which will poll the promise
                     self.instructions.push(OpCode::Await);
-                    // Stack: [result]
+                }
+            }
+            Expr::Update(update_expr) => {
+                if let Expr::Ident(id) = update_expr.arg.as_ref() {
+                    let name = id.sym.to_string();
+                    self.instructions.push(OpCode::Load(name.clone()));
+                    if update_expr.prefix {
+                        self.instructions.push(OpCode::Push(JsValue::Number(1.0)));
+                        if update_expr.op == UpdateOp::PlusPlus {
+                            self.instructions.push(OpCode::Add);
+                        } else {
+                            self.instructions.push(OpCode::Sub);
+                        }
+                        self.instructions.push(OpCode::Dup);
+                        self.instructions.push(OpCode::Store(name));
+                    } else {
+                        self.instructions.push(OpCode::Dup);
+                        self.instructions.push(OpCode::Push(JsValue::Number(1.0)));
+                        if update_expr.op == UpdateOp::PlusPlus {
+                            self.instructions.push(OpCode::Add);
+                        } else {
+                            self.instructions.push(OpCode::Sub);
+                        }
+                        self.instructions.push(OpCode::Store(name));
+                    }
                 }
             }
             _ => {}
