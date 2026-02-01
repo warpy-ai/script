@@ -57,11 +57,11 @@ impl Compiler {
             Program::Module(module) => {
                 let mut result = Ok(());
                 for item in &module.body {
-                    if let ModuleItem::Stmt(stmt) = item {
-                        if let Err(e) = self.borrow_checker.analyze_stmt(stmt) {
-                            result = Err(e);
-                            break;
-                        }
+                    if let ModuleItem::Stmt(stmt) = item
+                        && let Err(e) = self.borrow_checker.analyze_stmt(stmt)
+                    {
+                        result = Err(e);
+                        break;
                     }
                 }
                 result
