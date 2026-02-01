@@ -51,20 +51,35 @@ impl Compiler {
             .parse_program()
             .map_err(|e| format!("Parsing error: {:?}", e))?;
 
-        match &program {
+        self.borrow_checker.enter_scope(); // Script vars at depth 1, globals at 0
+
+        let result = match &program {
             Program::Module(module) => {
+                let mut result = Ok(());
                 for item in &module.body {
                     if let ModuleItem::Stmt(stmt) = item {
-                        self.borrow_checker.analyze_stmt(stmt)?;
+                        if let Err(e) = self.borrow_checker.analyze_stmt(stmt) {
+                            result = Err(e);
+                            break;
+                        }
                     }
                 }
+                result
             }
             Program::Script(script) => {
+                let mut result = Ok(());
                 for stm in &script.body {
-                    self.borrow_checker.analyze_stmt(stm)?;
+                    if let Err(e) = self.borrow_checker.analyze_stmt(stm) {
+                        result = Err(e);
+                        break;
+                    }
                 }
+                result
             }
-        }
+        };
+
+        self.borrow_checker.exit_scope();
+        result?;
 
         let mut codegen = Codegen::new();
         match &program {
