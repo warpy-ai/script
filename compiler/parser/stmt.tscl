@@ -158,6 +158,20 @@ function parseBaseType(parser) {
         };
     }
 
+    // Handle string literal types: "foo" | "bar"
+    if (tok != null && tok.type == "STRING") {
+        parserAdvance(parser);
+        return {
+            type: "TypeAnnotation",
+            typeKind: "literal",
+            literalValue: tok.value,
+            isArray: false,
+            elementType: null,
+            unionTypes: null,
+            genericParams: null
+        };
+    }
+
     if (tok == null || (tok.type != "KEYWORD" && tok.type != "IDENTIFIER")) {
         return null;
     }
