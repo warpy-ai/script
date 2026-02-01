@@ -840,7 +840,11 @@ mod tests {
     fn test_property_access_does_not_move() {
         let mut checker = BorrowChecker::new();
         checker.enter_scope();
-        checker.define("arr".to_string(), Type::Array(Box::new(Type::Any)), Span::default());
+        checker.define(
+            "arr".to_string(),
+            Type::Array(Box::new(Type::Any)),
+            Span::default(),
+        );
         checker.define("c".to_string(), Type::Any, Span::default());
 
         assert!(checker.process_borrow("arr", false).is_ok());
@@ -852,8 +856,8 @@ mod tests {
 
 #[test]
 fn test_move_tracking_full_flow() {
-    use swc_ecma_parser::{Parser, StringInput, Syntax, lexer::Lexer};
     use swc_common::{FileName, SourceMap, sync::Lrc};
+    use swc_ecma_parser::{Parser, StringInput, Syntax, lexer::Lexer};
 
     let source = r#"
         let data = [1, 2, 3];
@@ -889,13 +893,16 @@ fn test_move_tracking_full_flow() {
     }
 
     checker.exit_scope();
-    assert!(found_error, "Expected borrow error for use of moved variable");
+    assert!(
+        found_error,
+        "Expected borrow error for use of moved variable"
+    );
 }
 
 #[test]
 fn test_member_access_borrows_not_moves() {
-    use swc_ecma_parser::{Parser, StringInput, Syntax, lexer::Lexer};
     use swc_common::{FileName, SourceMap, sync::Lrc};
+    use swc_ecma_parser::{Parser, StringInput, Syntax, lexer::Lexer};
 
     let source = r#"
         let arr = [{kind: "test"}];
@@ -920,7 +927,9 @@ fn test_member_access_borrows_not_moves() {
     match &program {
         swc_ecma_ast::Program::Script(script) => {
             for stmt in &script.body {
-                checker.analyze_stmt(stmt).expect("Member access should borrow, not move");
+                checker
+                    .analyze_stmt(stmt)
+                    .expect("Member access should borrow, not move");
             }
         }
         _ => panic!("Expected Script"),
