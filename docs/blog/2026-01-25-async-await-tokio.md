@@ -431,8 +431,8 @@ The foundation is solid. As we integrate more Tokio features, Oite will become a
 **Try async/await in Oite:**
 
 ```bash
-# Create test_async.tscl
-cat > test_async.tscl << 'EOF'
+# Create test_async.ot
+cat > test_async.ot << 'EOF'
 async function test() {
     const result = await Promise.resolve(42);
     console.log("Result:", result);
@@ -441,7 +441,7 @@ test();
 EOF
 
 # Run it
-./target/release/script test_async.tscl
+./target/release/script test_async.ot
 ```
 
 **Learn more:**

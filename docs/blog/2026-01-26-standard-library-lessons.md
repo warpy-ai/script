@@ -290,7 +290,7 @@ fn setup_path(vm: &mut VM) {
 ### Step 4: Test
 
 ```typescript
-// tests/path.tscl
+// tests/path.ot
 import { path } from 'path';
 
 const joined = path.join('a', 'b', 'c');

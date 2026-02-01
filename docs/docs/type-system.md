@@ -207,7 +207,7 @@ let user: { name: string } = { age: 25 };
 
 ## Self-Hosted Type Checker
 
-The Script compiler is self-hosted, meaning the type checker itself is written in Script (`compiler/passes/types.tscl`). This provides several benefits:
+The Script compiler is self-hosted, meaning the type checker itself is written in Script (`compiler/passes/types.ot`). This provides several benefits:
 
 - **Dogfooding**: The type system is validated by being used to build the compiler itself
 - **Single language**: No context switching between Rust and Script
