@@ -12,7 +12,6 @@ use swc_ecma_ast::*;
 use crate::types::Type;
 use crate::types::error::{BorrowKind, Span, TypeError, TypeErrors};
 use crate::types::registry::TypeRegistry;
-use crate::types::{ConstraintSet, LifetimeId, ProgramPoint};
 
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum VarKind {
@@ -94,8 +93,6 @@ pub struct BorrowChecker {
     errors: TypeErrors,
     scope_depth: usize,
     scope_stack: Vec<HashSet<String>>,
-    lifetime_constraints: ConstraintSet,
-    current_point: ProgramPoint,
 }
 
 impl Default for BorrowChecker {
@@ -112,8 +109,6 @@ impl BorrowChecker {
             errors: TypeErrors::new(),
             scope_depth: 0,
             scope_stack: vec![HashSet::new()],
-            lifetime_constraints: ConstraintSet::new(),
-            current_point: ProgramPoint::new(0, 0),
         }
     }
 
@@ -124,8 +119,6 @@ impl BorrowChecker {
             errors: TypeErrors::new(),
             scope_depth: 0,
             scope_stack: vec![HashSet::new()],
-            lifetime_constraints: ConstraintSet::new(),
-            current_point: ProgramPoint::new(0, 0),
         }
     }
 
@@ -474,28 +467,6 @@ impl BorrowChecker {
         }
     }
 
-    pub fn lifetime_constraints(&self) -> &ConstraintSet {
-        &self.lifetime_constraints
-    }
-
-    pub fn take_lifetime_constraints(&mut self) -> ConstraintSet {
-        std::mem::take(&mut self.lifetime_constraints)
-    }
-
-    fn advance_statement(&mut self) {
-        self.current_point.statement_index += 1;
-    }
-
-    fn add_outlives(&mut self, longer: LifetimeId, shorter: LifetimeId) {
-        self.lifetime_constraints
-            .add_outlives(longer, shorter, Span::default())
-    }
-
-    fn add_valid_at(&mut self, lifetime: LifetimeId) {
-        self.lifetime_constraints
-            .add_valid_at(lifetime, self.current_point, Span::default())
-    }
-
     fn analyze_closure(&mut self, params: &[Pat], body: &BlockStmtOrExpr) -> Result<(), String> {
         let param_names: HashSet<String> = params
             .iter()
@@ -772,20 +743,5 @@ mod tests {
         assert!(checker.process_use("Pipeline").is_ok());
 
         assert!(checker.process_borrow("Pipeline", false).is_ok());
-    }
-
-    #[test]
-    fn test_lifetime_constraints() {
-        let mut checker = BorrowChecker::new();
-        // Initially no constraints
-        assert!(checker.lifetime_constraints().is_empty());
-
-        // Add some constraints
-        let a = LifetimeId(1);
-        let b = LifetimeId(2);
-        checker.add_outlives(a, b);
-        checker.add_valid_at(a);
-
-        assert_eq!(checker.lifetime_constraints().len(), 2);
     }
 }
