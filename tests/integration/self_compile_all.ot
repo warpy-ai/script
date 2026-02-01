@@ -1,44 +1,44 @@
 // Test self-compilation of all bootstrap modules
 console.log("=== Self-Compilation Test ===");
 
-// Compile types.tscl
-let src1 = File.readSync("bootstrap/types.tscl");
+// Compile types.ot
+let src1 = File.readSync("bootstrap/types.ot");
 let r1 = compileToBytecode(src1);
-console.log("types.tscl: " + r1.length + " bytes");
+console.log("types.ot: " + r1.length + " bytes");
 
-// Compile lexer.tscl
-let src2 = File.readSync("bootstrap/lexer.tscl");
+// Compile lexer.ot
+let src2 = File.readSync("bootstrap/lexer.ot");
 let r2 = compileToBytecode(src2);
-console.log("lexer.tscl: " + r2.length + " bytes");
+console.log("lexer.ot: " + r2.length + " bytes");
 
-// Compile parser.tscl
-let src3 = File.readSync("bootstrap/parser.tscl");
+// Compile parser.ot
+let src3 = File.readSync("bootstrap/parser.ot");
 let r3 = compileToBytecode(src3);
-console.log("parser.tscl: " + r3.length + " bytes");
+console.log("parser.ot: " + r3.length + " bytes");
 
-// Compile emitter.tscl
-let src4 = File.readSync("bootstrap/emitter.tscl");
+// Compile emitter.ot
+let src4 = File.readSync("bootstrap/emitter.ot");
 let r4 = compileToBytecode(src4);
-console.log("emitter.tscl: " + r4.length + " bytes");
+console.log("emitter.ot: " + r4.length + " bytes");
 
-// Compile ir.tscl
-let src5 = File.readSync("bootstrap/ir.tscl");
+// Compile ir.ot
+let src5 = File.readSync("bootstrap/ir.ot");
 let r5 = compileToBytecode(src5);
-console.log("ir.tscl: " + r5.length + " bytes");
+console.log("ir.ot: " + r5.length + " bytes");
 
-// Compile ir_builder.tscl
-let src6 = File.readSync("bootstrap/ir_builder.tscl");
+// Compile ir_builder.ot
+let src6 = File.readSync("bootstrap/ir_builder.ot");
 let r6 = compileToBytecode(src6);
-console.log("ir_builder.tscl: " + r6.length + " bytes");
+console.log("ir_builder.ot: " + r6.length + " bytes");
 
-// Compile codegen.tscl
-let src7 = File.readSync("bootstrap/codegen.tscl");
+// Compile codegen.ot
+let src7 = File.readSync("bootstrap/codegen.ot");
 let r7 = compileToBytecode(src7);
-console.log("codegen.tscl: " + r7.length + " bytes");
+console.log("codegen.ot: " + r7.length + " bytes");
 
-// Compile pipeline.tscl
-let src8 = File.readSync("bootstrap/pipeline.tscl");
+// Compile pipeline.ot
+let src8 = File.readSync("bootstrap/pipeline.ot");
 let r8 = compileToBytecode(src8);
-console.log("pipeline.tscl: " + r8.length + " bytes");
+console.log("pipeline.ot: " + r8.length + " bytes");
 
 console.log("=== Done ===");
