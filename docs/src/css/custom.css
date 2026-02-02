@@ -161,7 +161,11 @@ body {
 .navbar.navbar--fixed-top {
     box-shadow: 0 1px 0 var(--border);
     backdrop-filter: blur(12px);
-    background: color-mix(in oklch, var(--sidebar) 90%, black 10%);
+    background: oklch(1 0 0);
+}
+
+[data-theme="dark"] .navbar.navbar--fixed-top {
+    background: var(--sidebar);
 }
 
 .navbar__inner {
@@ -230,8 +234,22 @@ body {
 }
 
 .footer {
-    border-top: 1px solid var(--border);
-    background: color-mix(in oklch, var(--sidebar) 92%, black 8%);
+    border-top: none;
+    background: oklch(0.145 0 0);
+    color: oklch(0.9 0 0);
+}
+
+.footer__title,
+.footer__link-item {
+    color: oklch(0.85 0 0);
+}
+
+.footer__link-item:hover {
+    color: oklch(1 0 0);
+}
+
+.footer__copyright {
+    color: oklch(0.6 0 0);
 }
 
 /* Oite typography */
