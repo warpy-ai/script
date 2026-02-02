@@ -62,18 +62,40 @@ import { foo } from "bar"
 
 ## File Extensions
 
-Unroll supports the following file extensions:
+Unroll supports multiple file extensions with different ownership behaviors:
 
-| Extension | Description |
-|-----------|-------------|
-| `.ot` | Oite source file |
-| `.nroll` | Precompiled npm package |
+| Extension | Memory Model | Description |
+|-----------|--------------|-------------|
+| `.ot` | Full ownership | Native Oite with move/borrow semantics |
+| `.ts` | Scope-based | TypeScript with auto-borrowing |
+| `.tsx` | Scope-based | TypeScript with JSX support |
+| `.js` | Copy-by-default | JavaScript with implicit cloning |
+| `.jsx` | Copy-by-default | JavaScript with JSX support |
+| `.nroll` | Copy at boundary | Precompiled npm package |
+
+### Ownership by File Type
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│                    FILE TYPE MEMORY MODELS                      │
+├────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  .ot      → Move default, explicit borrows, zero-copy          │
+│  .ts/.tsx → Move default, scope-based auto-borrow              │
+│  .js/.jsx → Copy on assignment, copy on function call          │
+│  .nroll   → All data copied when crossing module boundary      │
+│                                                                 │
+│  All modes use OWNERSHIP semantics — no garbage collector      │
+└────────────────────────────────────────────────────────────────┘
+```
+
+See [JavaScript Interoperability](/javascript-interop) for detailed behavior.
 
 When importing without an extension:
 
 ```javascript
 import { foo } from "./bar";
-// Tries: ./bar.ot, ./bar/index.ot
+// Tries: ./bar.ot, ./bar.ts, ./bar.js, ./bar/index.ot, ./bar/index.ts
 ```
 
 ## Package Imports

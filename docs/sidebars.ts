@@ -16,6 +16,9 @@ const sidebars: SidebarsConfig = {
   tutorialSidebar: [
     "intro",
     "getting-started",
+    "lifetimes",
+    "javascript-interop",
+    "ecmascript-conformance",
     "development-status",
     "contributing",
   ],

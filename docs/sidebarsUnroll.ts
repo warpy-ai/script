@@ -5,6 +5,7 @@ const sidebars: SidebarsConfig = {
     "intro",
     "design",
     "modules",
+    "file-type-interop",
   ],
 };
 
