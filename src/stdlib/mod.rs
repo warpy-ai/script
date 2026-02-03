@@ -691,8 +691,14 @@ fn create_fetch_response(
     // Create response object
     let mut response = std::collections::HashMap::new();
     response.insert("status".to_string(), JsValue::Number(status as f64));
-    response.insert("statusText".to_string(), JsValue::String(status_text.to_string()));
-    response.insert("ok".to_string(), JsValue::Boolean(status >= 200 && status < 300));
+    response.insert(
+        "statusText".to_string(),
+        JsValue::String(status_text.to_string()),
+    );
+    response.insert(
+        "ok".to_string(),
+        JsValue::Boolean(status >= 200 && status < 300),
+    );
     response.insert("headers".to_string(), JsValue::Object(headers_ptr));
     response.insert("body".to_string(), JsValue::String(body.to_string()));
     response.insert("error".to_string(), JsValue::Undefined);
