@@ -1790,6 +1790,66 @@ impl VM {
                 }
             }
 
+            OpCode::ArrayPush => {
+                // Pops [array, value] -> pushes value to array, pushes array back
+                let value = self.stack.pop().expect("ArrayPush: missing value");
+                let arr_val = self.stack.pop().expect("ArrayPush: missing array");
+                if let JsValue::Object(ptr) = arr_val {
+                    if let Some(HeapObject { data: HeapData::Array(arr) }) = self.heap.get_mut(ptr) {
+                        arr.push(value);
+                    }
+                    self.stack.push(JsValue::Object(ptr));
+                } else {
+                    self.stack.push(arr_val);
+                }
+            }
+
+            OpCode::ArraySpread => {
+                // Pops [target_array, source_array] -> appends all source elements to target, pushes target
+                let source_val = self.stack.pop().expect("ArraySpread: missing source");
+                let target_val = self.stack.pop().expect("ArraySpread: missing target");
+
+                if let (JsValue::Object(target_ptr), JsValue::Object(source_ptr)) = (target_val, source_val) {
+                    // First, collect elements from source array
+                    let source_elements: Vec<JsValue> = if let Some(HeapObject { data: HeapData::Array(arr) }) = self.heap.get(source_ptr) {
+                        arr.clone()
+                    } else {
+                        Vec::new()
+                    };
+                    // Then, append to target array
+                    if let Some(HeapObject { data: HeapData::Array(target_arr) }) = self.heap.get_mut(target_ptr) {
+                        target_arr.extend(source_elements);
+                    }
+                    self.stack.push(JsValue::Object(target_ptr));
+                } else {
+                    self.stack.push(JsValue::Undefined);
+                }
+            }
+
+            OpCode::ObjectSpread => {
+                // Pops [target_obj, source_obj] -> copies all properties from source to target, pushes target
+                let source_val = self.stack.pop().expect("ObjectSpread: missing source");
+                let target_val = self.stack.pop().expect("ObjectSpread: missing target");
+
+                if let (JsValue::Object(target_ptr), JsValue::Object(source_ptr)) = (target_val, source_val) {
+                    // First, collect properties from source object
+                    let source_props: HashMap<String, JsValue> = if let Some(HeapObject { data: HeapData::Object(props) }) = self.heap.get(source_ptr) {
+                        props.clone()
+                    } else {
+                        HashMap::new()
+                    };
+                    // Then, insert into target object
+                    if let Some(HeapObject { data: HeapData::Object(target_props) }) = self.heap.get_mut(target_ptr) {
+                        for (key, value) in source_props {
+                            target_props.insert(key, value);
+                        }
+                    }
+                    self.stack.push(JsValue::Object(target_ptr));
+                } else {
+                    self.stack.push(JsValue::Undefined);
+                }
+            }
+
             OpCode::Halt => return ExecResult::Stop,
 
             OpCode::MakeClosure(address) => {

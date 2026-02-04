@@ -1795,20 +1795,43 @@ impl Codegen {
                 }
             }
             Expr::Array(arr_lit) => {
-                let size = arr_lit.elems.len();
-                self.instructions.push(OpCode::NewArray(size));
+                // Check if any elements are spread elements
+                let has_spread = arr_lit.elems.iter().any(|elem| {
+                    elem.as_ref().map_or(false, |e| e.spread.is_some())
+                });
 
-                for (i, elem) in arr_lit.elems.iter().enumerate() {
-                    if let Some(expr_or_spread) = elem {
-                        // 1. Dup the array pointer so we don't lose it
-                        self.instructions.push(OpCode::Dup);
-                        // 2. Push the Value
-                        self.gen_expr(&expr_or_spread.expr);
-                        // 3. Push the Index
-                        self.instructions
-                            .push(OpCode::Push(JsValue::Number(i as f64)));
-                        // 4. Store it
-                        self.instructions.push(OpCode::StoreElement);
+                if has_spread {
+                    // Use dynamic approach: create empty array, then push/spread each element
+                    self.instructions.push(OpCode::NewArray(0));
+                    for elem in arr_lit.elems.iter() {
+                        if let Some(expr_or_spread) = elem {
+                            self.gen_expr(&expr_or_spread.expr);
+                            if expr_or_spread.spread.is_some() {
+                                // Spread: Stack is [array, source_array]
+                                self.instructions.push(OpCode::ArraySpread);
+                            } else {
+                                // Regular element: Stack is [array, value]
+                                self.instructions.push(OpCode::ArrayPush);
+                            }
+                        }
+                    }
+                } else {
+                    // Use static approach: create array with known size
+                    let size = arr_lit.elems.len();
+                    self.instructions.push(OpCode::NewArray(size));
+
+                    for (i, elem) in arr_lit.elems.iter().enumerate() {
+                        if let Some(expr_or_spread) = elem {
+                            // 1. Dup the array pointer so we don't lose it
+                            self.instructions.push(OpCode::Dup);
+                            // 2. Push the Value
+                            self.gen_expr(&expr_or_spread.expr);
+                            // 3. Push the Index
+                            self.instructions
+                                .push(OpCode::Push(JsValue::Number(i as f64)));
+                            // 4. Store it
+                            self.instructions.push(OpCode::StoreElement);
+                        }
                     }
                 }
             }
@@ -1932,20 +1955,47 @@ impl Codegen {
                 self.instructions.push(OpCode::NewObject);
 
                 for prop in &obj_lit.props {
-                    if let PropOrSpread::Prop(prop_ptr) = prop
-                        && let Prop::KeyValue(kv) = prop_ptr.as_ref()
-                    {
-                        let key = match &kv.key {
-                            PropName::Ident(id) => id.sym.to_string(),
-                            PropName::Str(s) => {
-                                s.value.as_str().expect("Invalid string key").to_string()
-                            }
-                            _ => continue,
-                        };
+                    match prop {
+                        PropOrSpread::Spread(spread) => {
+                            // { ...source } - spread all properties from source object
+                            self.gen_expr(&spread.expr);
+                            self.instructions.push(OpCode::ObjectSpread);
+                        }
+                        PropOrSpread::Prop(prop_ptr) => {
+                            match prop_ptr.as_ref() {
+                                Prop::KeyValue(kv) => {
+                                    let key = match &kv.key {
+                                        PropName::Ident(id) => id.sym.to_string(),
+                                        PropName::Str(s) => {
+                                            s.value.as_str().expect("Invalid string key").to_string()
+                                        }
+                                        _ => continue,
+                                    };
 
-                        self.instructions.push(OpCode::Dup); // Duplicate Ptr
-                        self.gen_expr(&kv.value); // Push Value
-                        self.instructions.push(OpCode::SetProp(key)); // Consumes Value + 1 Ptr
+                                    self.instructions.push(OpCode::Dup); // Duplicate Ptr
+                                    self.gen_expr(&kv.value); // Push Value
+                                    self.instructions.push(OpCode::SetProp(key)); // Consumes Value + 1 Ptr
+                                }
+                                Prop::Shorthand(ident) => {
+                                    // { x } shorthand for { x: x }
+                                    let key = ident.sym.to_string();
+                                    self.instructions.push(OpCode::Dup);
+                                    self.instructions.push(OpCode::Load(key.clone()));
+                                    self.instructions.push(OpCode::SetProp(key));
+                                }
+                                Prop::Method(method) => {
+                                    // { fn() {} } - inline method
+                                    let key = match &method.key {
+                                        PropName::Ident(id) => id.sym.to_string(),
+                                        _ => continue,
+                                    };
+                                    self.instructions.push(OpCode::Dup);
+                                    self.gen_fn_decl(None, &method.function);
+                                    self.instructions.push(OpCode::SetProp(key));
+                                }
+                                _ => {}
+                            }
+                        }
                     }
                 }
             }
