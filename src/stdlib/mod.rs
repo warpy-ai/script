@@ -143,6 +143,77 @@ pub fn native_mkdir_sync(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     }
 }
 
+pub fn native_readdir_sync(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    if let Some(JsValue::String(path)) = args.first() {
+        match std::fs::read_dir(path) {
+            Ok(entries) => {
+                let mut files: Vec<JsValue> = Vec::new();
+                for entry in entries.flatten() {
+                    if let Some(name) = entry.file_name().to_str() {
+                        files.push(JsValue::String(name.to_string()));
+                    }
+                }
+                let arr_ptr = vm.heap.len();
+                vm.heap.push(HeapObject {
+                    data: HeapData::Array(files),
+                });
+                JsValue::Object(arr_ptr)
+            }
+            Err(e) => {
+                eprintln!("Error reading directory '{}': {}", path, e);
+                // Return empty array on error
+                let arr_ptr = vm.heap.len();
+                vm.heap.push(HeapObject {
+                    data: HeapData::Array(Vec::new()),
+                });
+                JsValue::Object(arr_ptr)
+            }
+        }
+    } else {
+        // Return empty array if no path provided
+        let arr_ptr = vm.heap.len();
+        vm.heap.push(HeapObject {
+            data: HeapData::Array(Vec::new()),
+        });
+        JsValue::Object(arr_ptr)
+    }
+}
+
+pub fn native_stat_sync(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    if let Some(JsValue::String(path)) = args.first() {
+        match std::fs::metadata(path) {
+            Ok(metadata) => {
+                let mut stat_props = std::collections::HashMap::new();
+
+                let (is_dir_fn, is_file_fn) = if metadata.is_dir() {
+                    (
+                        vm.register_native(|_vm: &mut VM, _args: Vec<JsValue>| JsValue::Boolean(true)),
+                        vm.register_native(|_vm: &mut VM, _args: Vec<JsValue>| JsValue::Boolean(false)),
+                    )
+                } else {
+                    (
+                        vm.register_native(|_vm: &mut VM, _args: Vec<JsValue>| JsValue::Boolean(false)),
+                        vm.register_native(|_vm: &mut VM, _args: Vec<JsValue>| JsValue::Boolean(true)),
+                    )
+                };
+
+                stat_props.insert("isDirectory".to_string(), JsValue::NativeFunction(is_dir_fn));
+                stat_props.insert("isFile".to_string(), JsValue::NativeFunction(is_file_fn));
+                stat_props.insert("size".to_string(), JsValue::Number(metadata.len() as f64));
+
+                let stat_ptr = vm.heap.len();
+                vm.heap.push(HeapObject {
+                    data: HeapData::Object(stat_props),
+                });
+                JsValue::Object(stat_ptr)
+            }
+            Err(_) => JsValue::Null,
+        }
+    } else {
+        JsValue::Null
+    }
+}
+
 pub fn native_write_binary_file(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     if let (Some(JsValue::String(filename)), Some(JsValue::Object(ptr))) =
         (args.first(), args.get(1))
@@ -570,6 +641,69 @@ pub fn native_exit(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
         0
     };
     std::process::exit(code);
+}
+
+/// Execute a command and return the result
+/// Usage: process.exec(command, args?)
+/// Returns: { exitCode: number, stdout: string, stderr: string }
+pub fn native_exec(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    use std::process::Command;
+
+    let command = match args.first() {
+        Some(JsValue::String(cmd)) => cmd.clone(),
+        _ => return create_exec_error(vm, "exec requires a command string"),
+    };
+
+    // Parse arguments array if provided
+    let mut cmd_args: Vec<String> = Vec::new();
+    if let Some(JsValue::Object(args_ptr)) = args.get(1)
+        && let Some(HeapObject {
+            data: HeapData::Array(arr),
+        }) = vm.heap.get(*args_ptr)
+    {
+        for item in arr {
+            if let JsValue::String(s) = item {
+                cmd_args.push(s.clone());
+            }
+        }
+    }
+
+    // Execute the command
+    let output = Command::new(&command).args(&cmd_args).output();
+
+    match output {
+        Ok(result) => {
+            let stdout = String::from_utf8_lossy(&result.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&result.stderr).to_string();
+            let exit_code = result.status.code().unwrap_or(-1);
+
+            // Create result object
+            let mut response = std::collections::HashMap::new();
+            response.insert("exitCode".to_string(), JsValue::Number(exit_code as f64));
+            response.insert("stdout".to_string(), JsValue::String(stdout));
+            response.insert("stderr".to_string(), JsValue::String(stderr));
+
+            let response_ptr = vm.heap.len();
+            vm.heap.push(HeapObject {
+                data: HeapData::Object(response),
+            });
+            JsValue::Object(response_ptr)
+        }
+        Err(e) => create_exec_error(vm, &format!("exec failed: {}", e)),
+    }
+}
+
+fn create_exec_error(vm: &mut VM, message: &str) -> JsValue {
+    let mut response = std::collections::HashMap::new();
+    response.insert("exitCode".to_string(), JsValue::Number(-1.0));
+    response.insert("stdout".to_string(), JsValue::String("".to_string()));
+    response.insert("stderr".to_string(), JsValue::String(message.to_string()));
+
+    let response_ptr = vm.heap.len();
+    vm.heap.push(HeapObject {
+        data: HeapData::Object(response),
+    });
+    JsValue::Object(response_ptr)
 }
 
 // ============================================================================

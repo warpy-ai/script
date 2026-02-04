@@ -689,6 +689,166 @@ fn value_to_string(val: TsclValue) -> String {
     "undefined".to_string()
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_fs_exists(path: u64) -> u64 {
+    let val = TsclValue::from_bits(path);
+    if let Some(ptr) = val.as_pointer() {
+        unsafe {
+            let header = ptr.as_ref::<ObjectHeader>();
+            if header.kind == ObjectKind::String {
+                let path_str = ptr.as_ref::<NativeString>().as_str();
+                return TsclValue::boolean(std::path::Path::new(path_str).exists()).to_bits();
+            }
+        }
+    }
+    TsclValue::boolean(false).to_bits()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_fs_read_file(path: u64) -> u64 {
+    let val = TsclValue::from_bits(path);
+    if let Some(ptr) = val.as_pointer() {
+        unsafe {
+            let header = ptr.as_ref::<ObjectHeader>();
+            if header.kind == ObjectKind::String {
+                let path_str = ptr.as_ref::<NativeString>().as_str();
+                if let Ok(content) = std::fs::read_to_string(path_str) {
+                    if let Some(ptr) = heap().alloc_string(&content) {
+                        return TsclValue::pointer(ptr).to_bits();
+                    }
+                }
+            }
+        }
+    }
+    TsclValue::undefined().to_bits()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_fs_write_file(path: u64, content: u64) -> u64 {
+    let path_val = TsclValue::from_bits(path);
+    let content_val = TsclValue::from_bits(content);
+
+    let (path_str, content_str) = unsafe {
+        let p = path_val.as_pointer().and_then(|ptr| {
+            if ptr.as_ref::<ObjectHeader>().kind == ObjectKind::String {
+                Some(ptr.as_ref::<NativeString>().as_str().to_string())
+            } else { None }
+        });
+        let c = content_val.as_pointer().and_then(|ptr| {
+            if ptr.as_ref::<ObjectHeader>().kind == ObjectKind::String {
+                Some(ptr.as_ref::<NativeString>().as_str().to_string())
+            } else { None }
+        });
+        (p, c)
+    };
+
+    if let (Some(p), Some(c)) = (path_str, content_str) {
+        return TsclValue::boolean(std::fs::write(&p, &c).is_ok()).to_bits();
+    }
+    TsclValue::boolean(false).to_bits()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_fs_readdir(path: u64) -> u64 {
+    let val = TsclValue::from_bits(path);
+    if let Some(ptr) = val.as_pointer() {
+        unsafe {
+            let header = ptr.as_ref::<ObjectHeader>();
+            if header.kind == ObjectKind::String {
+                let path_str = ptr.as_ref::<NativeString>().as_str();
+                if let Ok(entries) = std::fs::read_dir(path_str) {
+                    let names: Vec<String> = entries
+                        .flatten()
+                        .filter_map(|e| e.file_name().to_str().map(String::from))
+                        .collect();
+                    if let Some(arr_ptr) = heap().alloc_array(names.len()) {
+                        let arr = arr_ptr.as_mut::<NativeArray>();
+                        for (i, name) in names.iter().enumerate() {
+                            let str_val = heap().alloc_string(name)
+                                .map(|p| TsclValue::pointer(p).to_bits())
+                                .unwrap_or(TsclValue::undefined().to_bits());
+                            *arr.elements.add(i) = str_val;
+                        }
+                        arr.len = names.len() as u32;
+                        return TsclValue::pointer(arr_ptr).to_bits();
+                    }
+                }
+                if let Some(arr_ptr) = heap().alloc_array(0) {
+                    return TsclValue::pointer(arr_ptr).to_bits();
+                }
+            }
+        }
+    }
+    TsclValue::undefined().to_bits()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_fs_stat(path: u64) -> u64 {
+    let val = TsclValue::from_bits(path);
+    if let Some(ptr) = val.as_pointer() {
+        unsafe {
+            let header = ptr.as_ref::<ObjectHeader>();
+            if header.kind == ObjectKind::String {
+                let path_str = ptr.as_ref::<NativeString>().as_str();
+                if let Ok(metadata) = std::fs::metadata(path_str) {
+                    if let Some(obj_ptr) = heap().alloc_object() {
+                        let obj = obj_ptr.as_mut::<NativeObject>();
+                        if obj.properties.is_null() {
+                            obj.properties = Box::into_raw(Box::new(PropertyMap::new()));
+                        }
+                        let props = &mut *obj.properties;
+                        props.push(("__isDir".to_string(), TsclValue::boolean(metadata.is_dir()).to_bits()));
+                        props.push(("size".to_string(), TsclValue::number(metadata.len() as f64).to_bits()));
+                        return TsclValue::pointer(obj_ptr).to_bits();
+                    }
+                }
+            }
+        }
+    }
+    TsclValue::null().to_bits()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_stat_is_directory(stat: u64) -> u64 {
+    let val = TsclValue::from_bits(stat);
+    if let Some(ptr) = val.as_pointer() {
+        unsafe {
+            let header = ptr.as_ref::<ObjectHeader>();
+            if header.kind == ObjectKind::Object {
+                let obj = ptr.as_ref::<NativeObject>();
+                if !obj.properties.is_null() {
+                    for (key, value) in (*obj.properties).iter() {
+                        if key == "__isDir" { return *value; }
+                    }
+                }
+            }
+        }
+    }
+    TsclValue::boolean(false).to_bits()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_fs_mkdir(path: u64, recursive: u64) -> u64 {
+    let val = TsclValue::from_bits(path);
+    let is_recursive = !TsclValue::from_bits(recursive).is_falsy();
+
+    if let Some(ptr) = val.as_pointer() {
+        unsafe {
+            let header = ptr.as_ref::<ObjectHeader>();
+            if header.kind == ObjectKind::String {
+                let path_str = ptr.as_ref::<NativeString>().as_str();
+                let result = if is_recursive {
+                    std::fs::create_dir_all(path_str)
+                } else {
+                    std::fs::create_dir(path_str)
+                };
+                return TsclValue::boolean(result.is_ok()).to_bits();
+            }
+        }
+    }
+    TsclValue::boolean(false).to_bits()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
