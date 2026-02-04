@@ -236,6 +236,23 @@ impl<'a> BytecodeDecoder<'a> {
                         .get(&byte_addr)
                         .ok_or(LoaderError::AddressNotFound(byte_addr as u32))?;
                 }
+                OpCode::SetupTry {
+                    catch_addr,
+                    finally_addr,
+                } => {
+                    if *catch_addr != 0 {
+                        let byte_addr = *catch_addr;
+                        *catch_addr = *byte_to_instr
+                            .get(&byte_addr)
+                            .ok_or(LoaderError::AddressNotFound(byte_addr as u32))?;
+                    }
+                    if *finally_addr != 0 {
+                        let byte_addr = *finally_addr;
+                        *finally_addr = *byte_to_instr
+                            .get(&byte_addr)
+                            .ok_or(LoaderError::AddressNotFound(byte_addr as u32))?;
+                    }
+                }
                 _ => {}
             }
         }

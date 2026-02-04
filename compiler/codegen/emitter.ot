@@ -253,7 +253,7 @@ function getOpCodeForUnaryOp(operator) {
 // Main Emit Function (AST Visitor)
 // ============================================================================
 
-function emit(emitter, node) {
+function emitNode(emitter, node) {
     if (node == null) {
         return;
     }
@@ -387,7 +387,7 @@ function emit(emitter, node) {
         typeVal == "ExportDefaultDeclaration" || typeVal == "ExportAllDeclaration") {
         // Module declarations - skip for bytecode emission
         if (node.declaration != null) {
-            emit(emitter, node.declaration);
+            emitNode(emitter, node.declaration);
         }
         return;
     }
@@ -402,7 +402,7 @@ function emit(emitter, node) {
 function emitProgram(emitter, node) {
     let i = 0;
     while (i < node.body.length) {
-        emit(emitter, node.body[i]);
+        emitNode(emitter, node.body[i]);
         i = i + 1;
     }
     emitU8(emitter, OP.HALT);
@@ -412,14 +412,14 @@ function emitProgram(emitter, node) {
 function emitBlockStatement(emitter, node) {
     let i = 0;
     while (i < node.body.length) {
-        emit(emitter, node.body[i]);
+        emitNode(emitter, node.body[i]);
         i = i + 1;
     }
     return;
 }
 
 function emitExpressionStatement(emitter, node) {
-    emit(emitter, node.expression);
+    emitNode(emitter, node.expression);
     emitU8(emitter, OP.POP);
     return;
 }
@@ -452,10 +452,10 @@ function emitVariableDeclaration(emitter, node) {
         }
 
         if (decl.init != null) {
-            emit(emitter, decl.init);
+            emitNode(emitter, decl.init);
         } else if (node.init != null) {
             // Handle single-declaration format where init is on node
-            emit(emitter, node.init);
+            emitNode(emitter, node.init);
         } else {
             emitU8(emitter, OP.PUSH);
             emitU8(emitter, TYPE.UNDEFINED);
@@ -502,7 +502,7 @@ function emitFunctionDeclaration(emitter, node) {
         i = i - 1;
     }
 
-    emit(emitter, node.body);
+    emitNode(emitter, node.body);
 
     emitter.scope = outerScope;
 
@@ -538,7 +538,7 @@ function emitFunctionDeclaration(emitter, node) {
 
 function emitReturnStatement(emitter, node) {
     if (node.argument != null) {
-        emit(emitter, node.argument);
+        emitNode(emitter, node.argument);
     } else {
         emitU8(emitter, OP.PUSH);
         emitU8(emitter, TYPE.UNDEFINED);
@@ -547,13 +547,13 @@ function emitReturnStatement(emitter, node) {
 }
 
 function emitIfStatement(emitter, node) {
-    emit(emitter, node.test);
+    emitNode(emitter, node.test);
 
     emitU8(emitter, OP.JUMP_IF_FALSE);
     let falsePatch = currentOffset(emitter);
     emitU32(emitter, 0);
 
-    emit(emitter, node.consequent);
+    emitNode(emitter, node.consequent);
 
     if (node.alternate != null) {
         emitU8(emitter, OP.JUMP);
@@ -562,7 +562,7 @@ function emitIfStatement(emitter, node) {
 
         patchU32(emitter, falsePatch, currentOffset(emitter));
 
-        emit(emitter, node.alternate);
+        emitNode(emitter, node.alternate);
 
         patchU32(emitter, endPatch, currentOffset(emitter));
     } else {
@@ -579,13 +579,13 @@ function emitWhileStatement(emitter, node) {
         loopInfo.continueTarget = loopStart;
     }
 
-    emit(emitter, node.test);
+    emitNode(emitter, node.test);
 
     emitU8(emitter, OP.JUMP_IF_FALSE);
     let endPatch = currentOffset(emitter);
     emitU32(emitter, 0);
 
-    emit(emitter, node.body);
+    emitNode(emitter, node.body);
 
     emitU8(emitter, OP.JUMP);
     emitU32(emitter, loopStart);
@@ -607,14 +607,14 @@ function emitDoWhileStatement(emitter, node) {
 
     let loopStart = currentOffset(emitter);
 
-    emit(emitter, node.body);
+    emitNode(emitter, node.body);
 
     let loopInfo = currentLoop(emitter);
     if (loopInfo != null) {
         loopInfo.continueTarget = currentOffset(emitter);
     }
 
-    emit(emitter, node.test);
+    emitNode(emitter, node.test);
 
     emitU8(emitter, OP.JUMP_IF_FALSE);
     let endPatch = currentOffset(emitter);
@@ -639,7 +639,7 @@ function emitForStatement(emitter, node) {
     pushLoop(emitter);
 
     if (node.init != null) {
-        emit(emitter, node.init);
+        emitNode(emitter, node.init);
         if (node.init.type != "VariableDeclaration") {
             emitU8(emitter, OP.POP);
         }
@@ -648,7 +648,7 @@ function emitForStatement(emitter, node) {
     let loopStart = currentOffset(emitter);
 
     if (node.test != null) {
-        emit(emitter, node.test);
+        emitNode(emitter, node.test);
         emitU8(emitter, OP.JUMP_IF_FALSE);
         let endPatch = currentOffset(emitter);
         emitU32(emitter, 0);
@@ -658,10 +658,10 @@ function emitForStatement(emitter, node) {
             loopInfo.continueTarget = loopStart;
         }
 
-        emit(emitter, node.body);
+        emitNode(emitter, node.body);
 
         if (node.update != null) {
-            emit(emitter, node.update);
+            emitNode(emitter, node.update);
             emitU8(emitter, OP.POP);
         }
 
@@ -670,9 +670,9 @@ function emitForStatement(emitter, node) {
 
         patchU32(emitter, endPatch, currentOffset(emitter));
     } else {
-        emit(emitter, node.body);
+        emitNode(emitter, node.body);
         if (node.update != null) {
-            emit(emitter, node.update);
+            emitNode(emitter, node.update);
             emitU8(emitter, OP.POP);
         }
         emitU8(emitter, OP.JUMP);
@@ -695,7 +695,7 @@ function emitForInStatement(emitter, node) {
     pushLoop(emitter);
 
     // 1. Evaluate the object and get its keys using Object.keys
-    emit(emitter, node.right);
+    emitNode(emitter, node.right);
     // Load Object.keys
     emitU8(emitter, OP.LOAD);
     emitString(emitter, "Object");
@@ -749,7 +749,7 @@ function emitForInStatement(emitter, node) {
     }
 
     // 7. Execute loop body
-    emit(emitter, node.body);
+    emitNode(emitter, node.body);
 
     // 8. Drop loop variable
     if (varName != null) {
@@ -797,7 +797,7 @@ function emitForOfStatement(emitter, node) {
     pushLoop(emitter);
 
     // 1. Evaluate the iterable and store it
-    emit(emitter, node.right);
+    emitNode(emitter, node.right);
     emitU8(emitter, OP.LET);
     emitString(emitter, "__for_of_iter__");
 
@@ -842,7 +842,7 @@ function emitForOfStatement(emitter, node) {
     }
 
     // 7. Execute loop body
-    emit(emitter, node.body);
+    emitNode(emitter, node.body);
 
     // 8. Drop loop variable
     if (varName != null) {
@@ -924,7 +924,7 @@ function emitContinueStatement(emitter, node) {
 }
 
 function emitThrowStatement(emitter, node) {
-    emit(emitter, node.argument);
+    emitNode(emitter, node.argument);
     emitU8(emitter, OP.THROW);
     return;
 }
@@ -944,7 +944,7 @@ function emitTryStatement(emitter, node) {
 
     // Emit try block
     if (node.block != null) {
-        emit(emitter, node.block);
+        emitNode(emitter, node.block);
     }
 
     // Pop the try handler after successful try block
@@ -971,7 +971,7 @@ function emitTryStatement(emitter, node) {
         }
         // Emit catch body
         if (node.handler.body != null) {
-            emit(emitter, node.handler.body);
+            emitNode(emitter, node.handler.body);
         }
         // Drop catch parameter if present
         if (node.handler.param != null) {
@@ -996,7 +996,7 @@ function emitTryStatement(emitter, node) {
     // Finally block
     let finallyAddr = currentOffset(emitter);
     if (hasFinally) {
-        emit(emitter, node.finalizer);
+        emitNode(emitter, node.finalizer);
     }
 
     let endAddr = currentOffset(emitter);
@@ -1040,8 +1040,8 @@ function emitTryStatement(emitter, node) {
 // ============================================================================
 
 function emitBinaryExpression(emitter, node) {
-    emit(emitter, node.left);
-    emit(emitter, node.right);
+    emitNode(emitter, node.left);
+    emitNode(emitter, node.right);
 
     let opcode = getOpCodeForBinaryOp(node.operator);
     if (opcode == -1) {
@@ -1053,7 +1053,7 @@ function emitBinaryExpression(emitter, node) {
 }
 
 function emitUnaryExpression(emitter, node) {
-    emit(emitter, node.argument);
+    emitNode(emitter, node.argument);
 
     let opcode = getOpCodeForUnaryOp(node.operator);
     if (opcode == -1) {
@@ -1116,7 +1116,7 @@ function emitAssignmentExpression(emitter, node) {
     let rightNode = node.right;
 
     if (leftNode.type == "Identifier") {
-        emit(emitter, rightNode);
+        emitNode(emitter, rightNode);
         emitU8(emitter, OP.DUP);
 
         let isLocal = false;
@@ -1135,12 +1135,12 @@ function emitAssignmentExpression(emitter, node) {
             emitString(emitter, leftNode.name);
         }
     } else if (leftNode.type == "MemberExpression") {
-        emit(emitter, leftNode.object);
-        emit(emitter, rightNode);
+        emitNode(emitter, leftNode.object);
+        emitNode(emitter, rightNode);
         emitU8(emitter, OP.DUP);
 
         if (leftNode.computed) {
-            emit(emitter, leftNode.property);
+            emitNode(emitter, leftNode.property);
             emitU8(emitter, OP.STORE_ELEMENT);
         } else {
             emitU8(emitter, OP.SET_PROP);
@@ -1162,10 +1162,10 @@ function emitCallExpression(emitter, node) {
     if (callee.type == "MemberExpression") {
         let i = 0;
         while (i < args.length) {
-            emit(emitter, args[i]);
+            emitNode(emitter, args[i]);
             i = i + 1;
         }
-        emit(emitter, callee.object);
+        emitNode(emitter, callee.object);
         emitU8(emitter, OP.CALL_METHOD);
         if (!callee.computed) {
             let methodName = "";
@@ -1178,20 +1178,20 @@ function emitCallExpression(emitter, node) {
     } else {
         let i = 0;
         while (i < args.length) {
-            emit(emitter, args[i]);
+            emitNode(emitter, args[i]);
             i = i + 1;
         }
-        emit(emitter, callee);
+        emitNode(emitter, callee);
         emitU8(emitter, OP.CALL);
         emitU8(emitter, args.length);
     }
 }
 
 function emitMemberExpression(emitter, node) {
-    emit(emitter, node.object);
+    emitNode(emitter, node.object);
 
     if (node.computed) {
-        emit(emitter, node.property);
+        emitNode(emitter, node.property);
         emitU8(emitter, OP.LOAD_ELEMENT);
     } else {
         emitU8(emitter, OP.GET_PROP);
@@ -1291,11 +1291,11 @@ function emitArrayExpression(emitter, node) {
             if (element != null) {
                 if (element.type == "SpreadElement") {
                     // Spread: emit source array, then ArraySpread
-                    emit(emitter, element.argument);
+                    emitNode(emitter, element.argument);
                     emitU8(emitter, OP.ARRAY_SPREAD);
                 } else {
                     // Regular element: emit value, then ArrayPush
-                    emit(emitter, element);
+                    emitNode(emitter, element);
                     emitU8(emitter, OP.ARRAY_PUSH);
                 }
             }
@@ -1309,7 +1309,7 @@ function emitArrayExpression(emitter, node) {
             emitU8(emitter, OP.DUP);
             let element = node.elements[i];
             if (element != null) {
-                emit(emitter, element);
+                emitNode(emitter, element);
             } else {
                 emitU8(emitter, OP.PUSH);
                 emitU8(emitter, TYPE.UNDEFINED);
@@ -1333,7 +1333,7 @@ function emitObjectExpression(emitter, node) {
 
         // Handle spread properties: { ...source }
         if (prop.type == "SpreadElement") {
-            emit(emitter, prop.argument);
+            emitNode(emitter, prop.argument);
             emitU8(emitter, OP.OBJECT_SPREAD);
         } else {
             emitU8(emitter, OP.DUP);
@@ -1342,7 +1342,7 @@ function emitObjectExpression(emitter, node) {
                 emitU8(emitter, OP.LOAD);
                 emitString(emitter, prop.key.name);
             } else if (prop.value != null) {
-                emit(emitter, prop.value);
+                emitNode(emitter, prop.value);
             } else {
                 emitU8(emitter, OP.PUSH);
                 emitU8(emitter, TYPE.UNDEFINED);
@@ -1364,10 +1364,10 @@ function emitObjectExpression(emitter, node) {
 function emitNewExpression(emitter, node) {
     let i = 0;
     while (i < node.arguments.length) {
-        emit(emitter, node.arguments[i]);
+        emitNode(emitter, node.arguments[i]);
         i = i + 1;
     }
-    emit(emitter, node.callee);
+    emitNode(emitter, node.callee);
     emitU8(emitter, OP.CONSTRUCT);
     emitU8(emitter, node.arguments.length);
     return;
@@ -1407,10 +1407,10 @@ function emitFunctionExpression(emitter, node) {
     }
 
     if (node.body.type == "BlockStatement") {
-        emit(emitter, node.body);
+        emitNode(emitter, node.body);
     } else {
         // Arrow function with expression body
-        emit(emitter, node.body);
+        emitNode(emitter, node.body);
         emitU8(emitter, OP.RETURN);
     }
 
@@ -1441,13 +1441,13 @@ function emitFunctionExpression(emitter, node) {
 }
 
 function emitConditionalExpression(emitter, node) {
-    emit(emitter, node.test);
+    emitNode(emitter, node.test);
 
     emitU8(emitter, OP.JUMP_IF_FALSE);
     let falsePatch = currentOffset(emitter);
     emitU32(emitter, 0);
 
-    emit(emitter, node.consequent);
+    emitNode(emitter, node.consequent);
 
     emitU8(emitter, OP.JUMP);
     let endPatch = currentOffset(emitter);
@@ -1455,7 +1455,7 @@ function emitConditionalExpression(emitter, node) {
 
     patchU32(emitter, falsePatch, currentOffset(emitter));
 
-    emit(emitter, node.alternate);
+    emitNode(emitter, node.alternate);
 
     patchU32(emitter, endPatch, currentOffset(emitter));
     return;
@@ -1484,7 +1484,7 @@ function compile(source) {
     emitU8(emitter, 0);   // Reserved
     emitU8(emitter, 0);   // Reserved
 
-    emit(emitter, ast);
+    emitNode(emitter, ast);
 
     return emitter.stream;
 }
@@ -1512,7 +1512,7 @@ function compileAst(ast) {
     emitU8(emitter, 0);
     emitU8(emitter, 0);
 
-    emit(emitter, ast);
+    emitNode(emitter, ast);
 
     return {
         bytecode: emitter.stream,
@@ -1529,7 +1529,7 @@ let Emitter = {
     compile: compile,
     compileAst: compileAst,
     compileToFile: compileToFile,
-    emit: emit
+    emit: emitNode
 };
 
 console.log("Emitter module loaded");

@@ -411,6 +411,15 @@ function parseArrayExpression(parser) {
     while (!match(parser, "DELIMITER", "]")) {
         if (match(parser, "OPERATOR", ",")) {
             elements.push(null);
+        } else if (peekType(parser) == "OPERATOR" && peekValue(parser) == "...") {
+            // Spread element: ...expr
+            parserAdvance(parser);
+            let arg = parseExpression(parser);
+            elements.push({
+                type: "SpreadElement",
+                argument: arg
+            });
+            match(parser, "DELIMITER", ",");
         } else {
             let elem = parseExpression(parser);
             elements.push(elem);
@@ -426,7 +435,20 @@ function parseArrayExpression(parser) {
 function parseObjectExpression(parser) {
     let properties = [];
     while (!match(parser, "DELIMITER", "}")) {
+        // Check for spread: { ...obj }
+        if (peekType(parser) == "OPERATOR" && peekValue(parser) == "...") {
+            parserAdvance(parser);
+            let arg = parseExpression(parser);
+            properties.push({
+                type: "SpreadElement",
+                argument: arg
+            });
+            match(parser, "DELIMITER", ",");
+            continue;
+        }
+
         let key = null;
+        let isShorthand = false;
         if (peekType(parser) == "STRING" || peekType(parser) == "NUMBER") {
             key = {
                 type: "Literal",
@@ -440,6 +462,19 @@ function parseObjectExpression(parser) {
                 name: peekValue(parser)
             };
             parserAdvance(parser);
+            // Check for shorthand: { x } instead of { x: x }
+            if (peekType(parser) == "DELIMITER" && (peekValue(parser) == "," || peekValue(parser) == "}")) {
+                isShorthand = true;
+                properties.push({
+                    type: "ObjectProperty",
+                    key: key,
+                    value: key,
+                    shorthand: true,
+                    kind: "init"
+                });
+                match(parser, "DELIMITER", ",");
+                continue;
+            }
         }
         expect(parser, "DELIMITER", ":");
         let value = parseExpression(parser);
@@ -447,6 +482,7 @@ function parseObjectExpression(parser) {
             type: "ObjectProperty",
             key: key,
             value: value,
+            shorthand: false,
             kind: "init"
         });
         match(parser, "DELIMITER", ",");

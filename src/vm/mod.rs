@@ -1721,9 +1721,11 @@ impl VM {
                     }) = self.heap.get_mut(ptr)
                 {
                     let i = idx as usize;
-                    if i < arr.len() {
-                        arr[i] = value;
+                    // Extend array if needed (JS semantics)
+                    if i >= arr.len() {
+                        arr.resize(i + 1, JsValue::Undefined);
                     }
+                    arr[i] = value;
                 }
             }
 
