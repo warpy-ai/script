@@ -1044,7 +1044,114 @@ impl Codegen {
                     }
                 }
             }
-            Stmt::ForIn(_) => {}
+            Stmt::ForIn(for_in_stmt) => {
+                // for (let key in obj) { ... }
+                // Implementation: Convert to iteration over Object.keys(obj)
+                self.scope_stack.push(Vec::new());
+
+                // 1. Evaluate the object and get its keys using Object.keys
+                // Stack layout for Call: [arg1, arg2, ..., callee]
+                // So we push the argument (obj) first, then the function
+                self.gen_expr(&for_in_stmt.right);
+                // Call Object.keys(obj)
+                self.instructions.push(OpCode::Load("Object".to_string()));
+                self.instructions.push(OpCode::GetProp("keys".to_string()));
+                // Stack: [obj, Object.keys]
+                self.instructions.push(OpCode::Call(1)); // Call Object.keys(obj)
+
+                // 2. Store the keys array
+                let keys_name = "__for_in_keys__".to_string();
+                self.instructions.push(OpCode::Let(keys_name.clone()));
+                if let Some(scope) = self.scope_stack.last_mut() {
+                    scope.push(keys_name.clone());
+                }
+
+                // 3. Initialize index to 0
+                self.instructions.push(OpCode::Push(JsValue::Number(0.0)));
+                let idx_name = "__for_in_idx__".to_string();
+                self.instructions.push(OpCode::Let(idx_name.clone()));
+                if let Some(scope) = self.scope_stack.last_mut() {
+                    scope.push(idx_name.clone());
+                }
+
+                // 4. Loop start
+                let loop_start = self.instructions.len();
+                self.loop_stack.push(LoopContext {
+                    start_addr: loop_start,
+                    break_jumps: Vec::new(),
+                });
+
+                // 5. Check if idx < keys.length
+                self.instructions.push(OpCode::Load(idx_name.clone()));
+                self.instructions.push(OpCode::Load(keys_name.clone()));
+                self.instructions.push(OpCode::GetProp("length".to_string()));
+                self.instructions.push(OpCode::Lt);
+                let exit_jump_idx = self.instructions.len();
+                self.instructions.push(OpCode::JumpIfFalse(0));
+
+                // 6. Load keys[idx] into the loop variable
+                self.instructions.push(OpCode::Load(keys_name.clone()));
+                self.instructions.push(OpCode::Load(idx_name.clone()));
+                self.instructions.push(OpCode::LoadElement);
+
+                // 7. Bind the key to the loop variable
+                if let Some(var_decl) = &for_in_stmt.left.as_var_decl()
+                    && let Some(decl) = var_decl.decls.first()
+                    && let Pat::Ident(id) = &decl.name
+                {
+                    let var_name = id.id.sym.to_string();
+                    self.instructions.push(OpCode::Let(var_name.clone()));
+                    if let Some(scope) = self.scope_stack.last_mut() {
+                        scope.push(var_name);
+                    }
+                }
+
+                // 8. Execute loop body
+                self.gen_stmt(&for_in_stmt.body);
+
+                // 9. Drop loop variable
+                if let Some(var_decl) = &for_in_stmt.left.as_var_decl()
+                    && let Some(decl) = var_decl.decls.first()
+                    && let Pat::Ident(id) = &decl.name
+                {
+                    let var_name = id.id.sym.to_string();
+                    self.instructions.push(OpCode::Drop(var_name));
+                    if let Some(scope) = self.scope_stack.last_mut() {
+                        scope.retain(|n| n != &id.id.sym.to_string());
+                    }
+                }
+
+                // 10. Increment index
+                self.instructions.push(OpCode::Load(idx_name.clone()));
+                self.instructions.push(OpCode::Push(JsValue::Number(1.0)));
+                self.instructions.push(OpCode::Add);
+                self.instructions.push(OpCode::Store(idx_name.clone()));
+
+                // 11. Jump back to loop start
+                self.instructions.push(OpCode::Jump(loop_start));
+
+                // 12. Backpatch exit jump
+                let loop_end = self.instructions.len();
+                if let OpCode::JumpIfFalse(ref mut addr) = self.instructions[exit_jump_idx] {
+                    *addr = loop_end;
+                }
+
+                // 13. Handle break jumps
+                if let Some(loop_ctx) = self.loop_stack.pop() {
+                    for break_idx in loop_ctx.break_jumps {
+                        if let OpCode::Jump(ref mut addr) = self.instructions[break_idx] {
+                            *addr = loop_end;
+                        }
+                    }
+                }
+
+                // 14. Clean up scope
+                if let Some(locals) = self.scope_stack.pop() {
+                    for name in locals.into_iter().rev() {
+                        self.instructions.push(OpCode::Drop(name));
+                    }
+                }
+            }
             Stmt::DoWhile(do_while_stmt) => {
                 let loop_start = self.instructions.len();
 

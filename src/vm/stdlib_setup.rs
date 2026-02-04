@@ -20,6 +20,7 @@ pub fn setup_stdlib(vm: &mut VM) {
     setup_map_set(vm);
     setup_process(vm);
     setup_fetch(vm);
+    setup_object(vm);
 }
 
 fn setup_console(vm: &mut VM) {
@@ -335,4 +336,22 @@ fn setup_fetch(vm: &mut VM) {
     vm.call_stack[0]
         .locals
         .insert("__ffi_fetch".into(), JsValue::NativeFunction(fetch_idx));
+}
+
+fn setup_object(vm: &mut VM) {
+    use crate::stdlib::native_object_keys;
+
+    let keys_idx = vm.register_native(native_object_keys);
+
+    // Create Object global with keys method
+    let object_ptr = vm.heap.len();
+    let mut object_props = std::collections::HashMap::new();
+    object_props.insert("keys".to_string(), JsValue::NativeFunction(keys_idx));
+    vm.heap.push(HeapObject {
+        data: HeapData::Object(object_props),
+    });
+
+    vm.call_stack[0]
+        .locals
+        .insert("Object".into(), JsValue::Object(object_ptr));
 }

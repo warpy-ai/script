@@ -910,7 +910,6 @@ impl VM {
                         self.stack.push(JsValue::Undefined);
                     }
                     (JsValue::Object(ptr), key_val) => {
-                        // Object access: obj[key]
                         // Convert key to string
                         let key_name = match &key_val {
                             JsValue::String(s) => s.clone(),
@@ -919,9 +918,29 @@ impl VM {
                             _ => format!("{:?}", key_val),
                         };
 
-                        // Look up the property with prototype chain
-                        let value = self.get_prop_with_proto_chain(ptr, &key_name);
-                        self.stack.push(value.clone());
+                        // Check if this is an array - handle string numeric indices
+                        if let Some(heap_obj) = self.heap.get(ptr) {
+                            match &heap_obj.data {
+                                HeapData::Array(arr) => {
+                                    // Try to parse as number for array access
+                                    if let Ok(i) = key_name.parse::<usize>() {
+                                        let val = arr.get(i).cloned().unwrap_or(JsValue::Undefined);
+                                        self.stack.push(val);
+                                    } else if key_name == "length" {
+                                        self.stack.push(JsValue::Number(arr.len() as f64));
+                                    } else {
+                                        self.stack.push(JsValue::Undefined);
+                                    }
+                                }
+                                _ => {
+                                    // Object access: obj[key] - look up with prototype chain
+                                    let value = self.get_prop_with_proto_chain(ptr, &key_name);
+                                    self.stack.push(value.clone());
+                                }
+                            }
+                        } else {
+                            self.stack.push(JsValue::Undefined);
+                        }
                     }
                     (JsValue::String(s), JsValue::Number(idx)) => {
                         // String char access: str[index]
@@ -1728,6 +1747,32 @@ impl VM {
                             let i = idx as usize;
                             let val = arr.get(i).cloned().unwrap_or(JsValue::Undefined);
                             self.stack.push(val);
+                        }
+                    }
+                    // Handle string index for arrays (needed for for...in loops)
+                    (JsValue::Object(ptr), JsValue::String(idx_str)) => {
+                        if let Some(heap_obj) = self.heap.get(ptr) {
+                            match &heap_obj.data {
+                                HeapData::Array(arr) => {
+                                    // Try to parse as number for array access
+                                    if let Ok(i) = idx_str.parse::<usize>() {
+                                        let val = arr.get(i).cloned().unwrap_or(JsValue::Undefined);
+                                        self.stack.push(val);
+                                    } else {
+                                        self.stack.push(JsValue::Undefined);
+                                    }
+                                }
+                                HeapData::Object(props) => {
+                                    // Object property access by string key
+                                    let val = props.get(&idx_str).cloned().unwrap_or(JsValue::Undefined);
+                                    self.stack.push(val);
+                                }
+                                _ => {
+                                    self.stack.push(JsValue::Undefined);
+                                }
+                            }
+                        } else {
+                            self.stack.push(JsValue::Undefined);
                         }
                     }
                     (JsValue::String(s), JsValue::Number(idx)) => {

@@ -856,3 +856,33 @@ fn create_fetch_error(vm: &mut VM, message: &str) -> JsValue {
     });
     JsValue::Object(response_ptr)
 }
+
+// ============================================================================
+// Object Functions
+// ============================================================================
+
+/// Object.keys(obj) - Returns an array of the object's own enumerable property names
+pub fn native_object_keys(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    if let Some(JsValue::Object(ptr)) = args.first() {
+        if let Some(HeapObject { data }) = vm.heap.get(*ptr) {
+            let keys: Vec<JsValue> = match data {
+                HeapData::Object(props) => props.keys().map(|k| JsValue::String(k.clone())).collect(),
+                HeapData::Array(arr) => (0..arr.len())
+                    .map(|i| JsValue::String(i.to_string()))
+                    .collect(),
+                _ => Vec::new(),
+            };
+            let arr_ptr = vm.heap.len();
+            vm.heap.push(HeapObject {
+                data: HeapData::Array(keys),
+            });
+            return JsValue::Object(arr_ptr);
+        }
+    }
+    // Return empty array for non-objects
+    let arr_ptr = vm.heap.len();
+    vm.heap.push(HeapObject {
+        data: HeapData::Array(Vec::new()),
+    });
+    JsValue::Object(arr_ptr)
+}
