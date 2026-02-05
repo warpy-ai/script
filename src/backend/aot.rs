@@ -251,7 +251,7 @@ impl AotCompiler {
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
                     .as_nanos();
-                let temp_file = std::env::temp_dir().join(format!("tscl_{}.o", timestamp));
+                let temp_file = std::env::temp_dir().join(format!("ot_{}.o", timestamp));
                 super::llvm::compile_to_object_file(module, &self.config, &temp_file)?;
 
                 // Read object file bytes

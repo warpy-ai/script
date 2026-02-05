@@ -119,41 +119,41 @@ pub mod stubs {
     use super::StubCall;
 
     // Allocation stubs
-    pub const ALLOC_OBJECT: StubCall = StubCall::new("tscl_alloc_object", 0).with_side_effects();
-    pub const ALLOC_ARRAY: StubCall = StubCall::new("tscl_alloc_array", 1).with_side_effects();
-    pub const ALLOC_STRING: StubCall = StubCall::new("tscl_alloc_string", 2).with_side_effects();
+    pub const ALLOC_OBJECT: StubCall = StubCall::new("ot_alloc_object", 0).with_side_effects();
+    pub const ALLOC_ARRAY: StubCall = StubCall::new("ot_alloc_array", 1).with_side_effects();
+    pub const ALLOC_STRING: StubCall = StubCall::new("ot_alloc_string", 2).with_side_effects();
 
     // Property access stubs
-    pub const GET_PROP: StubCall = StubCall::new("tscl_get_prop", 3);
-    pub const SET_PROP: StubCall = StubCall::new("tscl_set_prop", 4).with_side_effects();
-    pub const GET_ELEMENT: StubCall = StubCall::new("tscl_get_element", 2);
-    pub const SET_ELEMENT: StubCall = StubCall::new("tscl_set_element", 3).with_side_effects();
+    pub const GET_PROP: StubCall = StubCall::new("ot_get_prop", 3);
+    pub const SET_PROP: StubCall = StubCall::new("ot_set_prop", 4).with_side_effects();
+    pub const GET_ELEMENT: StubCall = StubCall::new("ot_get_element", 2);
+    pub const SET_ELEMENT: StubCall = StubCall::new("ot_set_element", 3).with_side_effects();
 
     // Dynamic arithmetic stubs
-    pub const ADD_ANY: StubCall = StubCall::new("tscl_add_any", 2);
-    pub const SUB_ANY: StubCall = StubCall::new("tscl_sub_any", 2);
-    pub const MUL_ANY: StubCall = StubCall::new("tscl_mul_any", 2);
-    pub const DIV_ANY: StubCall = StubCall::new("tscl_div_any", 2).may_trap();
-    pub const MOD_ANY: StubCall = StubCall::new("tscl_mod_any", 2).may_trap();
-    pub const NEG_ANY: StubCall = StubCall::new("tscl_neg_any", 1);
-    pub const POW: StubCall = StubCall::new("tscl_pow", 2);
+    pub const ADD_ANY: StubCall = StubCall::new("ot_add_any", 2);
+    pub const SUB_ANY: StubCall = StubCall::new("ot_sub_any", 2);
+    pub const MUL_ANY: StubCall = StubCall::new("ot_mul_any", 2);
+    pub const DIV_ANY: StubCall = StubCall::new("ot_div_any", 2).may_trap();
+    pub const MOD_ANY: StubCall = StubCall::new("ot_mod_any", 2).may_trap();
+    pub const NEG_ANY: StubCall = StubCall::new("ot_neg_any", 1);
+    pub const POW: StubCall = StubCall::new("ot_pow", 2);
 
     // Comparison stubs
-    pub const EQ_STRICT: StubCall = StubCall::new("tscl_eq_strict", 2);
-    pub const LT: StubCall = StubCall::new("tscl_lt", 2);
-    pub const GT: StubCall = StubCall::new("tscl_gt", 2);
-    pub const NOT: StubCall = StubCall::new("tscl_not", 1);
-    pub const INSTANCEOF: StubCall = StubCall::new("tscl_instanceof", 2);
+    pub const EQ_STRICT: StubCall = StubCall::new("ot_eq_strict", 2);
+    pub const LT: StubCall = StubCall::new("ot_lt", 2);
+    pub const GT: StubCall = StubCall::new("ot_gt", 2);
+    pub const NOT: StubCall = StubCall::new("ot_not", 1);
+    pub const INSTANCEOF: StubCall = StubCall::new("ot_instanceof", 2);
 
     // Type conversion stubs
-    pub const TO_BOOLEAN: StubCall = StubCall::new("tscl_to_boolean", 1);
-    pub const TO_NUMBER: StubCall = StubCall::new("tscl_to_number", 1);
+    pub const TO_BOOLEAN: StubCall = StubCall::new("ot_to_boolean", 1);
+    pub const TO_NUMBER: StubCall = StubCall::new("ot_to_number", 1);
 
     // Function call stubs
-    pub const CALL: StubCall = StubCall::new("tscl_call", 3).with_side_effects().may_trap();
+    pub const CALL: StubCall = StubCall::new("ot_call", 3).with_side_effects().may_trap();
 
     // Console/IO stubs
-    pub const CONSOLE_LOG: StubCall = StubCall::new("tscl_console_log", 1).with_side_effects();
+    pub const CONSOLE_LOG: StubCall = StubCall::new("ot_console_log", 1).with_side_effects();
 }
 
 // ============================================================================

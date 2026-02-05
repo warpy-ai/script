@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use crate::backend::jit::JitRuntime;
 use crate::backend::{BackendConfig, BackendError};
 use crate::ir::IrModule;
-use crate::runtime::abi::TsclValue;
+use crate::runtime::abi::OtValue;
 use crate::vm::opcodes::OpCode;
 
 /// Compilation tier for a function.
@@ -206,7 +206,7 @@ impl TierManager {
     /// # Safety
     /// The caller must ensure the function pointer is valid and the
     /// argument count matches the function signature.
-    pub unsafe fn call_compiled(&self, func_addr: usize, args: &[TsclValue]) -> Option<TsclValue> {
+    pub unsafe fn call_compiled(&self, func_addr: usize, args: &[OtValue]) -> Option<OtValue> {
         unsafe {
             let ptr = self.compiled_functions.get(&func_addr)?;
 
@@ -231,7 +231,7 @@ impl TierManager {
                 _ => return None, // Too many arguments
             };
 
-            Some(TsclValue::from_bits(result))
+            Some(OtValue::from_bits(result))
         }
     }
 

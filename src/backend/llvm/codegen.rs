@@ -48,7 +48,7 @@ impl LlvmCodegen {
             }
 
             // Create module
-            let module_name = CString::new("tscl_module").unwrap();
+            let module_name = CString::new("ot_module").unwrap();
             let module =
                 llvm_sys::core::LLVMModuleCreateWithNameInContext(module_name.as_ptr(), context);
             if module.is_null() {
@@ -95,16 +95,15 @@ impl LlvmCodegen {
             }
 
             // Create C-compatible main wrapper if tscl main exists
-            let tscl_main_name = std::ffi::CString::new("main").unwrap();
-            let tscl_main =
-                llvm_sys::core::LLVMGetNamedFunction(self.module, tscl_main_name.as_ptr());
-            if !tscl_main.is_null() && llvm_sys::core::LLVMIsDeclaration(tscl_main) == 0 {
-                // Rename tscl main to tscl_main
-                let tscl_main_new_name = std::ffi::CString::new("tscl_main").unwrap();
+            let ot_main_name = std::ffi::CString::new("main").unwrap();
+            let ot_main = llvm_sys::core::LLVMGetNamedFunction(self.module, ot_main_name.as_ptr());
+            if !ot_main.is_null() && llvm_sys::core::LLVMIsDeclaration(ot_main) == 0 {
+                // Rename tscl main to ot_main
+                let ot_main_new_name = std::ffi::CString::new("ot_main").unwrap();
                 llvm_sys::core::LLVMSetValueName2(
-                    tscl_main,
-                    tscl_main_new_name.as_ptr(),
-                    tscl_main_new_name.as_bytes().len(),
+                    ot_main,
+                    ot_main_new_name.as_ptr(),
+                    ot_main_new_name.as_bytes().len(),
                 );
 
                 // Create C-compatible main: int main(int argc, char** argv)
@@ -168,7 +167,7 @@ impl LlvmCodegen {
                         );
                     }
 
-                    // Create entry block and call tscl_main
+                    // Create entry block and call ot_main
                     let entry = llvm_sys::core::LLVMAppendBasicBlock(
                         c_main,
                         b"entry\0".as_ptr() as *const i8,
@@ -176,11 +175,11 @@ impl LlvmCodegen {
                     let builder = llvm_sys::core::LLVMCreateBuilderInContext(self.context);
                     llvm_sys::core::LLVMPositionBuilderAtEnd(builder, entry);
 
-                    let tscl_main_ty = llvm_sys::core::LLVMGlobalGetValueType(tscl_main);
-                    let _tscl_result = llvm_sys::core::LLVMBuildCall2(
+                    let ot_main_ty = llvm_sys::core::LLVMGlobalGetValueType(ot_main);
+                    let _ot_result = llvm_sys::core::LLVMBuildCall2(
                         builder,
-                        tscl_main_ty,
-                        tscl_main,
+                        ot_main_ty,
+                        ot_main,
                         std::ptr::null_mut(),
                         0,
                         b"call\0".as_ptr() as *const i8,
@@ -715,7 +714,7 @@ unsafe fn translate_op(ctx: &mut TranslationContext, op: &IrOp) -> Result<(), Ba
                     fb,
                     b"cmp\0".as_ptr() as *const i8,
                 );
-                let result = bool_to_tscl_value(ctx, cmp)?;
+                let result = bool_to_ot_value(ctx, cmp)?;
                 ctx.values.insert(*dst, result);
             }
             IrOp::LtEq(dst, a, b) => {
@@ -741,7 +740,7 @@ unsafe fn translate_op(ctx: &mut TranslationContext, op: &IrOp) -> Result<(), Ba
                     fb,
                     b"cmp\0".as_ptr() as *const i8,
                 );
-                let result = bool_to_tscl_value(ctx, cmp)?;
+                let result = bool_to_ot_value(ctx, cmp)?;
                 ctx.values.insert(*dst, result);
             }
             IrOp::Gt(dst, a, b) => {
@@ -767,7 +766,7 @@ unsafe fn translate_op(ctx: &mut TranslationContext, op: &IrOp) -> Result<(), Ba
                     fb,
                     b"cmp\0".as_ptr() as *const i8,
                 );
-                let result = bool_to_tscl_value(ctx, cmp)?;
+                let result = bool_to_ot_value(ctx, cmp)?;
                 ctx.values.insert(*dst, result);
             }
             IrOp::GtEq(dst, a, b) => {
@@ -793,7 +792,7 @@ unsafe fn translate_op(ctx: &mut TranslationContext, op: &IrOp) -> Result<(), Ba
                     fb,
                     b"cmp\0".as_ptr() as *const i8,
                 );
-                let result = bool_to_tscl_value(ctx, cmp)?;
+                let result = bool_to_ot_value(ctx, cmp)?;
                 ctx.values.insert(*dst, result);
             }
             IrOp::EqStrict(dst, a, b) => {
@@ -821,7 +820,7 @@ unsafe fn translate_op(ctx: &mut TranslationContext, op: &IrOp) -> Result<(), Ba
                     fb,
                     b"cmp\0".as_ptr() as *const i8,
                 );
-                let result = bool_to_tscl_value(ctx, cmp)?;
+                let result = bool_to_ot_value(ctx, cmp)?;
                 ctx.values.insert(*dst, result);
             }
             IrOp::NeStrict(dst, a, b) => {
@@ -848,7 +847,7 @@ unsafe fn translate_op(ctx: &mut TranslationContext, op: &IrOp) -> Result<(), Ba
                     fb,
                     b"cmp\0".as_ptr() as *const i8,
                 );
-                let result = bool_to_tscl_value(ctx, cmp)?;
+                let result = bool_to_ot_value(ctx, cmp)?;
                 ctx.values.insert(*dst, result);
             }
             IrOp::Not(dst, a) => {
@@ -872,7 +871,7 @@ unsafe fn translate_op(ctx: &mut TranslationContext, op: &IrOp) -> Result<(), Ba
                     llvm_sys::core::LLVMConstInt(i64_ty, 0, 0),
                     b"is_falsy\0".as_ptr() as *const i8,
                 );
-                let result = bool_to_tscl_value(ctx, is_falsy)?;
+                let result = bool_to_ot_value(ctx, is_falsy)?;
                 ctx.values.insert(*dst, result);
             }
             IrOp::Copy(dst, src)
@@ -885,63 +884,63 @@ unsafe fn translate_op(ctx: &mut TranslationContext, op: &IrOp) -> Result<(), Ba
             IrOp::AddAny(dst, a, b) => {
                 let va = get_value(ctx, *a)?;
                 let vb = get_value(ctx, *b)?;
-                let result = call_stub(ctx, "tscl_add_any", &[va, vb])?;
+                let result = call_stub(ctx, "ot_add_any", &[va, vb])?;
                 ctx.values.insert(*dst, result);
             }
             IrOp::SubAny(dst, a, b) => {
                 let va = get_value(ctx, *a)?;
                 let vb = get_value(ctx, *b)?;
-                let result = call_stub(ctx, "tscl_sub_any", &[va, vb])?;
+                let result = call_stub(ctx, "ot_sub_any", &[va, vb])?;
                 ctx.values.insert(*dst, result);
             }
             IrOp::MulAny(dst, a, b) => {
                 let va = get_value(ctx, *a)?;
                 let vb = get_value(ctx, *b)?;
-                let result = call_stub(ctx, "tscl_mul_any", &[va, vb])?;
+                let result = call_stub(ctx, "ot_mul_any", &[va, vb])?;
                 ctx.values.insert(*dst, result);
             }
             IrOp::DivAny(dst, a, b) => {
                 let va = get_value(ctx, *a)?;
                 let vb = get_value(ctx, *b)?;
-                let result = call_stub(ctx, "tscl_div_any", &[va, vb])?;
+                let result = call_stub(ctx, "ot_div_any", &[va, vb])?;
                 ctx.values.insert(*dst, result);
             }
             IrOp::ModAny(dst, a, b) => {
                 let va = get_value(ctx, *a)?;
                 let vb = get_value(ctx, *b)?;
-                let result = call_stub(ctx, "tscl_mod_any", &[va, vb])?;
+                let result = call_stub(ctx, "ot_mod_any", &[va, vb])?;
                 ctx.values.insert(*dst, result);
             }
             IrOp::NegAny(dst, a) => {
                 let va = get_value(ctx, *a)?;
-                let result = call_stub(ctx, "tscl_neg", &[va])?;
+                let result = call_stub(ctx, "ot_neg", &[va])?;
                 ctx.values.insert(*dst, result);
             }
             IrOp::NewObject(dst) => {
-                let result = call_stub(ctx, "tscl_alloc_object", &[])?;
+                let result = call_stub(ctx, "ot_alloc_object", &[])?;
                 ctx.values.insert(*dst, result);
             }
             IrOp::GetProp(dst, obj, _name) => {
                 let obj_val = get_value(ctx, *obj)?;
-                let result = call_stub(ctx, "tscl_get_prop", &[obj_val])?;
+                let result = call_stub(ctx, "ot_get_prop", &[obj_val])?;
                 ctx.values.insert(*dst, result);
             }
             IrOp::SetProp(obj, _name, val) => {
                 let obj_val = get_value(ctx, *obj)?;
                 let val_val = get_value(ctx, *val)?;
-                call_stub(ctx, "tscl_set_prop", &[obj_val, val_val])?;
+                call_stub(ctx, "ot_set_prop", &[obj_val, val_val])?;
             }
             IrOp::GetElement(dst, obj, idx) => {
                 let obj_val = get_value(ctx, *obj)?;
                 let idx_val = get_value(ctx, *idx)?;
-                let result = call_stub(ctx, "tscl_get_element", &[obj_val, idx_val])?;
+                let result = call_stub(ctx, "ot_get_element", &[obj_val, idx_val])?;
                 ctx.values.insert(*dst, result);
             }
             IrOp::SetElement(obj, idx, val) => {
                 let obj_val = get_value(ctx, *obj)?;
                 let idx_val = get_value(ctx, *idx)?;
                 let val_val = get_value(ctx, *val)?;
-                call_stub(ctx, "tscl_set_element", &[obj_val, idx_val, val_val])?;
+                call_stub(ctx, "ot_set_element", &[obj_val, idx_val, val_val])?;
             }
             IrOp::NewArray(dst) => {
                 let capacity = llvm_sys::core::LLVMConstInt(
@@ -949,7 +948,7 @@ unsafe fn translate_op(ctx: &mut TranslationContext, op: &IrOp) -> Result<(), Ba
                     8,
                     0,
                 );
-                let result = call_stub(ctx, "tscl_alloc_array", &[capacity])?;
+                let result = call_stub(ctx, "ot_alloc_array", &[capacity])?;
                 ctx.values.insert(*dst, result);
             }
             IrOp::Phi(dst, _entries) => {
@@ -970,7 +969,7 @@ unsafe fn translate_op(ctx: &mut TranslationContext, op: &IrOp) -> Result<(), Ba
             IrOp::CallMethod(dst, _obj, name, args) => {
                 if name == "log" && !args.is_empty() {
                     let arg_val = get_value(ctx, args[0])?;
-                    let result = call_stub(ctx, "tscl_console_log", &[arg_val])?;
+                    let result = call_stub(ctx, "ot_console_log", &[arg_val])?;
                     ctx.values.insert(*dst, result);
                 } else {
                     let undefined = translate_literal(ctx, &Literal::Undefined)?;
@@ -984,7 +983,7 @@ unsafe fn translate_op(ctx: &mut TranslationContext, op: &IrOp) -> Result<(), Ba
                     0,
                 );
                 let env_val = get_value(ctx, *env)?;
-                let result = call_stub(ctx, "tscl_make_closure", &[func_addr, env_val])?;
+                let result = call_stub(ctx, "ot_make_closure", &[func_addr, env_val])?;
                 ctx.values.insert(*dst, result);
             }
             _ => {
@@ -1112,7 +1111,7 @@ unsafe fn get_value(ctx: &TranslationContext, id: ValueId) -> Result<LLVMValueRe
 }
 
 /// Convert an i1 boolean to NaN-boxed boolean value
-unsafe fn bool_to_tscl_value(
+unsafe fn bool_to_ot_value(
     ctx: &TranslationContext,
     b: LLVMValueRef,
 ) -> Result<LLVMValueRef, BackendError> {

@@ -518,7 +518,7 @@ impl Lowerer {
                 let obj = self.pop()?;
                 // Call runtime stub
                 let stub = self.alloc_value(IrType::Any);
-                self.emit(IrOp::LoadGlobal(stub, "tscl_instanceof".to_string()));
+                self.emit(IrOp::LoadGlobal(stub, "ot_instanceof".to_string()));
                 let result = self.alloc_value(IrType::Boolean);
                 self.emit(IrOp::Call(result, stub, vec![obj, ctor]));
                 self.push(result);
@@ -528,7 +528,7 @@ impl Lowerer {
             OpCode::NewTarget => {
                 // Call runtime stub
                 let stub = self.alloc_value(IrType::Any);
-                self.emit(IrOp::LoadGlobal(stub, "tscl_new_target".to_string()));
+                self.emit(IrOp::LoadGlobal(stub, "ot_new_target".to_string()));
                 let result = self.alloc_value(IrType::Any);
                 self.emit(IrOp::Call(result, stub, vec![]));
                 self.push(result);
@@ -540,7 +540,7 @@ impl Lowerer {
                 let decorator = self.pop()?;
                 // Call runtime stub for decorator application
                 let stub = self.alloc_value(IrType::Any);
-                self.emit(IrOp::LoadGlobal(stub, "tscl_apply_decorator".to_string()));
+                self.emit(IrOp::LoadGlobal(stub, "ot_apply_decorator".to_string()));
                 let result = self.alloc_value(IrType::Any);
                 self.emit(IrOp::Call(result, stub, vec![target, decorator]));
                 self.push(result);

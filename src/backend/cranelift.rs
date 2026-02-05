@@ -80,40 +80,42 @@ impl CraneliftCodegen {
         use crate::runtime::stubs::*;
 
         // Allocation stubs
-        builder.symbol("tscl_alloc_object", tscl_alloc_object as *const u8);
-        builder.symbol("tscl_alloc_array", tscl_alloc_array as *const u8);
-        builder.symbol("tscl_alloc_string", tscl_alloc_string as *const u8);
+        builder.symbol("ot_alloc_object", ot_alloc_object as *const u8);
+        builder.symbol("ot_alloc_array", ot_alloc_array as *const u8);
+        builder.symbol("ot_alloc_string", ot_alloc_string as *const u8);
 
         // Property access stubs
-        builder.symbol("tscl_get_prop", tscl_get_prop as *const u8);
-        builder.symbol("tscl_set_prop", tscl_set_prop as *const u8);
-        builder.symbol("tscl_get_element", tscl_get_element as *const u8);
-        builder.symbol("tscl_set_element", tscl_set_element as *const u8);
+        builder.symbol("ot_get_prop", ot_get_prop as *const u8);
+        builder.symbol("ot_set_prop", ot_set_prop as *const u8);
+        builder.symbol("ot_get_element", ot_get_element as *const u8);
+        builder.symbol("ot_set_element", ot_set_element as *const u8);
 
         // Dynamic arithmetic stubs
-        builder.symbol("tscl_add_any", tscl_add_any as *const u8);
-        builder.symbol("tscl_sub_any", tscl_sub_any as *const u8);
-        builder.symbol("tscl_mul_any", tscl_mul_any as *const u8);
-        builder.symbol("tscl_div_any", tscl_div_any as *const u8);
-        builder.symbol("tscl_mod_any", tscl_mod_any as *const u8);
+        builder.symbol("ot_add_any", ot_add_any as *const u8);
+        builder.symbol("ot_sub_any", ot_sub_any as *const u8);
+        builder.symbol("ot_mul_any", ot_mul_any as *const u8);
+        builder.symbol("ot_div_any", ot_div_any as *const u8);
+        builder.symbol("ot_mod_any", ot_mod_any as *const u8);
 
         // Comparison stubs
-        builder.symbol("tscl_eq_strict", tscl_eq_strict as *const u8);
-        builder.symbol("tscl_lt", tscl_lt as *const u8);
-        builder.symbol("tscl_gt", tscl_gt as *const u8);
-        builder.symbol("tscl_not", tscl_not as *const u8);
-        builder.symbol("tscl_neg", tscl_neg as *const u8);
+        builder.symbol("ot_eq_strict", ot_eq_strict as *const u8);
+        builder.symbol("ot_lt", ot_lt as *const u8);
+        builder.symbol("ot_gt", ot_gt as *const u8);
+        builder.symbol("ot_lte", ot_lte as *const u8);
+        builder.symbol("ot_gte", ot_gte as *const u8);
+        builder.symbol("ot_not", ot_not as *const u8);
+        builder.symbol("ot_neg", ot_neg as *const u8);
 
         // Type conversion stubs
-        builder.symbol("tscl_to_boolean", tscl_to_boolean as *const u8);
-        builder.symbol("tscl_to_number", tscl_to_number as *const u8);
+        builder.symbol("ot_to_boolean", ot_to_boolean as *const u8);
+        builder.symbol("ot_to_number", ot_to_number as *const u8);
 
         // Console/IO stubs
-        builder.symbol("tscl_console_log", tscl_console_log as *const u8);
-        builder.symbol("tscl_call", tscl_call as *const u8);
+        builder.symbol("ot_console_log", ot_console_log as *const u8);
+        builder.symbol("ot_call", ot_call as *const u8);
 
         // Closure stubs
-        builder.symbol("tscl_make_closure", tscl_make_closure as *const u8);
+        builder.symbol("ot_make_closure", ot_make_closure as *const u8);
     }
 
     /// Declare a runtime stub function in the module
@@ -519,92 +521,72 @@ fn translate_op(
 
         // === Dynamic Operations (call stubs) ===
         IrOp::AddAny(dst, a, b) => {
-            let result = call_stub(builder, module, ctx, "tscl_add_any", &[*a, *b])?;
+            let result = call_stub(builder, module, ctx, "ot_add_any", &[*a, *b])?;
             ctx.values.insert(*dst, result);
         }
 
         IrOp::SubAny(dst, a, b) => {
-            let result = call_stub(builder, module, ctx, "tscl_sub_any", &[*a, *b])?;
+            let result = call_stub(builder, module, ctx, "ot_sub_any", &[*a, *b])?;
             ctx.values.insert(*dst, result);
         }
 
         IrOp::MulAny(dst, a, b) => {
-            let result = call_stub(builder, module, ctx, "tscl_mul_any", &[*a, *b])?;
+            let result = call_stub(builder, module, ctx, "ot_mul_any", &[*a, *b])?;
             ctx.values.insert(*dst, result);
         }
 
         IrOp::DivAny(dst, a, b) => {
-            let result = call_stub(builder, module, ctx, "tscl_div_any", &[*a, *b])?;
+            let result = call_stub(builder, module, ctx, "ot_div_any", &[*a, *b])?;
             ctx.values.insert(*dst, result);
         }
 
         IrOp::ModAny(dst, a, b) => {
-            let result = call_stub(builder, module, ctx, "tscl_mod_any", &[*a, *b])?;
+            let result = call_stub(builder, module, ctx, "ot_mod_any", &[*a, *b])?;
             ctx.values.insert(*dst, result);
         }
 
         IrOp::NegAny(dst, a) => {
-            let result = call_stub(builder, module, ctx, "tscl_neg", &[*a])?;
+            let result = call_stub(builder, module, ctx, "ot_neg", &[*a])?;
             ctx.values.insert(*dst, result);
         }
 
         // === Comparison Operations ===
+        // Use runtime stubs to handle both number and string comparisons.
         IrOp::Lt(dst, a, b) => {
-            let va = get_value(ctx, *a)?;
-            let vb = get_value(ctx, *b)?;
-            let fa = builder.ins().bitcast(types::F64, MemFlags::new(), va);
-            let fb = builder.ins().bitcast(types::F64, MemFlags::new(), vb);
-            let cmp = builder.ins().fcmp(FloatCC::LessThan, fa, fb);
-            // Convert bool to NaN-boxed boolean
-            let result = bool_to_tscl_value(builder, cmp);
+            let result = call_stub(builder, module, ctx, "ot_lt", &[*a, *b])?;
             ctx.values.insert(*dst, result);
         }
 
         IrOp::LtEq(dst, a, b) => {
-            let va = get_value(ctx, *a)?;
-            let vb = get_value(ctx, *b)?;
-            let fa = builder.ins().bitcast(types::F64, MemFlags::new(), va);
-            let fb = builder.ins().bitcast(types::F64, MemFlags::new(), vb);
-            let cmp = builder.ins().fcmp(FloatCC::LessThanOrEqual, fa, fb);
-            let result = bool_to_tscl_value(builder, cmp);
+            let result = call_stub(builder, module, ctx, "ot_lte", &[*a, *b])?;
             ctx.values.insert(*dst, result);
         }
 
         IrOp::Gt(dst, a, b) => {
-            let va = get_value(ctx, *a)?;
-            let vb = get_value(ctx, *b)?;
-            let fa = builder.ins().bitcast(types::F64, MemFlags::new(), va);
-            let fb = builder.ins().bitcast(types::F64, MemFlags::new(), vb);
-            let cmp = builder.ins().fcmp(FloatCC::GreaterThan, fa, fb);
-            let result = bool_to_tscl_value(builder, cmp);
+            let result = call_stub(builder, module, ctx, "ot_gt", &[*a, *b])?;
             ctx.values.insert(*dst, result);
         }
 
         IrOp::GtEq(dst, a, b) => {
-            let va = get_value(ctx, *a)?;
-            let vb = get_value(ctx, *b)?;
-            let fa = builder.ins().bitcast(types::F64, MemFlags::new(), va);
-            let fb = builder.ins().bitcast(types::F64, MemFlags::new(), vb);
-            let cmp = builder.ins().fcmp(FloatCC::GreaterThanOrEqual, fa, fb);
-            let result = bool_to_tscl_value(builder, cmp);
+            let result = call_stub(builder, module, ctx, "ot_gte", &[*a, *b])?;
             ctx.values.insert(*dst, result);
         }
 
         IrOp::EqStrict(dst, a, b) => {
-            let result = call_stub(builder, module, ctx, "tscl_eq_strict", &[*a, *b])?;
+            let result = call_stub(builder, module, ctx, "ot_eq_strict", &[*a, *b])?;
             ctx.values.insert(*dst, result);
         }
 
         IrOp::NeStrict(dst, a, b) => {
             // Call eq_strict then negate
-            let eq_result = call_stub(builder, module, ctx, "tscl_eq_strict", &[*a, *b])?;
-            let result = call_stub_with_values(builder, module, ctx, "tscl_not", &[eq_result])?;
+            let eq_result = call_stub(builder, module, ctx, "ot_eq_strict", &[*a, *b])?;
+            let result = call_stub_with_values(builder, module, ctx, "ot_not", &[eq_result])?;
             ctx.values.insert(*dst, result);
         }
 
         // === Logical Operations ===
         IrOp::Not(dst, a) => {
-            let result = call_stub(builder, module, ctx, "tscl_not", &[*a])?;
+            let result = call_stub(builder, module, ctx, "ot_not", &[*a])?;
             ctx.values.insert(*dst, result);
         }
 
@@ -665,53 +647,47 @@ fn translate_op(
 
         // === Object Operations ===
         IrOp::NewObject(dst) => {
-            let result = call_stub_no_args(builder, module, ctx, "tscl_alloc_object")?;
+            let result = call_stub_no_args(builder, module, ctx, "ot_alloc_object")?;
             ctx.values.insert(*dst, result);
         }
 
         IrOp::GetProp(dst, obj, _name) => {
             // TODO: Pass property name as string pointer
-            let result = call_stub(builder, module, ctx, "tscl_get_prop", &[*obj])?;
+            let result = call_stub(builder, module, ctx, "ot_get_prop", &[*obj])?;
             ctx.values.insert(*dst, result);
         }
 
         IrOp::SetProp(obj, _name, val) => {
             // TODO: Pass property name as string pointer
-            call_stub(builder, module, ctx, "tscl_set_prop", &[*obj, *val])?;
+            call_stub(builder, module, ctx, "ot_set_prop", &[*obj, *val])?;
         }
 
         IrOp::GetElement(dst, obj, idx) => {
-            let result = call_stub(builder, module, ctx, "tscl_get_element", &[*obj, *idx])?;
+            let result = call_stub(builder, module, ctx, "ot_get_element", &[*obj, *idx])?;
             ctx.values.insert(*dst, result);
         }
 
         IrOp::SetElement(obj, idx, val) => {
-            call_stub(
-                builder,
-                module,
-                ctx,
-                "tscl_set_element",
-                &[*obj, *idx, *val],
-            )?;
+            call_stub(builder, module, ctx, "ot_set_element", &[*obj, *idx, *val])?;
         }
 
         // === Array Operations ===
         IrOp::NewArray(dst) => {
             let capacity = builder.ins().iconst(types::I64, 8);
             let result =
-                call_stub_with_values(builder, module, ctx, "tscl_alloc_array", &[capacity])?;
+                call_stub_with_values(builder, module, ctx, "ot_alloc_array", &[capacity])?;
             ctx.values.insert(*dst, result);
         }
 
         IrOp::ArrayLen(dst, arr) => {
             // Get length property
-            let result = call_stub(builder, module, ctx, "tscl_get_prop", &[*arr])?;
+            let result = call_stub(builder, module, ctx, "ot_get_prop", &[*arr])?;
             ctx.values.insert(*dst, result);
         }
 
         IrOp::ArrayPush(arr, val) => {
             // TODO: Implement proper array push
-            call_stub(builder, module, ctx, "tscl_set_element", &[*arr, *val])?;
+            call_stub(builder, module, ctx, "ot_set_element", &[*arr, *val])?;
         }
 
         // === Copy/Move Operations ===
@@ -751,7 +727,7 @@ fn translate_op(
         IrOp::TypeCheck(dst, _val, _ty) => {
             // Type checks are compile-time in typed code
             let one = builder.ins().iconst(types::I8, 1);
-            let true_val = bool_to_tscl_value(builder, one);
+            let true_val = bool_to_ot_value(builder, one);
             ctx.values.insert(*dst, true_val);
         }
 
@@ -762,12 +738,12 @@ fn translate_op(
         }
 
         IrOp::ToBool(dst, val) => {
-            let result = call_stub(builder, module, ctx, "tscl_to_boolean", &[*val])?;
+            let result = call_stub(builder, module, ctx, "ot_to_boolean", &[*val])?;
             ctx.values.insert(*dst, result);
         }
 
         IrOp::ToNum(dst, val) => {
-            let result = call_stub(builder, module, ctx, "tscl_to_number", &[*val])?;
+            let result = call_stub(builder, module, ctx, "ot_to_number", &[*val])?;
             ctx.values.insert(*dst, result);
         }
 
@@ -831,9 +807,9 @@ fn translate_op(
                 // Get the first argument (the value to log) as a Cranelift Value
                 let arg_val = get_value(ctx, args[0])?;
 
-                // Call tscl_console_log with the argument (using call_stub_with_values since we have a Value)
+                // Call ot_console_log with the argument (using call_stub_with_values since we have a Value)
                 let result =
-                    call_stub_with_values(builder, module, ctx, "tscl_console_log", &[arg_val])?;
+                    call_stub_with_values(builder, module, ctx, "ot_console_log", &[arg_val])?;
                 ctx.values.insert(*dst, result);
             } else {
                 // Generic method call - for now, return undefined
@@ -854,12 +830,12 @@ fn translate_op(
             let func_addr = builder.ins().iconst(types::I64, *addr as i64);
             let env_val = get_value(ctx, *env)?;
 
-            // Call tscl_make_closure(func_addr, env) to create the closure object
+            // Call ot_make_closure(func_addr, env) to create the closure object
             let result = call_stub_with_values(
                 builder,
                 module,
                 ctx,
-                "tscl_make_closure",
+                "ot_make_closure",
                 &[func_addr, env_val],
             )?;
 
@@ -874,7 +850,7 @@ fn translate_op(
 
         // === Struct Operations ===
         IrOp::StructNew(dst, _struct_id) => {
-            let result = call_stub_no_args(builder, module, ctx, "tscl_alloc_object")?;
+            let result = call_stub_no_args(builder, module, ctx, "ot_alloc_object")?;
             ctx.values.insert(*dst, result);
         }
 
@@ -926,7 +902,7 @@ fn translate_op(
             // TODO: Implement delete by calling a runtime stub
             // For now, return true (delete always "succeeds")
             let one = builder.ins().iconst(types::I8, 1);
-            let true_val = bool_to_tscl_value(builder, one);
+            let true_val = bool_to_ot_value(builder, one);
             ctx.values.insert(*dst, true_val);
         }
     }
@@ -952,7 +928,7 @@ fn translate_terminator(
             let cond_val = get_value(ctx, *cond)?;
             // Check if truthy (not 0, not NaN, not undefined, etc.)
             // For simplicity, check if the boolean bit is set
-            let is_truthy = tscl_value_to_bool(builder, cond_val);
+            let is_truthy = ot_value_to_bool(builder, cond_val);
 
             let true_bl = ctx.blocks[true_block];
             let false_bl = ctx.blocks[false_block];
@@ -1044,12 +1020,10 @@ fn translate_literal(builder: &mut FunctionBuilder, lit: &Literal) -> Value {
             let bits = QNAN | TAG_UNDEFINED;
             builder.ins().iconst(types::I64, bits as i64)
         }
-        Literal::String(_s) => {
-            // TODO: Allocate string and return pointer
-            // For now, return undefined
-            const QNAN: u64 = 0x7FFC_0000_0000_0000;
-            const TAG_UNDEFINED: u64 = 0x0003_0000_0000_0000;
-            let bits = QNAN | TAG_UNDEFINED;
+        Literal::String(s) => {
+            // Allocate the string on the runtime heap at JIT compile time.
+            // The resulting NaN-boxed pointer is embedded as a constant.
+            let bits = crate::runtime::stubs::ot_alloc_string(s.as_ptr(), s.len());
             builder.ins().iconst(types::I64, bits as i64)
         }
     }
@@ -1080,7 +1054,7 @@ fn resolve_function_address(ctx: &TranslationContext, func_val: ValueId) -> Opti
     None
 }
 
-/// Call a function indirectly using the tscl_call runtime stub.
+/// Call a function indirectly using the ot_call runtime stub.
 fn call_indirect_function(
     builder: &mut FunctionBuilder,
     module: &mut JITModule,
@@ -1088,7 +1062,7 @@ fn call_indirect_function(
     func_ptr: Value,
     args: &[Value],
 ) -> Result<Value, BackendError> {
-    // For now, return undefined since tscl_call is not fully implemented
+    // For now, return undefined since ot_call is not fully implemented
     // TODO: Implement proper indirect calls
 
     // Prepare arguments array if needed
@@ -1096,13 +1070,7 @@ fn call_indirect_function(
         // Simple case: no arguments
         let argc = builder.ins().iconst(types::I64, 0);
         let null_ptr = builder.ins().iconst(types::I64, 0);
-        call_stub_with_values(
-            builder,
-            module,
-            ctx,
-            "tscl_call",
-            &[func_ptr, argc, null_ptr],
-        )
+        call_stub_with_values(builder, module, ctx, "ot_call", &[func_ptr, argc, null_ptr])
     } else {
         // For now, just return undefined for calls with arguments
         // Full implementation would set up argument array
@@ -1182,7 +1150,7 @@ fn call_stub_no_args(
 }
 
 /// Convert a Cranelift boolean to a NaN-boxed boolean
-fn bool_to_tscl_value(builder: &mut FunctionBuilder, b: Value) -> Value {
+fn bool_to_ot_value(builder: &mut FunctionBuilder, b: Value) -> Value {
     const QNAN: u64 = 0x7FFC_0000_0000_0000;
     const TAG_BOOLEAN: u64 = 0x0001_0000_0000_0000;
     let base = builder
@@ -1193,7 +1161,7 @@ fn bool_to_tscl_value(builder: &mut FunctionBuilder, b: Value) -> Value {
 }
 
 /// Convert a NaN-boxed boolean to a Cranelift boolean
-fn tscl_value_to_bool(builder: &mut FunctionBuilder, val: Value) -> Value {
+fn ot_value_to_bool(builder: &mut FunctionBuilder, val: Value) -> Value {
     // Check if the low bit is set (for booleans)
     // This is a simplified check - proper impl would check type tag
     let one = builder.ins().iconst(types::I64, 1);

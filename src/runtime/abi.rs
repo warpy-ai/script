@@ -44,11 +44,11 @@ const TAG_UNDEFINED: u64 = 0x0003_0000_0000_0000;
 /// - Fast to type-check (bit pattern comparison)
 #[derive(Clone, Copy)]
 #[repr(transparent)]
-pub struct TsclValue {
+pub struct OtValue {
     bits: u64,
 }
 
-impl TsclValue {
+impl OtValue {
     // =========================================================================
     // Constructors
     // =========================================================================
@@ -321,7 +321,7 @@ impl TsclValue {
     }
 }
 
-impl std::fmt::Debug for TsclValue {
+impl std::fmt::Debug for OtValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.is_number() {
             write!(f, "Number({})", self.as_number_unchecked())
@@ -339,7 +339,7 @@ impl std::fmt::Debug for TsclValue {
     }
 }
 
-impl Default for TsclValue {
+impl Default for OtValue {
     fn default() -> Self {
         Self::undefined()
     }
@@ -355,8 +355,8 @@ mod vm_interop {
     use super::*;
     use crate::vm::value::JsValue;
 
-    impl TsclValue {
-        /// Convert from the VM's JsValue to TsclValue.
+    impl OtValue {
+        /// Convert from the VM's JsValue to OtValue.
         ///
         /// This is used when transitioning from interpreted to native code.
         pub fn from_js_value(val: &JsValue, _heap_base: *mut u8) -> Self {
@@ -401,7 +401,7 @@ mod tests {
             f64::NEG_INFINITY,
         ];
         for n in values {
-            let v = TsclValue::number(n);
+            let v = OtValue::number(n);
             assert!(v.is_number(), "Expected number for {}", n);
             assert_eq!(v.as_number(), Some(n), "Roundtrip failed for {}", n);
         }
@@ -409,8 +409,8 @@ mod tests {
 
     #[test]
     fn test_boolean() {
-        let t = TsclValue::boolean(true);
-        let f = TsclValue::boolean(false);
+        let t = OtValue::boolean(true);
+        let f = OtValue::boolean(false);
 
         assert!(t.is_boolean());
         assert!(f.is_boolean());
@@ -422,8 +422,8 @@ mod tests {
 
     #[test]
     fn test_null_undefined() {
-        let null = TsclValue::null();
-        let undef = TsclValue::undefined();
+        let null = OtValue::null();
+        let undef = OtValue::undefined();
 
         assert!(null.is_null());
         assert!(!null.is_undefined());
@@ -435,8 +435,8 @@ mod tests {
 
     #[test]
     fn test_arithmetic() {
-        let a = TsclValue::number(10.0);
-        let b = TsclValue::number(3.0);
+        let a = OtValue::number(10.0);
+        let b = OtValue::number(3.0);
 
         assert_eq!(a.add(b).as_number(), Some(13.0));
         assert_eq!(a.sub(b).as_number(), Some(7.0));
@@ -448,8 +448,8 @@ mod tests {
 
     #[test]
     fn test_comparison() {
-        let a = TsclValue::number(5.0);
-        let b = TsclValue::number(10.0);
+        let a = OtValue::number(5.0);
+        let b = OtValue::number(10.0);
 
         assert_eq!(a.lt(b).as_boolean(), Some(true));
         assert_eq!(b.lt(a).as_boolean(), Some(false));
@@ -459,35 +459,35 @@ mod tests {
 
     #[test]
     fn test_strict_equality() {
-        let a = TsclValue::number(5.0);
-        let b = TsclValue::number(5.0);
-        let c = TsclValue::number(6.0);
+        let a = OtValue::number(5.0);
+        let b = OtValue::number(5.0);
+        let c = OtValue::number(6.0);
 
         assert_eq!(a.strict_eq(b).as_boolean(), Some(true));
         assert_eq!(a.strict_eq(c).as_boolean(), Some(false));
 
         // NaN !== NaN
-        let nan = TsclValue::number(f64::NAN);
+        let nan = OtValue::number(f64::NAN);
         assert_eq!(nan.strict_eq(nan).as_boolean(), Some(false));
 
         // Boolean equality
-        let t1 = TsclValue::boolean(true);
-        let t2 = TsclValue::boolean(true);
-        let f = TsclValue::boolean(false);
+        let t1 = OtValue::boolean(true);
+        let t2 = OtValue::boolean(true);
+        let f = OtValue::boolean(false);
         assert_eq!(t1.strict_eq(t2).as_boolean(), Some(true));
         assert_eq!(t1.strict_eq(f).as_boolean(), Some(false));
     }
 
     #[test]
     fn test_falsy() {
-        assert!(TsclValue::undefined().is_falsy());
-        assert!(TsclValue::null().is_falsy());
-        assert!(TsclValue::boolean(false).is_falsy());
-        assert!(TsclValue::number(0.0).is_falsy());
-        assert!(TsclValue::number(f64::NAN).is_falsy());
+        assert!(OtValue::undefined().is_falsy());
+        assert!(OtValue::null().is_falsy());
+        assert!(OtValue::boolean(false).is_falsy());
+        assert!(OtValue::number(0.0).is_falsy());
+        assert!(OtValue::number(f64::NAN).is_falsy());
 
-        assert!(!TsclValue::boolean(true).is_falsy());
-        assert!(!TsclValue::number(1.0).is_falsy());
-        assert!(!TsclValue::number(-1.0).is_falsy());
+        assert!(!OtValue::boolean(true).is_falsy());
+        assert!(!OtValue::number(1.0).is_falsy());
+        assert!(!OtValue::number(-1.0).is_falsy());
     }
 }

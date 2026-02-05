@@ -26,8 +26,8 @@ pub unsafe fn declare_runtime_stubs(
         declare_libc_functions(module, context)?;
 
         // Define runtime stubs with LLVM IR bodies
-        define_tscl_call(module, context, stubs)?;
-        define_tscl_console_log(module, context, stubs)?;
+        define_ot_call(module, context, stubs)?;
+        define_ot_console_log(module, context, stubs)?;
 
         // Simple stubs that just return undefined or passthrough
         define_simple_stubs(module, context, stubs)?;
@@ -57,11 +57,11 @@ unsafe fn declare_libc_functions(
     }
 }
 
-/// Define tscl_call: calls a function pointer with arguments
+/// Define ot_call: calls a function pointer with arguments
 ///
 /// In our implementation, func_ptr is actually a function address that we can call directly.
 /// For simple cases (like calling known functions), we bitcast and call.
-unsafe fn define_tscl_call(
+unsafe fn define_ot_call(
     module: LLVMModuleRef,
     context: LLVMContextRef,
     stubs: &mut BTreeMap<String, LLVMValueRef>,
@@ -70,15 +70,15 @@ unsafe fn define_tscl_call(
         let i64_ty = LLVMInt64TypeInContext(context);
         let i8_ptr_ty = LLVMPointerType(LLVMInt8TypeInContext(context), 0);
 
-        // tscl_call(func: i64, argc: i64, argv: i8*) -> i64
+        // ot_call(func: i64, argc: i64, argv: i8*) -> i64
         let mut param_types = vec![i64_ty, i64_ty, i8_ptr_ty];
         let func_ty = LLVMFunctionType(i64_ty, param_types.as_mut_ptr(), 3, 0);
 
-        let func_name = CString::new("tscl_call").unwrap();
+        let func_name = CString::new("ot_call").unwrap();
         let func = LLVMAddFunction(module, func_name.as_ptr(), func_ty);
 
         if func.is_null() {
-            return Err(BackendError::Llvm("Failed to create tscl_call".into()));
+            return Err(BackendError::Llvm("Failed to create ot_call".into()));
         }
 
         // Create entry basic block
@@ -146,7 +146,7 @@ unsafe fn define_tscl_call(
             // The args are passed in argv as an array of i64
             // But our current impl passes null... we need to fix that
 
-            // For now, return undefined for 1-arg calls through tscl_call
+            // For now, return undefined for 1-arg calls through ot_call
             // The real fix is in how we generate Call ops
             let undefined = LLVMConstInt(i64_ty, 0x7FF8000000000001u64, 0); // NaN undefined
             LLVMBuildRet(builder, undefined);
@@ -160,13 +160,13 @@ unsafe fn define_tscl_call(
         }
 
         LLVMDisposeBuilder(builder);
-        stubs.insert("tscl_call".to_string(), func);
+        stubs.insert("ot_call".to_string(), func);
         Ok(())
     }
 }
 
-/// Define tscl_console_log: prints a value to stdout
-unsafe fn define_tscl_console_log(
+/// Define ot_console_log: prints a value to stdout
+unsafe fn define_ot_console_log(
     module: LLVMModuleRef,
     context: LLVMContextRef,
     stubs: &mut BTreeMap<String, LLVMValueRef>,
@@ -178,17 +178,15 @@ unsafe fn define_tscl_console_log(
         let i8_ty = LLVMInt8TypeInContext(context);
         let i8_ptr_ty = LLVMPointerType(i8_ty, 0);
 
-        // tscl_console_log(value: i64) -> i64
+        // ot_console_log(value: i64) -> i64
         let mut param_types = vec![i64_ty];
         let func_ty = LLVMFunctionType(i64_ty, param_types.as_mut_ptr(), 1, 0);
 
-        let func_name = CString::new("tscl_console_log").unwrap();
+        let func_name = CString::new("ot_console_log").unwrap();
         let func = LLVMAddFunction(module, func_name.as_ptr(), func_ty);
 
         if func.is_null() {
-            return Err(BackendError::Llvm(
-                "Failed to create tscl_console_log".into(),
-            ));
+            return Err(BackendError::Llvm("Failed to create ot_console_log".into()));
         }
 
         // Create entry basic block
@@ -240,7 +238,7 @@ unsafe fn define_tscl_console_log(
         LLVMBuildRet(builder, undefined);
 
         LLVMDisposeBuilder(builder);
-        stubs.insert("tscl_console_log".to_string(), func);
+        stubs.insert("ot_console_log".to_string(), func);
         Ok(())
     }
 }
@@ -421,34 +419,34 @@ unsafe fn define_simple_stubs(
 
         // Allocation stubs - return undefined for now
         stubs.insert(
-            "tscl_alloc_object".to_string(),
-            create_returning_undefined("tscl_alloc_object", &mut [])?,
+            "ot_alloc_object".to_string(),
+            create_returning_undefined("ot_alloc_object", &mut [])?,
         );
         stubs.insert(
-            "tscl_alloc_array".to_string(),
-            create_returning_undefined("tscl_alloc_array", &mut [i64_ty])?,
+            "ot_alloc_array".to_string(),
+            create_returning_undefined("ot_alloc_array", &mut [i64_ty])?,
         );
         stubs.insert(
-            "tscl_alloc_string".to_string(),
-            create_returning_undefined("tscl_alloc_string", &mut [i8_ptr_ty, i64_ty])?,
+            "ot_alloc_string".to_string(),
+            create_returning_undefined("ot_alloc_string", &mut [i8_ptr_ty, i64_ty])?,
         );
 
         // Property access stubs
         stubs.insert(
-            "tscl_get_prop".to_string(),
-            create_returning_undefined("tscl_get_prop", &mut [i64_ty, i8_ptr_ty, i64_ty])?,
+            "ot_get_prop".to_string(),
+            create_returning_undefined("ot_get_prop", &mut [i64_ty, i8_ptr_ty, i64_ty])?,
         );
         stubs.insert(
-            "tscl_set_prop".to_string(),
-            create_void_stub("tscl_set_prop", &mut [i64_ty, i8_ptr_ty, i64_ty, i64_ty])?,
+            "ot_set_prop".to_string(),
+            create_void_stub("ot_set_prop", &mut [i64_ty, i8_ptr_ty, i64_ty, i64_ty])?,
         );
         stubs.insert(
-            "tscl_get_element".to_string(),
-            create_returning_undefined("tscl_get_element", &mut [i64_ty, i64_ty])?,
+            "ot_get_element".to_string(),
+            create_returning_undefined("ot_get_element", &mut [i64_ty, i64_ty])?,
         );
         stubs.insert(
-            "tscl_set_element".to_string(),
-            create_void_stub("tscl_set_element", &mut [i64_ty, i64_ty, i64_ty])?,
+            "ot_set_element".to_string(),
+            create_void_stub("ot_set_element", &mut [i64_ty, i64_ty, i64_ty])?,
         );
 
         // Dynamic arithmetic stubs - perform actual operations
@@ -456,48 +454,48 @@ unsafe fn define_simple_stubs(
 
         // Add
         stubs.insert(
-            "tscl_add_any".to_string(),
-            create_binary_fp_op(module, context, "tscl_add_any", |builder, a, b, _ctx| {
+            "ot_add_any".to_string(),
+            create_binary_fp_op(module, context, "ot_add_any", |builder, a, b, _ctx| {
                 LLVMBuildFAdd(builder, a, b, b"add\0".as_ptr() as *const i8)
             })?,
         );
 
         // Sub
         stubs.insert(
-            "tscl_sub_any".to_string(),
-            create_binary_fp_op(module, context, "tscl_sub_any", |builder, a, b, _ctx| {
+            "ot_sub_any".to_string(),
+            create_binary_fp_op(module, context, "ot_sub_any", |builder, a, b, _ctx| {
                 LLVMBuildFSub(builder, a, b, b"sub\0".as_ptr() as *const i8)
             })?,
         );
 
         // Mul
         stubs.insert(
-            "tscl_mul_any".to_string(),
-            create_binary_fp_op(module, context, "tscl_mul_any", |builder, a, b, _ctx| {
+            "ot_mul_any".to_string(),
+            create_binary_fp_op(module, context, "ot_mul_any", |builder, a, b, _ctx| {
                 LLVMBuildFMul(builder, a, b, b"mul\0".as_ptr() as *const i8)
             })?,
         );
 
         // Div
         stubs.insert(
-            "tscl_div_any".to_string(),
-            create_binary_fp_op(module, context, "tscl_div_any", |builder, a, b, _ctx| {
+            "ot_div_any".to_string(),
+            create_binary_fp_op(module, context, "ot_div_any", |builder, a, b, _ctx| {
                 LLVMBuildFDiv(builder, a, b, b"div\0".as_ptr() as *const i8)
             })?,
         );
 
         // Mod (fmod)
         stubs.insert(
-            "tscl_mod_any".to_string(),
-            create_binary_fp_op(module, context, "tscl_mod_any", |builder, a, b, _ctx| {
+            "ot_mod_any".to_string(),
+            create_binary_fp_op(module, context, "ot_mod_any", |builder, a, b, _ctx| {
                 LLVMBuildFRem(builder, a, b, b"mod\0".as_ptr() as *const i8)
             })?,
         );
 
         // Unary operations
         stubs.insert(
-            "tscl_neg".to_string(),
-            create_unary_fp_op(module, context, "tscl_neg", |builder, a, ctx| {
+            "ot_neg".to_string(),
+            create_unary_fp_op(module, context, "ot_neg", |builder, a, ctx| {
                 let double_ty = LLVMDoubleTypeInContext(ctx);
                 let zero = LLVMConstReal(double_ty, 0.0);
                 LLVMBuildFSub(builder, zero, a, b"neg\0".as_ptr() as *const i8)
@@ -505,38 +503,38 @@ unsafe fn define_simple_stubs(
         );
 
         stubs.insert(
-            "tscl_not".to_string(),
-            create_returning_undefined("tscl_not", &mut [i64_ty])?,
+            "ot_not".to_string(),
+            create_returning_undefined("ot_not", &mut [i64_ty])?,
         );
 
         // Comparison stubs
         stubs.insert(
-            "tscl_eq_strict".to_string(),
-            create_returning_undefined("tscl_eq_strict", &mut [i64_ty, i64_ty])?,
+            "ot_eq_strict".to_string(),
+            create_returning_undefined("ot_eq_strict", &mut [i64_ty, i64_ty])?,
         );
         stubs.insert(
-            "tscl_lt".to_string(),
-            create_returning_undefined("tscl_lt", &mut [i64_ty, i64_ty])?,
+            "ot_lt".to_string(),
+            create_returning_undefined("ot_lt", &mut [i64_ty, i64_ty])?,
         );
         stubs.insert(
-            "tscl_gt".to_string(),
-            create_returning_undefined("tscl_gt", &mut [i64_ty, i64_ty])?,
+            "ot_gt".to_string(),
+            create_returning_undefined("ot_gt", &mut [i64_ty, i64_ty])?,
         );
 
         // Type conversion stubs
         stubs.insert(
-            "tscl_to_boolean".to_string(),
-            create_returning_undefined("tscl_to_boolean", &mut [i64_ty])?,
+            "ot_to_boolean".to_string(),
+            create_returning_undefined("ot_to_boolean", &mut [i64_ty])?,
         );
         stubs.insert(
-            "tscl_to_number".to_string(),
-            create_returning_undefined("tscl_to_number", &mut [i64_ty])?,
+            "ot_to_number".to_string(),
+            create_returning_undefined("ot_to_number", &mut [i64_ty])?,
         );
 
         // Closure stubs
         stubs.insert(
-            "tscl_make_closure".to_string(),
-            create_returning_undefined("tscl_make_closure", &mut [i64_ty, i64_ty])?,
+            "ot_make_closure".to_string(),
+            create_returning_undefined("ot_make_closure", &mut [i64_ty, i64_ty])?,
         );
 
         Ok(())

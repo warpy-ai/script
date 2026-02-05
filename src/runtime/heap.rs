@@ -21,7 +21,7 @@ pub type PropertyMap = Vec<(String, u64)>;
 ///
 /// This is a wrapper around a raw pointer that:
 /// - Fits in 48 bits (NaN-boxing requirement)
-/// - Can be converted to/from usize for TsclValue
+/// - Can be converted to/from usize for OtValue
 /// - Provides type-safe access to heap objects
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(transparent)]
@@ -187,7 +187,7 @@ pub struct NativeArray {
     pub len: u32,
     /// Capacity (for dynamic resizing).
     pub capacity: u32,
-    /// Pointer to element data (TsclValue array).
+    /// Pointer to element data (OtValue array).
     pub elements: *mut u64,
 }
 
