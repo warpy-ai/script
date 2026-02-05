@@ -1,0 +1,22 @@
+require("../bootstrap/pipeline");
+
+// Test modules without require statements
+let modules = [
+    "bootstrap/types.ot",
+    "bootstrap/ir.ot",
+    "bootstrap/lexer.ot"
+];
+
+let i = 0;
+while (i < modules.length) {
+    let source = fs.readFileSync(modules[i], "utf8");
+    console.log("Compiling " + modules[i] + " (" + source.length + " chars)...");
+    let result = compileToBytecode(source);
+    if (result == null) {
+        console.log("  FAIL: returned null");
+    } else {
+        console.log("  PASS: " + result.length + " bytes");
+    }
+    i = i + 1;
+}
+console.log("Done");

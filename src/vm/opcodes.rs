@@ -47,6 +47,12 @@ pub enum OpCode {
     NewArray(usize), // Creates array of size N
     StoreElement,    // Pops index, value, and array_ptr -> arr[idx] = val
     LoadElement,     // Pops index and array_ptr -> pushes arr[idx]
+    /// ArrayPush: pops [array, value] -> pushes value to array, pushes array back
+    ArrayPush,
+    /// ArraySpread: pops [target_array, source_array] -> appends all source elements to target, pushes target
+    ArraySpread,
+    /// ObjectSpread: pops [target_obj, source_obj] -> copies all properties from source to target, pushes target
+    ObjectSpread,
     JumpIfFalse(usize),
     Halt,
     CallMethod(String, usize),

@@ -704,12 +704,129 @@ impl Codegen {
     fn gen_var_decl(&mut self, var_decl: &VarDecl) {
         for decl in &var_decl.decls {
             if let Some(init) = &decl.init {
-                let name = decl.name.as_ident().unwrap().sym.to_string();
                 self.gen_expr(init);
-                // Use Let to create a new binding in current scope (shadows outer vars)
+                self.gen_pattern_binding(&decl.name);
+            }
+        }
+    }
+
+    /// Generate code to bind a pattern to a value on the stack.
+    /// The value to destructure should already be on top of the stack.
+    fn gen_pattern_binding(&mut self, pat: &Pat) {
+        match pat {
+            Pat::Ident(id) => {
+                // Simple variable binding
+                let name = id.id.sym.to_string();
                 self.instructions.push(OpCode::Let(name.clone()));
-                // Track this variable so inner functions can capture it
                 self.outer_scope_vars.insert(name);
+            }
+            Pat::Object(obj_pat) => {
+                // Object destructuring: let { x, y } = obj
+                for (i, prop) in obj_pat.props.iter().enumerate() {
+                    match prop {
+                        swc_ecma_ast::ObjectPatProp::KeyValue(kv) => {
+                            // { key: pattern } - extract key and bind to pattern
+                            // Dup the object for each property (except the last)
+                            if i < obj_pat.props.len() - 1 {
+                                self.instructions.push(OpCode::Dup);
+                            }
+                            // Get property name
+                            let key_name = match &kv.key {
+                                swc_ecma_ast::PropName::Ident(id) => id.sym.to_string(),
+                                swc_ecma_ast::PropName::Str(s) => {
+                                    s.value.to_string_lossy().into_owned()
+                                }
+                                _ => continue,
+                            };
+                            self.instructions.push(OpCode::GetProp(key_name));
+                            // Recursively bind the value pattern
+                            self.gen_pattern_binding(&kv.value);
+                        }
+                        swc_ecma_ast::ObjectPatProp::Assign(assign) => {
+                            // { x } or { x = default } - shorthand property
+                            // Dup the object for each property (except the last)
+                            if i < obj_pat.props.len() - 1 {
+                                self.instructions.push(OpCode::Dup);
+                            }
+                            let key_name = assign.key.sym.to_string();
+                            self.instructions.push(OpCode::GetProp(key_name.clone()));
+
+                            // Handle default value if present
+                            if let Some(default_val) = &assign.value {
+                                // Check if value is undefined, use default if so
+                                self.instructions.push(OpCode::Dup);
+                                self.instructions.push(OpCode::Push(JsValue::Undefined));
+                                self.instructions.push(OpCode::Eq);
+                                let jump_idx = self.instructions.len();
+                                self.instructions.push(OpCode::JumpIfFalse(0));
+                                // Pop undefined, push default
+                                self.instructions.push(OpCode::Pop);
+                                self.gen_expr(default_val);
+                                let end_addr = self.instructions.len();
+                                if let OpCode::JumpIfFalse(ref mut addr) =
+                                    self.instructions[jump_idx]
+                                {
+                                    *addr = end_addr;
+                                }
+                            }
+
+                            self.instructions.push(OpCode::Let(key_name.clone()));
+                            self.outer_scope_vars.insert(key_name);
+                        }
+                        swc_ecma_ast::ObjectPatProp::Rest(rest) => {
+                            // { ...rest } - not fully implemented yet
+                            if let Pat::Ident(id) = rest.arg.as_ref() {
+                                let name = id.id.sym.to_string();
+                                // For now, just bind the remaining object
+                                self.instructions.push(OpCode::Let(name.clone()));
+                                self.outer_scope_vars.insert(name);
+                            }
+                        }
+                    }
+                }
+            }
+            Pat::Array(arr_pat) => {
+                // Array destructuring: let [a, b] = arr
+                for (i, elem) in arr_pat.elems.iter().enumerate() {
+                    if let Some(elem_pat) = elem {
+                        // Dup the array for each element (except the last)
+                        let is_last = i == arr_pat.elems.len() - 1
+                            || arr_pat.elems.iter().skip(i + 1).all(|e| e.is_none());
+                        if !is_last {
+                            self.instructions.push(OpCode::Dup);
+                        }
+                        // Push index and load element
+                        self.instructions
+                            .push(OpCode::Push(JsValue::Number(i as f64)));
+                        self.instructions.push(OpCode::GetPropComputed);
+                        // Recursively bind the element pattern
+                        self.gen_pattern_binding(elem_pat);
+                    }
+                }
+            }
+            Pat::Rest(rest) => {
+                // ...rest pattern - bind remaining value
+                self.gen_pattern_binding(&rest.arg);
+            }
+            Pat::Assign(assign) => {
+                // pattern = default - handle default value
+                self.instructions.push(OpCode::Dup);
+                self.instructions.push(OpCode::Push(JsValue::Undefined));
+                self.instructions.push(OpCode::Eq);
+                let jump_idx = self.instructions.len();
+                self.instructions.push(OpCode::JumpIfFalse(0));
+                // Pop undefined, push default
+                self.instructions.push(OpCode::Pop);
+                self.gen_expr(&assign.right);
+                let end_addr = self.instructions.len();
+                if let OpCode::JumpIfFalse(ref mut addr) = self.instructions[jump_idx] {
+                    *addr = end_addr;
+                }
+                self.gen_pattern_binding(&assign.left);
+            }
+            _ => {
+                // Unsupported pattern - just pop the value
+                self.instructions.push(OpCode::Pop);
             }
         }
     }
@@ -1044,7 +1161,115 @@ impl Codegen {
                     }
                 }
             }
-            Stmt::ForIn(_) => {}
+            Stmt::ForIn(for_in_stmt) => {
+                // for (let key in obj) { ... }
+                // Implementation: Convert to iteration over Object.keys(obj)
+                self.scope_stack.push(Vec::new());
+
+                // 1. Evaluate the object and get its keys using Object.keys
+                // Stack layout for Call: [arg1, arg2, ..., callee]
+                // So we push the argument (obj) first, then the function
+                self.gen_expr(&for_in_stmt.right);
+                // Call Object.keys(obj)
+                self.instructions.push(OpCode::Load("Object".to_string()));
+                self.instructions.push(OpCode::GetProp("keys".to_string()));
+                // Stack: [obj, Object.keys]
+                self.instructions.push(OpCode::Call(1)); // Call Object.keys(obj)
+
+                // 2. Store the keys array
+                let keys_name = "__for_in_keys__".to_string();
+                self.instructions.push(OpCode::Let(keys_name.clone()));
+                if let Some(scope) = self.scope_stack.last_mut() {
+                    scope.push(keys_name.clone());
+                }
+
+                // 3. Initialize index to 0
+                self.instructions.push(OpCode::Push(JsValue::Number(0.0)));
+                let idx_name = "__for_in_idx__".to_string();
+                self.instructions.push(OpCode::Let(idx_name.clone()));
+                if let Some(scope) = self.scope_stack.last_mut() {
+                    scope.push(idx_name.clone());
+                }
+
+                // 4. Loop start
+                let loop_start = self.instructions.len();
+                self.loop_stack.push(LoopContext {
+                    start_addr: loop_start,
+                    break_jumps: Vec::new(),
+                });
+
+                // 5. Check if idx < keys.length
+                self.instructions.push(OpCode::Load(idx_name.clone()));
+                self.instructions.push(OpCode::Load(keys_name.clone()));
+                self.instructions
+                    .push(OpCode::GetProp("length".to_string()));
+                self.instructions.push(OpCode::Lt);
+                let exit_jump_idx = self.instructions.len();
+                self.instructions.push(OpCode::JumpIfFalse(0));
+
+                // 6. Load keys[idx] into the loop variable
+                self.instructions.push(OpCode::Load(keys_name.clone()));
+                self.instructions.push(OpCode::Load(idx_name.clone()));
+                self.instructions.push(OpCode::LoadElement);
+
+                // 7. Bind the key to the loop variable
+                if let Some(var_decl) = &for_in_stmt.left.as_var_decl()
+                    && let Some(decl) = var_decl.decls.first()
+                    && let Pat::Ident(id) = &decl.name
+                {
+                    let var_name = id.id.sym.to_string();
+                    self.instructions.push(OpCode::Let(var_name.clone()));
+                    if let Some(scope) = self.scope_stack.last_mut() {
+                        scope.push(var_name);
+                    }
+                }
+
+                // 8. Execute loop body
+                self.gen_stmt(&for_in_stmt.body);
+
+                // 9. Drop loop variable
+                if let Some(var_decl) = &for_in_stmt.left.as_var_decl()
+                    && let Some(decl) = var_decl.decls.first()
+                    && let Pat::Ident(id) = &decl.name
+                {
+                    let var_name = id.id.sym.to_string();
+                    self.instructions.push(OpCode::Drop(var_name));
+                    if let Some(scope) = self.scope_stack.last_mut() {
+                        scope.retain(|n| n != &id.id.sym.to_string());
+                    }
+                }
+
+                // 10. Increment index
+                self.instructions.push(OpCode::Load(idx_name.clone()));
+                self.instructions.push(OpCode::Push(JsValue::Number(1.0)));
+                self.instructions.push(OpCode::Add);
+                self.instructions.push(OpCode::Store(idx_name.clone()));
+
+                // 11. Jump back to loop start
+                self.instructions.push(OpCode::Jump(loop_start));
+
+                // 12. Backpatch exit jump
+                let loop_end = self.instructions.len();
+                if let OpCode::JumpIfFalse(ref mut addr) = self.instructions[exit_jump_idx] {
+                    *addr = loop_end;
+                }
+
+                // 13. Handle break jumps
+                if let Some(loop_ctx) = self.loop_stack.pop() {
+                    for break_idx in loop_ctx.break_jumps {
+                        if let OpCode::Jump(ref mut addr) = self.instructions[break_idx] {
+                            *addr = loop_end;
+                        }
+                    }
+                }
+
+                // 14. Clean up scope
+                if let Some(locals) = self.scope_stack.pop() {
+                    for name in locals.into_iter().rev() {
+                        self.instructions.push(OpCode::Drop(name));
+                    }
+                }
+            }
             Stmt::DoWhile(do_while_stmt) => {
                 let loop_start = self.instructions.len();
 
@@ -1076,6 +1301,126 @@ impl Codegen {
             }
             Stmt::Empty(_) | Stmt::Debugger(_) | Stmt::With(_) => {
                 // Empty/debugger/with statements - do nothing
+            }
+            Stmt::Try(try_stmt) => {
+                // Try-catch-finally statement
+                //
+                // Control flow:
+                // - try-catch-finally: try -> PopTry -> finally -> end; on exception -> catch -> finally -> end
+                // - try-catch: try -> PopTry -> end; on exception -> catch -> end
+                // - try-finally: try -> PopTry -> finally -> end; on exception -> finally -> rethrow
+
+                let has_catch = try_stmt.handler.is_some();
+                let has_finally = try_stmt.finalizer.is_some();
+
+                // 1. Emit SetupTry with placeholder addresses (will backpatch)
+                let setup_try_idx = self.instructions.len();
+                self.instructions.push(OpCode::SetupTry {
+                    catch_addr: 0,
+                    finally_addr: 0,
+                });
+
+                // 2. Emit try block
+                self.scope_stack.push(Vec::new());
+                for s in &try_stmt.block.stmts {
+                    self.gen_stmt(s);
+                }
+                // Drop try block scope variables
+                if let Some(locals) = self.scope_stack.pop() {
+                    for name in locals.into_iter().rev() {
+                        self.instructions.push(OpCode::Drop(name));
+                    }
+                }
+
+                // 3. PopTry - remove exception handler if no exception occurred
+                self.instructions.push(OpCode::PopTry);
+
+                // 4. Jump after try block (target depends on structure)
+                let jump_after_try_idx = self.instructions.len();
+                self.instructions.push(OpCode::Jump(0)); // Will backpatch
+
+                // 5. Catch block (if present)
+                let catch_addr = if has_catch {
+                    let addr = self.instructions.len();
+                    if let Some(handler) = &try_stmt.handler {
+                        self.scope_stack.push(Vec::new());
+
+                        // Bind exception to catch parameter if present
+                        if let Some(param) = &handler.param {
+                            if let Pat::Ident(id) = param {
+                                let param_name = id.id.sym.to_string();
+                                // Exception value is on stack, bind it
+                                self.instructions.push(OpCode::Let(param_name.clone()));
+                                if let Some(scope) = self.scope_stack.last_mut() {
+                                    scope.push(param_name);
+                                }
+                            }
+                        } else {
+                            // No catch parameter, pop the exception
+                            self.instructions.push(OpCode::Pop);
+                        }
+
+                        // Generate catch block body
+                        for s in &handler.body.stmts {
+                            self.gen_stmt(s);
+                        }
+
+                        // Drop catch block scope variables
+                        if let Some(locals) = self.scope_stack.pop() {
+                            for name in locals.into_iter().rev() {
+                                self.instructions.push(OpCode::Drop(name));
+                            }
+                        }
+                    }
+                    addr
+                } else {
+                    0 // No catch block
+                };
+
+                // 6. Finally block (if present)
+                let finally_addr = if has_finally {
+                    let addr = self.instructions.len();
+                    if let Some(finalizer) = &try_stmt.finalizer {
+                        self.scope_stack.push(Vec::new());
+                        for s in &finalizer.stmts {
+                            self.gen_stmt(s);
+                        }
+                        // Drop finally block scope variables
+                        if let Some(locals) = self.scope_stack.pop() {
+                            for name in locals.into_iter().rev() {
+                                self.instructions.push(OpCode::Drop(name));
+                            }
+                        }
+                    }
+                    addr
+                } else {
+                    0 // No finally block
+                };
+
+                // 7. End address - where normal execution continues
+                let end_addr = self.instructions.len();
+
+                // Backpatch SetupTry addresses
+                if let OpCode::SetupTry {
+                    catch_addr: ref mut c,
+                    finally_addr: ref mut f,
+                } = self.instructions[setup_try_idx]
+                {
+                    *c = catch_addr;
+                    *f = finally_addr;
+                }
+
+                // Backpatch jump after try block
+                // - If has finally: jump to finally
+                // - If no finally: jump to end
+                if let OpCode::Jump(ref mut addr) = self.instructions[jump_after_try_idx] {
+                    *addr = if has_finally { finally_addr } else { end_addr };
+                }
+            }
+            Stmt::Throw(throw_stmt) => {
+                // Throw statement: push exception value and emit Throw opcode
+                self.gen_expr(&throw_stmt.arg);
+                self.instructions.push(OpCode::Throw);
             }
             _ => {}
         }
@@ -1456,20 +1801,42 @@ impl Codegen {
                 }
             }
             Expr::Array(arr_lit) => {
-                let size = arr_lit.elems.len();
-                self.instructions.push(OpCode::NewArray(size));
+                // Check if any elements are spread elements
+                let has_spread = arr_lit
+                    .elems
+                    .iter()
+                    .any(|elem| elem.as_ref().is_some_and(|e| e.spread.is_some()));
 
-                for (i, elem) in arr_lit.elems.iter().enumerate() {
-                    if let Some(expr_or_spread) = elem {
-                        // 1. Dup the array pointer so we don't lose it
-                        self.instructions.push(OpCode::Dup);
-                        // 2. Push the Value
+                if has_spread {
+                    // Use dynamic approach: create empty array, then push/spread each element
+                    self.instructions.push(OpCode::NewArray(0));
+                    for expr_or_spread in arr_lit.elems.iter().flatten() {
                         self.gen_expr(&expr_or_spread.expr);
-                        // 3. Push the Index
-                        self.instructions
-                            .push(OpCode::Push(JsValue::Number(i as f64)));
-                        // 4. Store it
-                        self.instructions.push(OpCode::StoreElement);
+                        if expr_or_spread.spread.is_some() {
+                            // Spread: Stack is [array, source_array]
+                            self.instructions.push(OpCode::ArraySpread);
+                        } else {
+                            // Regular element: Stack is [array, value]
+                            self.instructions.push(OpCode::ArrayPush);
+                        }
+                    }
+                } else {
+                    // Use static approach: create array with known size
+                    let size = arr_lit.elems.len();
+                    self.instructions.push(OpCode::NewArray(size));
+
+                    for (i, elem) in arr_lit.elems.iter().enumerate() {
+                        if let Some(expr_or_spread) = elem {
+                            // 1. Dup the array pointer so we don't lose it
+                            self.instructions.push(OpCode::Dup);
+                            // 2. Push the Value
+                            self.gen_expr(&expr_or_spread.expr);
+                            // 3. Push the Index
+                            self.instructions
+                                .push(OpCode::Push(JsValue::Number(i as f64)));
+                            // 4. Store it
+                            self.instructions.push(OpCode::StoreElement);
+                        }
                     }
                 }
             }
@@ -1593,20 +1960,49 @@ impl Codegen {
                 self.instructions.push(OpCode::NewObject);
 
                 for prop in &obj_lit.props {
-                    if let PropOrSpread::Prop(prop_ptr) = prop
-                        && let Prop::KeyValue(kv) = prop_ptr.as_ref()
-                    {
-                        let key = match &kv.key {
-                            PropName::Ident(id) => id.sym.to_string(),
-                            PropName::Str(s) => {
-                                s.value.as_str().expect("Invalid string key").to_string()
-                            }
-                            _ => continue,
-                        };
+                    match prop {
+                        PropOrSpread::Spread(spread) => {
+                            // { ...source } - spread all properties from source object
+                            self.gen_expr(&spread.expr);
+                            self.instructions.push(OpCode::ObjectSpread);
+                        }
+                        PropOrSpread::Prop(prop_ptr) => {
+                            match prop_ptr.as_ref() {
+                                Prop::KeyValue(kv) => {
+                                    let key = match &kv.key {
+                                        PropName::Ident(id) => id.sym.to_string(),
+                                        PropName::Str(s) => s
+                                            .value
+                                            .as_str()
+                                            .expect("Invalid string key")
+                                            .to_string(),
+                                        _ => continue,
+                                    };
 
-                        self.instructions.push(OpCode::Dup); // Duplicate Ptr
-                        self.gen_expr(&kv.value); // Push Value
-                        self.instructions.push(OpCode::SetProp(key)); // Consumes Value + 1 Ptr
+                                    self.instructions.push(OpCode::Dup); // Duplicate Ptr
+                                    self.gen_expr(&kv.value); // Push Value
+                                    self.instructions.push(OpCode::SetProp(key)); // Consumes Value + 1 Ptr
+                                }
+                                Prop::Shorthand(ident) => {
+                                    // { x } shorthand for { x: x }
+                                    let key = ident.sym.to_string();
+                                    self.instructions.push(OpCode::Dup);
+                                    self.instructions.push(OpCode::Load(key.clone()));
+                                    self.instructions.push(OpCode::SetProp(key));
+                                }
+                                Prop::Method(method) => {
+                                    // { fn() {} } - inline method
+                                    let key = match &method.key {
+                                        PropName::Ident(id) => id.sym.to_string(),
+                                        _ => continue,
+                                    };
+                                    self.instructions.push(OpCode::Dup);
+                                    self.gen_fn_decl(None, &method.function);
+                                    self.instructions.push(OpCode::SetProp(key));
+                                }
+                                _ => {}
+                            }
+                        }
                     }
                 }
             }
@@ -1810,6 +2206,18 @@ impl Codegen {
                         self.instructions.push(OpCode::Store(name));
                     }
                 }
+            }
+            Expr::TsAs(ts_as) => {
+                // TypeScript `as` type assertion - evaluate inner expression (no runtime effect)
+                self.gen_expr(&ts_as.expr);
+            }
+            Expr::TsTypeAssertion(ts_assert) => {
+                // TypeScript type assertion `<Type>expr` - evaluate inner expression
+                self.gen_expr(&ts_assert.expr);
+            }
+            Expr::TsNonNull(ts_non_null) => {
+                // TypeScript non-null assertion `expr!` - evaluate inner expression
+                self.gen_expr(&ts_non_null.expr);
             }
             _ => {}
         }

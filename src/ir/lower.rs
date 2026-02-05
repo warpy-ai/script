@@ -953,6 +953,13 @@ impl Lowerer {
                 self.emit(IrOp::Pow(dst, a, b));
                 self.push(dst);
             }
+
+            // Spread operations - not yet supported in IR, fall back to interpreter
+            OpCode::ArrayPush | OpCode::ArraySpread | OpCode::ObjectSpread => {
+                // For now, these operations require runtime support
+                // and are handled by the interpreter
+                return Err(LowerError::UnsupportedOpcode(format!("{:?}", op)));
+            }
         }
 
         Ok(())

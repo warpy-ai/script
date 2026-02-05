@@ -20,6 +20,7 @@ pub fn setup_stdlib(vm: &mut VM) {
     setup_map_set(vm);
     setup_process(vm);
     setup_fetch(vm);
+    setup_object(vm);
 }
 
 fn setup_console(vm: &mut VM) {
@@ -132,8 +133,8 @@ fn setup_string(vm: &mut VM) {
 
 fn setup_fs(vm: &mut VM) {
     use crate::stdlib::{
-        native_exists_sync, native_mkdir_sync, native_read_file, native_write_binary_file,
-        native_write_file,
+        native_exists_sync, native_mkdir_sync, native_read_file, native_readdir_sync,
+        native_stat_sync, native_write_binary_file, native_write_file,
     };
 
     let fs_read_file_idx = vm.register_native(native_read_file);
@@ -141,6 +142,8 @@ fn setup_fs(vm: &mut VM) {
     let fs_write_binary_file_idx = vm.register_native(native_write_binary_file);
     let fs_exists_sync_idx = vm.register_native(native_exists_sync);
     let fs_mkdir_sync_idx = vm.register_native(native_mkdir_sync);
+    let fs_readdir_sync_idx = vm.register_native(native_readdir_sync);
+    let fs_stat_sync_idx = vm.register_native(native_stat_sync);
 
     let fs_ptr = vm.heap.len();
     let mut fs_props = std::collections::HashMap::new();
@@ -163,6 +166,14 @@ fn setup_fs(vm: &mut VM) {
     fs_props.insert(
         "mkdirSync".to_string(),
         JsValue::NativeFunction(fs_mkdir_sync_idx),
+    );
+    fs_props.insert(
+        "readdirSync".to_string(),
+        JsValue::NativeFunction(fs_readdir_sync_idx),
+    );
+    fs_props.insert(
+        "statSync".to_string(),
+        JsValue::NativeFunction(fs_stat_sync_idx),
     );
     vm.heap.push(HeapObject {
         data: HeapData::Object(fs_props),
@@ -260,7 +271,9 @@ pub fn set_script_args(vm: &mut VM, args: Vec<String>) {
 }
 
 fn setup_process(vm: &mut VM) {
-    use crate::stdlib::{native_chdir, native_cwd, native_exit, native_getenv, native_setenv};
+    use crate::stdlib::{
+        native_chdir, native_cwd, native_exec, native_exit, native_getenv, native_setenv,
+    };
 
     // Register native functions
     let getenv_idx = vm.register_native(native_getenv);
@@ -268,6 +281,7 @@ fn setup_process(vm: &mut VM) {
     let cwd_idx = vm.register_native(native_cwd);
     let chdir_idx = vm.register_native(native_chdir);
     let exit_idx = vm.register_native(native_exit);
+    let exec_idx = vm.register_native(native_exec);
 
     // Create process.env object with get/set methods
     let env_ptr = vm.heap.len();
@@ -292,6 +306,7 @@ fn setup_process(vm: &mut VM) {
     process_props.insert("cwd".to_string(), JsValue::NativeFunction(cwd_idx));
     process_props.insert("chdir".to_string(), JsValue::NativeFunction(chdir_idx));
     process_props.insert("exit".to_string(), JsValue::NativeFunction(exit_idx));
+    process_props.insert("exec".to_string(), JsValue::NativeFunction(exec_idx));
     vm.heap.push(HeapObject {
         data: HeapData::Object(process_props),
     });
@@ -321,4 +336,22 @@ fn setup_fetch(vm: &mut VM) {
     vm.call_stack[0]
         .locals
         .insert("__ffi_fetch".into(), JsValue::NativeFunction(fetch_idx));
+}
+
+fn setup_object(vm: &mut VM) {
+    use crate::stdlib::native_object_keys;
+
+    let keys_idx = vm.register_native(native_object_keys);
+
+    // Create Object global with keys method
+    let object_ptr = vm.heap.len();
+    let mut object_props = std::collections::HashMap::new();
+    object_props.insert("keys".to_string(), JsValue::NativeFunction(keys_idx));
+    vm.heap.push(HeapObject {
+        data: HeapData::Object(object_props),
+    });
+
+    vm.call_stack[0]
+        .locals
+        .insert("Object".into(), JsValue::Object(object_ptr));
 }

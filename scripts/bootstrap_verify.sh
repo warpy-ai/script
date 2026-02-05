@@ -103,7 +103,7 @@ verify_bytecode_determinism() {
 
     # Run the existing test suite which verifies hash determinism
     cd "$PROJECT_ROOT"
-    "$OITE_BIN" tests/compiler/test_pipeline.ot 2>&1 | tee "$stage_dir/test_output.log"
+    "$OITE_BIN" tests/test_pipeline.ot 2>&1 | tee "$stage_dir/test_output.log"
 
     # Check if the test passed
     if grep -q "Hash Match Verification: PASS" "$stage_dir/test_output.log"; then
