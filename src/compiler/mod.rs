@@ -2207,6 +2207,18 @@ impl Codegen {
                     }
                 }
             }
+            Expr::TsAs(ts_as) => {
+                // TypeScript `as` type assertion - evaluate inner expression (no runtime effect)
+                self.gen_expr(&ts_as.expr);
+            }
+            Expr::TsTypeAssertion(ts_assert) => {
+                // TypeScript type assertion `<Type>expr` - evaluate inner expression
+                self.gen_expr(&ts_assert.expr);
+            }
+            Expr::TsNonNull(ts_non_null) => {
+                // TypeScript non-null assertion `expr!` - evaluate inner expression
+                self.gen_expr(&ts_non_null.expr);
+            }
             _ => {}
         }
     }

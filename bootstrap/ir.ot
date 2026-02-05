@@ -208,7 +208,7 @@ function lowerProgramToIr(ast: any): IrModule {
 
     let ra = createRegisterAllocator();
     let entry = createIrBlock("entry");
-    
+
     // Process top-level statements
     let i = 0;
     while (i < ast.body.length) {
@@ -309,13 +309,13 @@ function lowerExpression(block: IrBlock, node: any, ra: RegisterAllocator, dest:
         emitConst(block, dest, node.value);
         return dest;
     }
-    
+
     if (node.type == "Identifier") {
         // For now, just load from slot 0 (simplified)
         emitLoadLocal(block, dest, 0);
         return dest;
     }
-    
+
     if (node.type == "BinaryExpression") {
         let left = lowerExpression(block, node.left, ra, null);
         let right = lowerExpression(block, node.right, ra, null);
@@ -323,7 +323,7 @@ function lowerExpression(block: IrBlock, node: any, ra: RegisterAllocator, dest:
         emitBinaryOp(block, opcode as IrOpCode, dest, left, right);
         return dest;
     }
-    
+
     if (node.type == "CallExpression") {
         let argc = node.arguments.length;
         let i = 0;
@@ -335,7 +335,7 @@ function lowerExpression(block: IrBlock, node: any, ra: RegisterAllocator, dest:
         emitCall(block, dest, callee, argc);
         return dest;
     }
-    
+
     return dest;
 }
 

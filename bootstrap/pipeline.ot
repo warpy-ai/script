@@ -180,7 +180,7 @@ function computeBytecodeHash(code: ByteStream | { bytecode: ByteStream }): numbe
 // ============================================================================
 
 function measureCompilation(source: string): { lexerTime: number, parserTime: number, irTime: number, codegenTime: number, totalTime: number, bytecodeSize: number } {
-    let metrics: { lexerTime: number, parserTime: number, irTime: number, codegenTime: number, totalTime: number, bytecodeSize: number };
+    let metrics: { lexerTime: number, parserTime: number, irTime: number, codegenTime: number, totalTime: number, bytecodeSize: number } = { lexerTime: 0, parserTime: 0, irTime: 0, codegenTime: 0, totalTime: 0, bytecodeSize: 0 };
 
     let t0: number = Date.now();
     let tokens: Array<Token> = tokenize(source);
