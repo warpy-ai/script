@@ -72,11 +72,11 @@ Unified runtime primitives shared across VM/JIT/AOT backends.
 
 **Key Components:**
 
-- `src/runtime/abi.rs` - NaN-boxed 64-bit `TsclValue` ABI
+- `src/runtime/abi.rs` - NaN-boxed 64-bit `OtValue` ABI
 - `src/runtime/heap.rs` - Bump allocator, object layouts
 - `src/runtime/stubs.rs` - 20+ `extern "C"` stubs for native backends
 
-**Runtime Stubs:** `tscl_alloc_object`, `tscl_add_any`, `tscl_get_prop`, `tscl_set_prop`, `tscl_call`, `tscl_console_log`, etc.
+**Runtime Stubs:** `ot_alloc_object`, `ot_add_any`, `ot_get_prop`, `ot_set_prop`, `ot_call`, `ot_console_log`, etc.
 
 ---
 

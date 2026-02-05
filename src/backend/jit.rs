@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use super::cranelift::CraneliftCodegen;
 use super::{BackendConfig, BackendError};
 use crate::ir::IrModule;
-use crate::runtime::abi::TsclValue;
+use crate::runtime::abi::OtValue;
 
 /// JIT runtime for executing compiled code
 pub struct JitRuntime {
@@ -58,7 +58,7 @@ impl JitRuntime {
     }
 
     /// Call the main function with no arguments
-    pub fn call_main(&self) -> Result<TsclValue, BackendError> {
+    pub fn call_main(&self) -> Result<OtValue, BackendError> {
         let ptr = self
             .get_func("main")
             .ok_or_else(|| BackendError::JitError("No 'main' function found".into()))?;
@@ -68,11 +68,11 @@ impl JitRuntime {
         let main_fn: extern "C" fn() -> u64 = unsafe { std::mem::transmute(ptr) };
         let result = main_fn();
 
-        Ok(TsclValue::from_bits(result))
+        Ok(OtValue::from_bits(result))
     }
 
     /// Call a named function with arguments
-    pub fn call_func(&self, name: &str, args: &[TsclValue]) -> Result<TsclValue, BackendError> {
+    pub fn call_func(&self, name: &str, args: &[OtValue]) -> Result<OtValue, BackendError> {
         let ptr = self
             .get_func(name)
             .ok_or_else(|| BackendError::JitError(format!("Function '{}' not found", name)))?;
@@ -103,7 +103,7 @@ impl JitRuntime {
             }
         };
 
-        Ok(TsclValue::from_bits(result))
+        Ok(OtValue::from_bits(result))
     }
 
     /// Execute a simple numeric function for benchmarking
@@ -111,7 +111,7 @@ impl JitRuntime {
     /// This is a convenience method for testing numeric computations
     /// like fibonacci.
     pub fn call_numeric(&self, name: &str, arg: f64) -> Result<f64, BackendError> {
-        let input = TsclValue::number(arg);
+        let input = OtValue::number(arg);
         let result = self.call_func(name, &[input])?;
 
         result
@@ -143,24 +143,24 @@ impl CompiledFunction {
     }
 
     /// Call with no arguments
-    pub fn call0(&self) -> TsclValue {
+    pub fn call0(&self) -> OtValue {
         assert_eq!(self.arg_count, 0);
         let f: extern "C" fn() -> u64 = unsafe { std::mem::transmute(self.ptr) };
-        TsclValue::from_bits(f())
+        OtValue::from_bits(f())
     }
 
     /// Call with one argument
-    pub fn call1(&self, a: TsclValue) -> TsclValue {
+    pub fn call1(&self, a: OtValue) -> OtValue {
         assert_eq!(self.arg_count, 1);
         let f: extern "C" fn(u64) -> u64 = unsafe { std::mem::transmute(self.ptr) };
-        TsclValue::from_bits(f(a.to_bits()))
+        OtValue::from_bits(f(a.to_bits()))
     }
 
     /// Call with two arguments
-    pub fn call2(&self, a: TsclValue, b: TsclValue) -> TsclValue {
+    pub fn call2(&self, a: OtValue, b: OtValue) -> OtValue {
         assert_eq!(self.arg_count, 2);
         let f: extern "C" fn(u64, u64) -> u64 = unsafe { std::mem::transmute(self.ptr) };
-        TsclValue::from_bits(f(a.to_bits(), b.to_bits()))
+        OtValue::from_bits(f(a.to_bits(), b.to_bits()))
     }
 }
 
@@ -239,8 +239,8 @@ mod tests {
         assert!(result.is_ok());
 
         // Call the function with 3.0 + 4.0
-        let a = TsclValue::number(3.0);
-        let b = TsclValue::number(4.0);
+        let a = OtValue::number(3.0);
+        let b = OtValue::number(4.0);
         let result = runtime.call_func("add_nums", &[a, b]);
         assert!(result.is_ok());
 

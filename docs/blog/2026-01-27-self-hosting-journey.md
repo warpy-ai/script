@@ -78,7 +78,7 @@ pub const ABI_VERSION: u32 = 1;
 ```
 
 The ABI defines:
-- Function signatures for runtime stubs (`tscl_add_any`, `tscl_alloc_object`, etc.)
+- Function signatures for runtime stubs (`ot_add_any`, `ot_alloc_object`, etc.)
 - NaN-boxed value encoding (64-bit words)
 - Heap object layouts
 - Calling conventions
@@ -151,24 +151,24 @@ The ABI consists of ~20 runtime stubs:
 ```rust
 extern "C" {
     // Arithmetic
-    fn tscl_add_any(a: u64, b: u64) -> u64;
-    fn tscl_sub_any(a: u64, b: u64) -> u64;
-    fn tscl_mul_any(a: u64, b: u64) -> u64;
+    fn ot_add_any(a: u64, b: u64) -> u64;
+    fn ot_sub_any(a: u64, b: u64) -> u64;
+    fn ot_mul_any(a: u64, b: u64) -> u64;
     
     // Allocation
-    fn tscl_alloc_object() -> u64;
-    fn tscl_alloc_array() -> u64;
-    fn tscl_alloc_string(ptr: *const u8, len: usize) -> u64;
+    fn ot_alloc_object() -> u64;
+    fn ot_alloc_array() -> u64;
+    fn ot_alloc_string(ptr: *const u8, len: usize) -> u64;
     
     // Property access
-    fn tscl_get_prop(obj: u64, key: u64) -> u64;
-    fn tscl_set_prop(obj: u64, key: u64, val: u64) -> u64;
+    fn ot_get_prop(obj: u64, key: u64) -> u64;
+    fn ot_set_prop(obj: u64, key: u64, val: u64) -> u64;
     
     // Function calls
-    fn tscl_call(func: u64, args: u64, arg_count: u32) -> u64;
+    fn ot_call(func: u64, args: u64, arg_count: u32) -> u64;
     
     // Error handling
-    fn tscl_abort(msg: *const u8, len: usize) -> !;
+    fn ot_abort(msg: *const u8, len: usize) -> !;
 }
 ```
 

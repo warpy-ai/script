@@ -7,7 +7,7 @@
 //! - Extern "C" stubs callable from JIT/AOT code (stubs.rs)
 //!
 //! The VM interpreter continues to use JsValue/HeapObject for backwards compatibility.
-//! Native code uses TsclValue (NaN-boxed) for efficient representation.
+//! Native code uses OtValue (NaN-boxed) for efficient representation.
 
 pub mod abi;
 pub mod abi_tests;

@@ -93,7 +93,7 @@ mod object_layout_tests {
     /// Verify object layout assumptions.
     #[test]
     fn test_object_size_assumptions() {
-        use crate::runtime::abi::TsclValue;
+        use crate::runtime::abi::OtValue;
 
         // Object header should fit in expected size
         // This ensures ABI compatibility for struct layouts
@@ -105,9 +105,9 @@ mod object_layout_tests {
 
         // NaN-boxed value is u64
         assert_eq!(
-            std::mem::size_of::<TsclValue>(),
+            std::mem::size_of::<OtValue>(),
             8,
-            "TsclValue must be 8 bytes (64-bit)"
+            "OtValue must be 8 bytes (64-bit)"
         );
     }
 }
@@ -237,25 +237,25 @@ mod additional_abi_tests {
     fn test_runtime_stub_count() {
         // Verify expected number of stubs exist
         let expected_stubs = vec![
-            "tscl_add_any",
-            "tscl_sub_any",
-            "tscl_mul_any",
-            "tscl_div_any",
-            "tscl_mod_any",
-            "tscl_neg",
-            "tscl_eq_strict",
-            "tscl_lt",
-            "tscl_alloc_object",
-            "tscl_alloc_array",
-            "tscl_alloc_string",
-            "tscl_get_prop",
-            "tscl_set_prop",
-            "tscl_get_element",
-            "tscl_set_element",
-            "tscl_call",
-            "tscl_to_boolean",
-            "tscl_console_log",
-            "tscl_abort",
+            "ot_add_any",
+            "ot_sub_any",
+            "ot_mul_any",
+            "ot_div_any",
+            "ot_mod_any",
+            "ot_neg",
+            "ot_eq_strict",
+            "ot_lt",
+            "ot_alloc_object",
+            "ot_alloc_array",
+            "ot_alloc_string",
+            "ot_get_prop",
+            "ot_set_prop",
+            "ot_get_element",
+            "ot_set_element",
+            "ot_call",
+            "ot_to_boolean",
+            "ot_console_log",
+            "ot_abort",
         ];
         assert!(
             expected_stubs.len() >= 19,

@@ -245,10 +245,10 @@ function emitRuntimeFunctions(emitter: LlvmEmitter): void {
     emit(emitter, "; ============================================================");
     emit(emitter, "");
 
-    // tscl_console_log - handles both numbers and strings
+    // ot_console_log - handles both numbers and strings
     // String tag: 0xFFFCxxxxxxxxxxxx (high 16 bits = 0xFFFC = 65532)
     // Numbers: IEEE 754 doubles
-    emit(emitter, "define i64 @tscl_console_log(i64 %value) {");
+    emit(emitter, "define i64 @ot_console_log(i64 %value) {");
     emit(emitter, "entry:");
     emit(emitter, "  ; Check if value is a string (high bits = 0xFFFC)");
     emit(emitter, "  %high = lshr i64 %value, 48");
@@ -271,8 +271,8 @@ function emitRuntimeFunctions(emitter: LlvmEmitter): void {
     emit(emitter, "}");
     emit(emitter, "");
 
-    // tscl_num_to_str - convert a number to a string
-    emit(emitter, "define i8* @tscl_num_to_str(i64 %num) {");
+    // ot_num_to_str - convert a number to a string
+    emit(emitter, "define i8* @ot_num_to_str(i64 %num) {");
     emit(emitter, "entry:");
     emit(emitter, "  %buf = call i8* @malloc(i64 32)");  // 32 bytes should be enough for any double
     emit(emitter, "  %dval = bitcast i64 %num to double");
@@ -282,8 +282,8 @@ function emitRuntimeFunctions(emitter: LlvmEmitter): void {
     emit(emitter, "}");
     emit(emitter, "");
 
-    // tscl_add_any - handles both number addition and string concatenation
-    emit(emitter, "define i64 @tscl_add_any(i64 %a, i64 %b) {");
+    // ot_add_any - handles both number addition and string concatenation
+    emit(emitter, "define i64 @ot_add_any(i64 %a, i64 %b) {");
     emit(emitter, "entry:");
     emit(emitter, "  ; Check if either operand is a string (high 16 bits = 0xFFFC = 65532)");
     emit(emitter, "  %a_high = lshr i64 %a, 48");
@@ -306,7 +306,7 @@ function emitRuntimeFunctions(emitter: LlvmEmitter): void {
     emit(emitter, "  %a_ptr1 = inttoptr i64 %a_ptr_int1 to i8*");
     emit(emitter, "  br label %got_a_ptr");
     emit(emitter, "convert_a:");
-    emit(emitter, "  %a_ptr2 = call i8* @tscl_num_to_str(i64 %a)");
+    emit(emitter, "  %a_ptr2 = call i8* @ot_num_to_str(i64 %a)");
     emit(emitter, "  br label %got_a_ptr");
     emit(emitter, "got_a_ptr:");
     emit(emitter, "  %a_ptr = phi i8* [%a_ptr1, %a_already_str], [%a_ptr2, %convert_a]");
@@ -317,7 +317,7 @@ function emitRuntimeFunctions(emitter: LlvmEmitter): void {
     emit(emitter, "  %b_ptr1 = inttoptr i64 %b_ptr_int1 to i8*");
     emit(emitter, "  br label %got_b_ptr");
     emit(emitter, "convert_b:");
-    emit(emitter, "  %b_ptr2 = call i8* @tscl_num_to_str(i64 %b)");
+    emit(emitter, "  %b_ptr2 = call i8* @ot_num_to_str(i64 %b)");
     emit(emitter, "  br label %got_b_ptr");
     emit(emitter, "got_b_ptr:");
     emit(emitter, "  %b_ptr = phi i8* [%b_ptr1, %b_already_str], [%b_ptr2, %convert_b]");
@@ -337,8 +337,8 @@ function emitRuntimeFunctions(emitter: LlvmEmitter): void {
     emit(emitter, "}");
     emit(emitter, "");
 
-    // tscl_sub_any
-    emit(emitter, "define i64 @tscl_sub_any(i64 %a, i64 %b) {");
+    // ot_sub_any
+    emit(emitter, "define i64 @ot_sub_any(i64 %a, i64 %b) {");
     emit(emitter, "entry:");
     emit(emitter, "  %a_fp = bitcast i64 %a to double");
     emit(emitter, "  %b_fp = bitcast i64 %b to double");
@@ -348,8 +348,8 @@ function emitRuntimeFunctions(emitter: LlvmEmitter): void {
     emit(emitter, "}");
     emit(emitter, "");
 
-    // tscl_mul_any
-    emit(emitter, "define i64 @tscl_mul_any(i64 %a, i64 %b) {");
+    // ot_mul_any
+    emit(emitter, "define i64 @ot_mul_any(i64 %a, i64 %b) {");
     emit(emitter, "entry:");
     emit(emitter, "  %a_fp = bitcast i64 %a to double");
     emit(emitter, "  %b_fp = bitcast i64 %b to double");
@@ -359,8 +359,8 @@ function emitRuntimeFunctions(emitter: LlvmEmitter): void {
     emit(emitter, "}");
     emit(emitter, "");
 
-    // tscl_div_any
-    emit(emitter, "define i64 @tscl_div_any(i64 %a, i64 %b) {");
+    // ot_div_any
+    emit(emitter, "define i64 @ot_div_any(i64 %a, i64 %b) {");
     emit(emitter, "entry:");
     emit(emitter, "  %a_fp = bitcast i64 %a to double");
     emit(emitter, "  %b_fp = bitcast i64 %b to double");
@@ -370,8 +370,8 @@ function emitRuntimeFunctions(emitter: LlvmEmitter): void {
     emit(emitter, "}");
     emit(emitter, "");
 
-    // tscl_mod_any
-    emit(emitter, "define i64 @tscl_mod_any(i64 %a, i64 %b) {");
+    // ot_mod_any
+    emit(emitter, "define i64 @ot_mod_any(i64 %a, i64 %b) {");
     emit(emitter, "entry:");
     emit(emitter, "  %a_fp = bitcast i64 %a to double");
     emit(emitter, "  %b_fp = bitcast i64 %b to double");
@@ -381,8 +381,8 @@ function emitRuntimeFunctions(emitter: LlvmEmitter): void {
     emit(emitter, "}");
     emit(emitter, "");
 
-    // tscl_neg
-    emit(emitter, "define i64 @tscl_neg(i64 %a) {");
+    // ot_neg
+    emit(emitter, "define i64 @ot_neg(i64 %a) {");
     emit(emitter, "entry:");
     emit(emitter, "  %a_fp = bitcast i64 %a to double");
     emit(emitter, "  %result_fp = fsub double 0.0, %a_fp");
@@ -391,8 +391,8 @@ function emitRuntimeFunctions(emitter: LlvmEmitter): void {
     emit(emitter, "}");
     emit(emitter, "");
 
-    // tscl_lt_any
-    emit(emitter, "define i64 @tscl_lt_any(i64 %a, i64 %b) {");
+    // ot_lt_any
+    emit(emitter, "define i64 @ot_lt_any(i64 %a, i64 %b) {");
     emit(emitter, "entry:");
     emit(emitter, "  %a_fp = bitcast i64 %a to double");
     emit(emitter, "  %b_fp = bitcast i64 %b to double");
@@ -403,8 +403,8 @@ function emitRuntimeFunctions(emitter: LlvmEmitter): void {
     emit(emitter, "}");
     emit(emitter, "");
 
-    // tscl_le_any
-    emit(emitter, "define i64 @tscl_le_any(i64 %a, i64 %b) {");
+    // ot_le_any
+    emit(emitter, "define i64 @ot_le_any(i64 %a, i64 %b) {");
     emit(emitter, "entry:");
     emit(emitter, "  %a_fp = bitcast i64 %a to double");
     emit(emitter, "  %b_fp = bitcast i64 %b to double");
@@ -415,8 +415,8 @@ function emitRuntimeFunctions(emitter: LlvmEmitter): void {
     emit(emitter, "}");
     emit(emitter, "");
 
-    // tscl_gt_any
-    emit(emitter, "define i64 @tscl_gt_any(i64 %a, i64 %b) {");
+    // ot_gt_any
+    emit(emitter, "define i64 @ot_gt_any(i64 %a, i64 %b) {");
     emit(emitter, "entry:");
     emit(emitter, "  %a_fp = bitcast i64 %a to double");
     emit(emitter, "  %b_fp = bitcast i64 %b to double");
@@ -427,8 +427,8 @@ function emitRuntimeFunctions(emitter: LlvmEmitter): void {
     emit(emitter, "}");
     emit(emitter, "");
 
-    // tscl_ge_any
-    emit(emitter, "define i64 @tscl_ge_any(i64 %a, i64 %b) {");
+    // ot_ge_any
+    emit(emitter, "define i64 @ot_ge_any(i64 %a, i64 %b) {");
     emit(emitter, "entry:");
     emit(emitter, "  %a_fp = bitcast i64 %a to double");
     emit(emitter, "  %b_fp = bitcast i64 %b to double");
@@ -439,8 +439,8 @@ function emitRuntimeFunctions(emitter: LlvmEmitter): void {
     emit(emitter, "}");
     emit(emitter, "");
 
-    // tscl_eq_any
-    emit(emitter, "define i64 @tscl_eq_any(i64 %a, i64 %b) {");
+    // ot_eq_any
+    emit(emitter, "define i64 @ot_eq_any(i64 %a, i64 %b) {");
     emit(emitter, "entry:");
     emit(emitter, "  %a_fp = bitcast i64 %a to double");
     emit(emitter, "  %b_fp = bitcast i64 %b to double");
@@ -451,8 +451,8 @@ function emitRuntimeFunctions(emitter: LlvmEmitter): void {
     emit(emitter, "}");
     emit(emitter, "");
 
-    // tscl_ne_any
-    emit(emitter, "define i64 @tscl_ne_any(i64 %a, i64 %b) {");
+    // ot_ne_any
+    emit(emitter, "define i64 @ot_ne_any(i64 %a, i64 %b) {");
     emit(emitter, "entry:");
     emit(emitter, "  %a_fp = bitcast i64 %a to double");
     emit(emitter, "  %b_fp = bitcast i64 %b to double");
@@ -470,8 +470,8 @@ function emitRuntimeFunctions(emitter: LlvmEmitter): void {
     // Array tag: 0xFFFB (65531) in high 16 bits
     // 0xFFFB000000000000 = 18444492273895866368
 
-    // tscl_alloc_array - allocate an array with given initial capacity
-    emit(emitter, "define i64 @tscl_alloc_array(i64 %cap) {");
+    // ot_alloc_array - allocate an array with given initial capacity
+    emit(emitter, "define i64 @ot_alloc_array(i64 %cap) {");
     emit(emitter, "entry:");
     emit(emitter, "  ; Allocate: 2 header i64s + cap elements");
     emit(emitter, "  %header_size = add i64 16, 0");  // 2 * 8 bytes for capacity and length
@@ -492,8 +492,8 @@ function emitRuntimeFunctions(emitter: LlvmEmitter): void {
     emit(emitter, "}");
     emit(emitter, "");
 
-    // tscl_array_set - set element at index
-    emit(emitter, "define void @tscl_array_set(i64 %arr_tagged, i64 %idx_val, i64 %value) {");
+    // ot_array_set - set element at index
+    emit(emitter, "define void @ot_array_set(i64 %arr_tagged, i64 %idx_val, i64 %value) {");
     emit(emitter, "entry:");
     emit(emitter, "  ; Extract array pointer");
     emit(emitter, "  %ptr_int = and i64 %arr_tagged, 281474976710655");
@@ -519,8 +519,8 @@ function emitRuntimeFunctions(emitter: LlvmEmitter): void {
     emit(emitter, "}");
     emit(emitter, "");
 
-    // tscl_array_get - get element at index
-    emit(emitter, "define i64 @tscl_array_get(i64 %arr_tagged, i64 %idx_val) {");
+    // ot_array_get - get element at index
+    emit(emitter, "define i64 @ot_array_get(i64 %arr_tagged, i64 %idx_val) {");
     emit(emitter, "entry:");
     emit(emitter, "  ; Extract array pointer");
     emit(emitter, "  %ptr_int = and i64 %arr_tagged, 281474976710655");
@@ -536,8 +536,8 @@ function emitRuntimeFunctions(emitter: LlvmEmitter): void {
     emit(emitter, "}");
     emit(emitter, "");
 
-    // tscl_array_length - get array length
-    emit(emitter, "define i64 @tscl_array_length(i64 %arr_tagged) {");
+    // ot_array_length - get array length
+    emit(emitter, "define i64 @ot_array_length(i64 %arr_tagged) {");
     emit(emitter, "entry:");
     emit(emitter, "  ; Extract array pointer");
     emit(emitter, "  %ptr_int = and i64 %arr_tagged, 281474976710655");
@@ -552,8 +552,8 @@ function emitRuntimeFunctions(emitter: LlvmEmitter): void {
     emit(emitter, "}");
     emit(emitter, "");
 
-    // tscl_array_push - push element to array (returns new length)
-    emit(emitter, "define i64 @tscl_array_push(i64 %arr_tagged, i64 %value) {");
+    // ot_array_push - push element to array (returns new length)
+    emit(emitter, "define i64 @ot_array_push(i64 %arr_tagged, i64 %value) {");
     emit(emitter, "entry:");
     emit(emitter, "  ; Extract array pointer");
     emit(emitter, "  %ptr_int = and i64 %arr_tagged, 281474976710655");
@@ -583,8 +583,8 @@ function emitRuntimeFunctions(emitter: LlvmEmitter): void {
     // Object tag: 0xFFFA (65530) in high 16 bits
     // 0xFFFA000000000000 = 18443366373989023744
 
-    // tscl_alloc_object - allocate an object with given capacity
-    emit(emitter, "define i64 @tscl_alloc_object(i64 %cap) {");
+    // ot_alloc_object - allocate an object with given capacity
+    emit(emitter, "define i64 @ot_alloc_object(i64 %cap) {");
     emit(emitter, "entry:");
     emit(emitter, "  ; Allocate: 2 header i64s + cap * 2 (key-value pairs)");
     emit(emitter, "  %header_size = add i64 16, 0");
@@ -606,8 +606,8 @@ function emitRuntimeFunctions(emitter: LlvmEmitter): void {
     emit(emitter, "}");
     emit(emitter, "");
 
-    // tscl_object_set - set a property by string key
-    emit(emitter, "define void @tscl_object_set(i64 %obj_tagged, i64 %key, i64 %value) {");
+    // ot_object_set - set a property by string key
+    emit(emitter, "define void @ot_object_set(i64 %obj_tagged, i64 %key, i64 %value) {");
     emit(emitter, "entry:");
     emit(emitter, "  ; Extract object pointer");
     emit(emitter, "  %ptr_int = and i64 %obj_tagged, 281474976710655");
@@ -654,8 +654,8 @@ function emitRuntimeFunctions(emitter: LlvmEmitter): void {
     emit(emitter, "}");
     emit(emitter, "");
 
-    // tscl_object_get - get a property by string key
-    emit(emitter, "define i64 @tscl_object_get(i64 %obj_tagged, i64 %key) {");
+    // ot_object_get - get a property by string key
+    emit(emitter, "define i64 @ot_object_get(i64 %obj_tagged, i64 %key) {");
     emit(emitter, "entry:");
     emit(emitter, "  ; Extract object pointer");
     emit(emitter, "  %ptr_int = and i64 %obj_tagged, 281474976710655");
@@ -834,7 +834,7 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
             // Emit as double, then bitcast to i64
             let tmpReg = allocReg(emitter);
             let dblStr = formatDouble(value);
-            emit(emitter, "  " + tmpReg + " = call i64 @tscl_box_number(double " + dblStr + ")");
+            emit(emitter, "  " + tmpReg + " = call i64 @ot_box_number(double " + dblStr + ")");
             setRegForValue(emitter, dest, tmpReg);
         } else if (typeof value == "boolean") {
             // Boolean constant
@@ -880,7 +880,7 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
         let leftReg = getRegForValue(emitter, inst.args[0]);
         let rightReg = getRegForValue(emitter, inst.args[1]);
         let resultReg = allocReg(emitter);
-        emit(emitter, "  " + resultReg + " = call i64 @tscl_add_any(i64 " + leftReg + ", i64 " + rightReg + ")");
+        emit(emitter, "  " + resultReg + " = call i64 @ot_add_any(i64 " + leftReg + ", i64 " + rightReg + ")");
         setRegForValue(emitter, dest, resultReg);
         return;
     }
@@ -891,7 +891,7 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
         let leftReg = getRegForValue(emitter, inst.args[0]);
         let rightReg = getRegForValue(emitter, inst.args[1]);
         let resultReg = allocReg(emitter);
-        emit(emitter, "  " + resultReg + " = call i64 @tscl_sub_any(i64 " + leftReg + ", i64 " + rightReg + ")");
+        emit(emitter, "  " + resultReg + " = call i64 @ot_sub_any(i64 " + leftReg + ", i64 " + rightReg + ")");
         setRegForValue(emitter, dest, resultReg);
         return;
     }
@@ -902,7 +902,7 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
         let leftReg = getRegForValue(emitter, inst.args[0]);
         let rightReg = getRegForValue(emitter, inst.args[1]);
         let resultReg = allocReg(emitter);
-        emit(emitter, "  " + resultReg + " = call i64 @tscl_mul_any(i64 " + leftReg + ", i64 " + rightReg + ")");
+        emit(emitter, "  " + resultReg + " = call i64 @ot_mul_any(i64 " + leftReg + ", i64 " + rightReg + ")");
         setRegForValue(emitter, dest, resultReg);
         return;
     }
@@ -913,7 +913,7 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
         let leftReg = getRegForValue(emitter, inst.args[0]);
         let rightReg = getRegForValue(emitter, inst.args[1]);
         let resultReg = allocReg(emitter);
-        emit(emitter, "  " + resultReg + " = call i64 @tscl_div_any(i64 " + leftReg + ", i64 " + rightReg + ")");
+        emit(emitter, "  " + resultReg + " = call i64 @ot_div_any(i64 " + leftReg + ", i64 " + rightReg + ")");
         setRegForValue(emitter, dest, resultReg);
         return;
     }
@@ -924,7 +924,7 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
         let leftReg = getRegForValue(emitter, inst.args[0]);
         let rightReg = getRegForValue(emitter, inst.args[1]);
         let resultReg = allocReg(emitter);
-        emit(emitter, "  " + resultReg + " = call i64 @tscl_mod_any(i64 " + leftReg + ", i64 " + rightReg + ")");
+        emit(emitter, "  " + resultReg + " = call i64 @ot_mod_any(i64 " + leftReg + ", i64 " + rightReg + ")");
         setRegForValue(emitter, dest, resultReg);
         return;
     }
@@ -934,7 +934,7 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
         let dest = inst.dest;
         let srcReg = getRegForValue(emitter, inst.args[0]);
         let resultReg = allocReg(emitter);
-        emit(emitter, "  " + resultReg + " = call i64 @tscl_neg(i64 " + srcReg + ")");
+        emit(emitter, "  " + resultReg + " = call i64 @ot_neg(i64 " + srcReg + ")");
         setRegForValue(emitter, dest, resultReg);
         return;
     }
@@ -960,7 +960,7 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
         let leftReg = getRegForValue(emitter, inst.args[0]);
         let rightReg = getRegForValue(emitter, inst.args[1]);
         let resultReg = allocReg(emitter);
-        emit(emitter, "  " + resultReg + " = call i64 @tscl_eq_any(i64 " + leftReg + ", i64 " + rightReg + ")");
+        emit(emitter, "  " + resultReg + " = call i64 @ot_eq_any(i64 " + leftReg + ", i64 " + rightReg + ")");
         setRegForValue(emitter, dest, resultReg);
         return;
     }
@@ -971,7 +971,7 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
         let leftReg = getRegForValue(emitter, inst.args[0]);
         let rightReg = getRegForValue(emitter, inst.args[1]);
         let resultReg = allocReg(emitter);
-        emit(emitter, "  " + resultReg + " = call i64 @tscl_ne_any(i64 " + leftReg + ", i64 " + rightReg + ")");
+        emit(emitter, "  " + resultReg + " = call i64 @ot_ne_any(i64 " + leftReg + ", i64 " + rightReg + ")");
         setRegForValue(emitter, dest, resultReg);
         return;
     }
@@ -982,7 +982,7 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
         let leftReg = getRegForValue(emitter, inst.args[0]);
         let rightReg = getRegForValue(emitter, inst.args[1]);
         let resultReg = allocReg(emitter);
-        emit(emitter, "  " + resultReg + " = call i64 @tscl_lt_any(i64 " + leftReg + ", i64 " + rightReg + ")");
+        emit(emitter, "  " + resultReg + " = call i64 @ot_lt_any(i64 " + leftReg + ", i64 " + rightReg + ")");
         setRegForValue(emitter, dest, resultReg);
         return;
     }
@@ -993,7 +993,7 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
         let leftReg = getRegForValue(emitter, inst.args[0]);
         let rightReg = getRegForValue(emitter, inst.args[1]);
         let resultReg = allocReg(emitter);
-        emit(emitter, "  " + resultReg + " = call i64 @tscl_gt_any(i64 " + leftReg + ", i64 " + rightReg + ")");
+        emit(emitter, "  " + resultReg + " = call i64 @ot_gt_any(i64 " + leftReg + ", i64 " + rightReg + ")");
         setRegForValue(emitter, dest, resultReg);
         return;
     }
@@ -1004,7 +1004,7 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
         let leftReg = getRegForValue(emitter, inst.args[0]);
         let rightReg = getRegForValue(emitter, inst.args[1]);
         let resultReg = allocReg(emitter);
-        emit(emitter, "  " + resultReg + " = call i64 @tscl_le_any(i64 " + leftReg + ", i64 " + rightReg + ")");
+        emit(emitter, "  " + resultReg + " = call i64 @ot_le_any(i64 " + leftReg + ", i64 " + rightReg + ")");
         setRegForValue(emitter, dest, resultReg);
         return;
     }
@@ -1015,7 +1015,7 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
         let leftReg = getRegForValue(emitter, inst.args[0]);
         let rightReg = getRegForValue(emitter, inst.args[1]);
         let resultReg = allocReg(emitter);
-        emit(emitter, "  " + resultReg + " = call i64 @tscl_ge_any(i64 " + leftReg + ", i64 " + rightReg + ")");
+        emit(emitter, "  " + resultReg + " = call i64 @ot_ge_any(i64 " + leftReg + ", i64 " + rightReg + ")");
         setRegForValue(emitter, dest, resultReg);
         return;
     }
@@ -1101,7 +1101,7 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
 
         // Handle "length" property for arrays
         if (propName == "length") {
-            emit(emitter, "  " + resultReg + " = call i64 @tscl_array_length(i64 " + objReg + ")");
+            emit(emitter, "  " + resultReg + " = call i64 @ot_array_length(i64 " + objReg + ")");
             setRegForValue(emitter, dest, resultReg);
             return;
         }
@@ -1118,7 +1118,7 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
         emit(emitter, "  " + maskedReg + " = and i64 " + intReg + ", 281474976710655");
         let keyReg = allocReg(emitter);
         emit(emitter, "  " + keyReg + " = or i64 " + maskedReg + ", 18445618173802708992");
-        emit(emitter, "  " + resultReg + " = call i64 @tscl_object_get(i64 " + objReg + ", i64 " + keyReg + ")");
+        emit(emitter, "  " + resultReg + " = call i64 @ot_object_get(i64 " + objReg + ", i64 " + keyReg + ")");
         setRegForValue(emitter, dest, resultReg);
         return;
     }
@@ -1140,7 +1140,7 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
         emit(emitter, "  " + maskedReg + " = and i64 " + intReg + ", 281474976710655");
         let keyReg = allocReg(emitter);
         emit(emitter, "  " + keyReg + " = or i64 " + maskedReg + ", 18445618173802708992");
-        emit(emitter, "  call void @tscl_object_set(i64 " + objReg + ", i64 " + keyReg + ", i64 " + valueReg + ")");
+        emit(emitter, "  call void @ot_object_set(i64 " + objReg + ", i64 " + keyReg + ", i64 " + valueReg + ")");
         return;
     }
 
@@ -1150,7 +1150,7 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
         let arrReg = getRegForValue(emitter, inst.args[0]);
         let idxReg = getRegForValue(emitter, inst.args[1]);
         let resultReg = allocReg(emitter);
-        emit(emitter, "  " + resultReg + " = call i64 @tscl_array_get(i64 " + arrReg + ", i64 " + idxReg + ")");
+        emit(emitter, "  " + resultReg + " = call i64 @ot_array_get(i64 " + arrReg + ", i64 " + idxReg + ")");
         setRegForValue(emitter, dest, resultReg);
         return;
     }
@@ -1160,7 +1160,7 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
         let arrReg = getRegForValue(emitter, inst.args[0]);
         let idxReg = getRegForValue(emitter, inst.args[1]);
         let valueReg = getRegForValue(emitter, inst.args[2]);
-        emit(emitter, "  call void @tscl_array_set(i64 " + arrReg + ", i64 " + idxReg + ", i64 " + valueReg + ")");
+        emit(emitter, "  call void @ot_array_set(i64 " + arrReg + ", i64 " + idxReg + ", i64 " + valueReg + ")");
         return;
     }
 
@@ -1238,7 +1238,7 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
             let argc = inst.args[0];
             if (argc >= 1) {
                 let argReg = getRegForValue(emitter, inst.args[1]);
-                emit(emitter, "  " + resultReg + " = call i64 @tscl_console_log(i64 " + argReg + ")");
+                emit(emitter, "  " + resultReg + " = call i64 @ot_console_log(i64 " + argReg + ")");
             } else {
                 emit(emitter, "  " + resultReg + " = add i64 0, 9221120237041090561");
             }
@@ -1253,7 +1253,7 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
             let argc = inst.args[1];
             if (argc >= 1) {
                 let valueReg = getRegForValue(emitter, inst.args[2]);
-                emit(emitter, "  " + resultReg + " = call i64 @tscl_array_push(i64 " + objReg + ", i64 " + valueReg + ")");
+                emit(emitter, "  " + resultReg + " = call i64 @ot_array_push(i64 " + objReg + ", i64 " + valueReg + ")");
             } else {
                 emit(emitter, "  " + resultReg + " = add i64 0, 9221120237041090561");
             }
@@ -1309,7 +1309,7 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
         let resultReg = allocReg(emitter);
         let capReg = allocReg(emitter);
         emit(emitter, "  " + capReg + " = add i64 0, " + String(capacity));
-        emit(emitter, "  " + resultReg + " = call i64 @tscl_alloc_object(i64 " + capReg + ")");
+        emit(emitter, "  " + resultReg + " = call i64 @ot_alloc_object(i64 " + capReg + ")");
         setRegForValue(emitter, dest, resultReg);
         return;
     }
@@ -1325,7 +1325,7 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
         let resultReg = allocReg(emitter);
         let capReg = allocReg(emitter);
         emit(emitter, "  " + capReg + " = add i64 0, " + String(capacity));
-        emit(emitter, "  " + resultReg + " = call i64 @tscl_alloc_array(i64 " + capReg + ")");
+        emit(emitter, "  " + resultReg + " = call i64 @ot_alloc_array(i64 " + capReg + ")");
         setRegForValue(emitter, dest, resultReg);
         return;
     }
@@ -1344,8 +1344,8 @@ function emitMainWrapper(emitter: LlvmEmitter): void {
     emit(emitter, "; Main entry point");
     emit(emitter, "; ============================================================");
 
-    // tscl_box_number helper
-    emit(emitter, "define i64 @tscl_box_number(double %val) {");
+    // ot_box_number helper
+    emit(emitter, "define i64 @ot_box_number(double %val) {");
     emit(emitter, "entry:");
     emit(emitter, "  %result = bitcast double %val to i64");
     emit(emitter, "  ret i64 %result");

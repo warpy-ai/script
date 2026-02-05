@@ -253,7 +253,7 @@ mod tests {
 
     /// Helper to create a unique temp directory for tests
     fn create_test_dir(test_name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("tscl_test_{}", test_name));
+        let dir = std::env::temp_dir().join(format!("ot_test_{}", test_name));
         let _ = fs::remove_dir_all(&dir); // Clean up if exists
         fs::create_dir_all(&dir).expect("Failed to create test dir");
         dir
