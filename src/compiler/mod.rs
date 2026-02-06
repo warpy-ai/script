@@ -632,11 +632,8 @@ impl Codegen {
             let before = self.instructions.len();
             self.gen_stmt(s);
             // Check if the last instruction emitted was a Return
-            if self.instructions.len() > before
-                && let Some(OpCode::Return) = self.instructions.last()
-            {
-                last_instr_was_return = true;
-            }
+            last_instr_was_return = self.instructions.len() > before
+                && matches!(self.instructions.last(), Some(OpCode::Return));
         }
 
         self.in_function = false;
@@ -1460,11 +1457,8 @@ impl Codegen {
                     for s in stmts {
                         let before = self.instructions.len();
                         self.gen_stmt(s);
-                        if self.instructions.len() > before
-                            && let Some(OpCode::Return) = self.instructions.last()
-                        {
-                            last_instr_was_return = true;
-                        }
+                        last_instr_was_return = self.instructions.len() > before
+                            && matches!(self.instructions.last(), Some(OpCode::Return));
                     }
 
                     // For async functions with no return statement at the end, wrap the result
@@ -1618,11 +1612,8 @@ impl Codegen {
                         for s in stmts {
                             let before = self.instructions.len();
                             self.gen_stmt(s);
-                            if self.instructions.len() > before
-                                && let Some(OpCode::Return) = self.instructions.last()
-                            {
-                                last_instr_was_return = true;
-                            }
+                            last_instr_was_return = self.instructions.len() > before
+                                && matches!(self.instructions.last(), Some(OpCode::Return));
                         }
 
                         if stmts.is_empty() {
