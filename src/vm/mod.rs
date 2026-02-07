@@ -2349,7 +2349,15 @@ impl VM {
                                 self.stack.push(JsValue::String(result));
                             }
                             "indexOf" => {
-                                // Find substring position
+                                // Pop args in reverse order (last arg on top of stack)
+                                let start_index = if arg_count > 1 {
+                                    match self.stack.pop() {
+                                        Some(JsValue::Number(n)) if n >= 0.0 => n as usize,
+                                        _ => 0,
+                                    }
+                                } else {
+                                    0
+                                };
                                 let search = if arg_count > 0 {
                                     match self.stack.pop() {
                                         Some(JsValue::String(ss)) => ss,
@@ -2359,11 +2367,14 @@ impl VM {
                                 } else {
                                     String::new()
                                 };
-                                // Pop remaining args
-                                for _ in 1..arg_count {
+                                for _ in 2..arg_count {
                                     self.stack.pop();
                                 }
-                                let result = s.find(&search).map(|i| i as f64).unwrap_or(-1.0);
+                                let result = s
+                                    .get(start_index..)
+                                    .and_then(|sub| sub.find(&search))
+                                    .map(|i| (i + start_index) as f64)
+                                    .unwrap_or(-1.0);
                                 self.stack.push(JsValue::Number(result));
                             }
                             "split" => {
@@ -2576,6 +2587,15 @@ impl VM {
                                 self.stack.push(JsValue::String(result));
                             }
                             "lastIndexOf" => {
+                                // Pop args in reverse order (last arg on top of stack)
+                                let end_index = if arg_count > 1 {
+                                    match self.stack.pop() {
+                                        Some(JsValue::Number(n)) if n >= 0.0 => Some(n as usize),
+                                        _ => None,
+                                    }
+                                } else {
+                                    None
+                                };
                                 let search = if arg_count > 0 {
                                     match self.stack.pop() {
                                         Some(JsValue::String(ss)) => ss,
@@ -2585,10 +2605,19 @@ impl VM {
                                 } else {
                                     String::new()
                                 };
-                                for _ in 1..arg_count {
+                                for _ in 2..arg_count {
                                     self.stack.pop();
                                 }
-                                let result = s.rfind(&search).map(|i| i as f64).unwrap_or(-1.0);
+                                let result = match end_index {
+                                    Some(end) => {
+                                        let end = (end + search.len()).min(s.len());
+                                        s.get(..end)
+                                            .and_then(|sub| sub.rfind(&search))
+                                            .map(|i| i as f64)
+                                            .unwrap_or(-1.0)
+                                    }
+                                    None => s.rfind(&search).map(|i| i as f64).unwrap_or(-1.0),
+                                };
                                 self.stack.push(JsValue::Number(result));
                             }
                             "padStart" => {
@@ -2815,15 +2844,29 @@ impl VM {
                                     return ExecResult::Continue;
                                 }
                                 "indexOf" => {
+                                    // Pop args in reverse order (last arg on top of stack)
+                                    let start_index = if arg_count > 1 {
+                                        match self.stack.pop() {
+                                            Some(JsValue::Number(n)) if n >= 0.0 => n as usize,
+                                            _ => 0,
+                                        }
+                                    } else {
+                                        0
+                                    };
                                     let search = if arg_count > 0 {
                                         self.stack.pop().unwrap_or(JsValue::Undefined)
                                     } else {
                                         JsValue::Undefined
                                     };
-                                    for _ in 1..arg_count {
+                                    for _ in 2..arg_count {
                                         self.stack.pop();
                                     }
-                                    let result = arr.iter().position(|v| match (v, &search) {
+                                    let search_slice = if start_index < arr.len() {
+                                        &arr[start_index..]
+                                    } else {
+                                        &[] as &[JsValue]
+                                    };
+                                    let result = search_slice.iter().position(|v| match (v, &search) {
                                         (JsValue::Number(a), JsValue::Number(b)) => a == b,
                                         (JsValue::String(a), JsValue::String(b)) => a == b,
                                         (JsValue::Boolean(a), JsValue::Boolean(b)) => a == b,
@@ -2833,21 +2876,34 @@ impl VM {
                                         _ => false,
                                     });
                                     self.stack.push(JsValue::Number(
-                                        result.map(|i| i as f64).unwrap_or(-1.0),
+                                        result.map(|i| (i + start_index) as f64).unwrap_or(-1.0),
                                     ));
                                     self.ip += 1;
                                     return ExecResult::Continue;
                                 }
                                 "lastIndexOf" => {
+                                    // Pop args in reverse order (last arg on top of stack)
+                                    let from_index = if arg_count > 1 {
+                                        match self.stack.pop() {
+                                            Some(JsValue::Number(n)) if n >= 0.0 => Some(n as usize),
+                                            _ => None,
+                                        }
+                                    } else {
+                                        None
+                                    };
                                     let search = if arg_count > 0 {
                                         self.stack.pop().unwrap_or(JsValue::Undefined)
                                     } else {
                                         JsValue::Undefined
                                     };
-                                    for _ in 1..arg_count {
+                                    for _ in 2..arg_count {
                                         self.stack.pop();
                                     }
-                                    let result = arr.iter().rposition(|v| match (v, &search) {
+                                    let end = match from_index {
+                                        Some(fi) => (fi + 1).min(arr.len()),
+                                        None => arr.len(),
+                                    };
+                                    let result = arr[..end].iter().rposition(|v| match (v, &search) {
                                         (JsValue::Number(a), JsValue::Number(b)) => a == b,
                                         (JsValue::String(a), JsValue::String(b)) => a == b,
                                         (JsValue::Boolean(a), JsValue::Boolean(b)) => a == b,
