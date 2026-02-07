@@ -2866,15 +2866,16 @@ impl VM {
                                     } else {
                                         &[] as &[JsValue]
                                     };
-                                    let result = search_slice.iter().position(|v| match (v, &search) {
-                                        (JsValue::Number(a), JsValue::Number(b)) => a == b,
-                                        (JsValue::String(a), JsValue::String(b)) => a == b,
-                                        (JsValue::Boolean(a), JsValue::Boolean(b)) => a == b,
-                                        (JsValue::Null, JsValue::Null) => true,
-                                        (JsValue::Undefined, JsValue::Undefined) => true,
-                                        (JsValue::Object(a), JsValue::Object(b)) => a == b,
-                                        _ => false,
-                                    });
+                                    let result =
+                                        search_slice.iter().position(|v| match (v, &search) {
+                                            (JsValue::Number(a), JsValue::Number(b)) => a == b,
+                                            (JsValue::String(a), JsValue::String(b)) => a == b,
+                                            (JsValue::Boolean(a), JsValue::Boolean(b)) => a == b,
+                                            (JsValue::Null, JsValue::Null) => true,
+                                            (JsValue::Undefined, JsValue::Undefined) => true,
+                                            (JsValue::Object(a), JsValue::Object(b)) => a == b,
+                                            _ => false,
+                                        });
                                     self.stack.push(JsValue::Number(
                                         result.map(|i| (i + start_index) as f64).unwrap_or(-1.0),
                                     ));
@@ -2885,7 +2886,9 @@ impl VM {
                                     // Pop args in reverse order (last arg on top of stack)
                                     let from_index = if arg_count > 1 {
                                         match self.stack.pop() {
-                                            Some(JsValue::Number(n)) if n >= 0.0 => Some(n as usize),
+                                            Some(JsValue::Number(n)) if n >= 0.0 => {
+                                                Some(n as usize)
+                                            }
                                             _ => None,
                                         }
                                     } else {
@@ -2903,15 +2906,16 @@ impl VM {
                                         Some(fi) => (fi + 1).min(arr.len()),
                                         None => arr.len(),
                                     };
-                                    let result = arr[..end].iter().rposition(|v| match (v, &search) {
-                                        (JsValue::Number(a), JsValue::Number(b)) => a == b,
-                                        (JsValue::String(a), JsValue::String(b)) => a == b,
-                                        (JsValue::Boolean(a), JsValue::Boolean(b)) => a == b,
-                                        (JsValue::Null, JsValue::Null) => true,
-                                        (JsValue::Undefined, JsValue::Undefined) => true,
-                                        (JsValue::Object(a), JsValue::Object(b)) => a == b,
-                                        _ => false,
-                                    });
+                                    let result =
+                                        arr[..end].iter().rposition(|v| match (v, &search) {
+                                            (JsValue::Number(a), JsValue::Number(b)) => a == b,
+                                            (JsValue::String(a), JsValue::String(b)) => a == b,
+                                            (JsValue::Boolean(a), JsValue::Boolean(b)) => a == b,
+                                            (JsValue::Null, JsValue::Null) => true,
+                                            (JsValue::Undefined, JsValue::Undefined) => true,
+                                            (JsValue::Object(a), JsValue::Object(b)) => a == b,
+                                            _ => false,
+                                        });
                                     self.stack.push(JsValue::Number(
                                         result.map(|i| i as f64).unwrap_or(-1.0),
                                     ));
