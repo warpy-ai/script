@@ -181,7 +181,7 @@ interface Array<T> {
     unshift(item: T): number;
     splice(start: number, deleteCount?: number, ...items: T[]): Array<T>;
     slice(start?: number, end?: number): Array<T>;
-    indexOf(item: T): number;
+    indexOf(item: T, fromIndex?: number): number;
     includes(item: T): boolean;
     map<U>(fn: (item: T, index: number) => U): Array<U>;
     filter(fn: (item: T, index: number) => boolean): Array<T>;

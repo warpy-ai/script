@@ -123,11 +123,11 @@ fn load_and_run_script(
 
     if append {
         let offset = vm.append_program(bytecode);
-        println!("  {} ({} ops at offset {})", path, bytecode_len, offset);
+        eprintln!("  {} ({} ops at offset {})", path, bytecode_len, offset);
     } else {
         let path_buf = PathBuf::from(path);
         vm.load_program_with_path(bytecode, path_buf);
-        println!("  {} ({} ops)", path, bytecode_len);
+        eprintln!("  {} ({} ops)", path, bytecode_len);
     }
 
     vm.run_until_halt();
